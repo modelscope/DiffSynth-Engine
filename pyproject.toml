@@ -1,6 +1,6 @@
 [project]
 name = "diffsynth_engine"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
     { name = "MuseAI x ModelScope" },
 ]
@@ -53,7 +53,10 @@ build-backend = "setuptools.build_meta"
 include = ["diffsynth_engine*"]
 
 [tool.setuptools.package-data]
-diffsynth_engine = ["conf/tokenizers/**/**/*.*"]
+diffsynth_engine = [
+    "conf/tokenizers/**/*.*",
+    "conf/models/**/*.*",
+]
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
