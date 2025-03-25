@@ -6,20 +6,20 @@
 [![GitHub pull-requests](https://img.shields.io/github/issues-pr/modelscope/DiffSynth-Engine.svg)](https://GitHub.com/modelscope/DiffSynth-Engine/pull/)
 [![GitHub latest commit](https://badgen.net/github/last-commit/modelscope/DiffSynth-Engine)](https://GitHub.com/modelscope/DiffSynth-Engine/commit/)
 
-Diffsynth Engine is a high-performance diffusion inference engine designed for developers.
+DiffSynth-Engine is a high-performance engine geared towards buidling efficient inference pipelines for diffusion models.
 
 **Key Features:**
 
-- **Clean and Readable Code:** Fully re-implements the Diffusion sampler and scheduler without relying on third-party libraries like k-diffusion, ldm, or sgm.
+- **Thoughtfully-Designed Implementation:** We carefully re-implemented key components in Diffusion pipelines, such as sampler and scheduler, without introducing external dependencies on libraries like k-diffusion, ldm, or sgm.
 
-- **Extensive Model Support:** Compatible with multiple formats (e.g., CivitAI format) of base models and LoRA models , catering to diverse use cases.
+- **Extensive Model Support:** Compatible with popular formats (e.g., CivitAI) of base models and LoRA models , catering to diverse use cases.
 
-- **Flexible Memory Management:** Supports various levels of model quantization (e.g., FP8, INT8) 
-and offload strategies, enabling users to run large models (e.g., Flux.1 Dev) on limited GPU memory.
+- **Versatile Resource Management:** Comprehensive support for varous model quantization (e.g., FP8, INT8) 
+and offloading strategies, enabling loading of larger diffusion models (e.g., Flux.1 Dev) on limited hardware budget of GPU memory.
 
-- **High-Performance Inference:** Optimizes the inference pipeline to achieve fast generation across various hardware environments.
+- **Optimized Performance:** Carefully-crafted inference pipeline to achieve fast generation across various hardware environments.
 
-- **Platform Compatibility:** Supports Windows, macOS (Apple Silicon), and Linux, ensuring a smooth experience across different operating systems.
+- **Cross-Platform Support:** Runnable on Windows, macOS (Apple Silicon), and Linux, ensuring a smooth experience across different operating systems.
 
 ## Quick Start
 ### Requirements
@@ -29,13 +29,13 @@ and offload strategies, enabling users to run large models (e.g., Flux.1 Dev) on
 
 ### Installation
 
-Install for PyPI (stable version)
-```python
+Install released version (from PyPI):
+```shell
 pip3 install diffsynth-engine
 ```
 
-Install for source (preview version)
-```python
+Install from source:
+```shell
 git clone https://github.com/modelscope/diffsynth-engine.git && cd diffsynth-engine
 pip3 install -e .
 ```
@@ -71,10 +71,10 @@ For more details, please refer to our tutorials ([English](./docs/tutorial.md), 
 
 ## Contact
 
-If you have any questions or feedback, please scan the QR code or send email to muse@alibaba-inc.com.
+If you have any questions or feedback, please scan the QR code below, or send email to muse@alibaba-inc.com.
 
 <div style="display: flex; justify-content: space-between;">
-    <img src="assets/dingtalk.png" alt="dingtalk" style="zoom: 60%;" />
+    <img src="assets/dingtalk.png" alt="dingtalk" width="400" />
 </div>
 
 ## License
@@ -82,7 +82,7 @@ This project is licensed under the Apache License 2.0. See the LICENSE file for 
 
 ## Citation
 
-If you use this codebase, or otherwise found our work valuable, please cite:
+If you use this codebase, or otherwise found our work helpful, please cite:
 
 ```bibtex
 @misc{diffsynth-engine2025,
