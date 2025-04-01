@@ -6,6 +6,7 @@ from typing import Dict
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
+from diffsynth_engine.utils.gguf import gguf_inference
 
 
 def fp16_clamp(x):
@@ -241,14 +242,15 @@ class WanTextEncoder(PreTrainedModel):
         self.norm = T5LayerNorm(dim)
 
     def forward(self, ids, mask=None):
-        x = self.token_embedding(ids)
-        x = self.dropout(x)
-        e = self.pos_embedding(x.size(1), x.size(1)) if self.shared_pos else None
-        for block in self.blocks:
-            x = block(x, mask, pos_bias=e)
-        x = self.norm(x)
-        x = self.dropout(x)
-        return x
+        with gguf_inference():
+            x = self.token_embedding(ids)
+            x = self.dropout(x)
+            e = self.pos_embedding(x.size(1), x.size(1)) if self.shared_pos else None
+            for block in self.blocks:
+                x = block(x, mask, pos_bias=e)
+            x = self.norm(x)
+            x = self.dropout(x)
+            return x
 
     @classmethod
     def from_state_dict(
@@ -259,6 +261,7 @@ class WanTextEncoder(PreTrainedModel):
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
+            model = model.requires_grad_(False)  # for loading gguf
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
