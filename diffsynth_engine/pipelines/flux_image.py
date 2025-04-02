@@ -188,6 +188,8 @@ class FluxModelConfig:
     t5_dtype: torch.dtype = torch.bfloat16
     vae_dtype: torch.dtype = torch.float32
 
+    dit_attn_impl: Optional[str] = "auto"
+
 
 class FluxImagePipeline(BasePipeline):
     lora_converter = FluxLoRAConverter()
@@ -267,7 +269,7 @@ class FluxImagePipeline(BasePipeline):
         tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
         tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
-            dit = FluxDiT.from_state_dict(dit_state_dict, device=init_device, dtype=model_config.dit_dtype)
+            dit = FluxDiT.from_state_dict(dit_state_dict, device=init_device, dtype=model_config.dit_dtype, attn_impl=model_config.dit_attn_impl)
             text_encoder_1 = FluxTextEncoder1.from_state_dict(
                 clip_state_dict, device=init_device, dtype=model_config.clip_dtype
             )
@@ -422,7 +424,7 @@ class FluxImagePipeline(BasePipeline):
     def prepare_latents(
         self,
         latents: torch.Tensor,
-        input_image: Image.Image,
+        input_image: Optional[Image.Image],
         denoising_strength: float,
         num_inference_steps: int,
         mu: float,
@@ -457,11 +459,6 @@ class FluxImagePipeline(BasePipeline):
     def enable_fp8_linear(self):
         enable_fp8_linear(self.dit)
 
-    def use_sage_attn(self):
-        self.dit.set_attn_implementation("sage_attn")
-
-    def use_sparge_attn(self):
-        self.dit.set_attn_implementation("sparge_attn")
 
     @torch.no_grad()
     def __call__(

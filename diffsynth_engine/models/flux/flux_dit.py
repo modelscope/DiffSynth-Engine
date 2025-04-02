@@ -1,7 +1,7 @@
 import json
 import torch
 import torch.nn as nn
-from typing import Dict
+from typing import Dict, Optional
 from einops import rearrange
 
 from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm, AdaLayerNormSingle, RoPEEmbedding, RMSNorm
@@ -12,13 +12,12 @@ from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
 from diffsynth_engine.utils import logging
+from diffsynth_engine.models.basic.attention import attention
 
 logger = logging.get_logger(__name__)
 
 with open(FLUX_DIT_CONFIG_FILE, "r") as f:
     config = json.load(f)
-
-_attn_func = nn.functional.scaled_dot_product_attention
 
 
 class FluxDiTStateDictConverter(StateDictConverter):
@@ -131,6 +130,7 @@ class FluxJointAttention(nn.Module):
         num_heads,
         head_dim,
         only_out_a=False,
+        attn_impl: Optional[str] = None,        
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -150,6 +150,7 @@ class FluxJointAttention(nn.Module):
         self.a_to_out = nn.Linear(dim_a, dim_a, device=device, dtype=dtype)
         if not only_out_a:
             self.b_to_out = nn.Linear(dim_b, dim_b, device=device, dtype=dtype)
+        self.attn_impl = attn_impl
 
     def apply_rope(self, xq, xk, freqs_cis):
         xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
@@ -163,13 +164,13 @@ class FluxJointAttention(nn.Module):
 
         # Part A
         qkv_a = self.a_to_qkv(hidden_states_a)
-        qkv_a = qkv_a.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
+        qkv_a = qkv_a.view(batch_size, -1, 3 * self.num_heads, self.head_dim)
         q_a, k_a, v_a = qkv_a.chunk(3, dim=1)
         q_a, k_a = self.norm_q_a(q_a), self.norm_k_a(k_a)
 
         # Part B
         qkv_b = self.b_to_qkv(hidden_states_b)
-        qkv_b = qkv_b.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
+        qkv_b = qkv_b.view(batch_size, -1, 3 * self.num_heads, self.head_dim)
         q_b, k_b, v_b = qkv_b.chunk(3, dim=1)
         q_b, k_b = self.norm_q_b(q_b), self.norm_k_b(k_b)
 
@@ -179,8 +180,8 @@ class FluxJointAttention(nn.Module):
 
         q, k = self.apply_rope(q, k, image_rotary_emb)
 
-        hidden_states = _attn_func(q, k, v)
-        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.head_dim)
+        hidden_states = attention(q, k, v, attn_impl=self.attn_impl)
+        hidden_states = hidden_states.reshape(batch_size, -1, self.num_heads * self.head_dim)
         hidden_states = hidden_states.to(q.dtype)
         hidden_states_b, hidden_states_a = (
             hidden_states[:, : hidden_states_b.shape[1]],
@@ -236,40 +237,6 @@ class FluxJointTransformerBlock(nn.Module):
         return hidden_states_a, hidden_states_b
 
 
-class FluxSingleAttention(nn.Module):
-    def __init__(self, dim_a, dim_b, num_heads, head_dim, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
-        super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = head_dim
-
-        self.a_to_qkv = nn.Linear(dim_a, dim_a * 3, device=device, dtype=dtype)
-
-        self.norm_q_a = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
-        self.norm_k_a = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
-
-    def apply_rope(self, xq, xk, freqs_cis):
-        xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
-        xk_ = xk.float().reshape(*xk.shape[:-1], -1, 1, 2)
-        xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
-        xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]
-        return xq_out.reshape(*xq.shape).type_as(xq), xk_out.reshape(*xk.shape).type_as(xk)
-
-    def forward(self, hidden_states, image_rotary_emb):
-        batch_size = hidden_states.shape[0]
-
-        qkv_a = self.a_to_qkv(hidden_states)
-        qkv_a = qkv_a.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
-        q_a, k_a, v = qkv_a.chunk(3, dim=1)
-        q_a, k_a = self.norm_q_a(q_a), self.norm_k_a(k_a)
-
-        q, k = self.apply_rope(q_a, k_a, image_rotary_emb)
-
-        hidden_states = _attn_func(q, k, v)
-        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.head_dim)
-        hidden_states = hidden_states.to(q.dtype)
-        return hidden_states
-
-
 class FluxSingleTransformerBlock(nn.Module):
     def __init__(self, dim, num_attention_heads, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
@@ -294,14 +261,14 @@ class FluxSingleTransformerBlock(nn.Module):
     def process_attention(self, hidden_states, image_rotary_emb):
         batch_size = hidden_states.shape[0]
 
-        qkv = hidden_states.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
+        qkv = hidden_states.view(batch_size, -1, 3 * self.num_heads, self.head_dim)
         q, k, v = qkv.chunk(3, dim=1)
         q, k = self.norm_q_a(q), self.norm_k_a(k)
 
         q, k = self.apply_rope(q, k, image_rotary_emb)
 
-        hidden_states = _attn_func(q, k, v)
-        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.head_dim)
+        hidden_states = attention(q, k, v, attn_impl=self.attn_impl)
+        hidden_states = hidden_states.reshape(batch_size, -1, self.num_heads * self.head_dim)
         hidden_states = hidden_states.to(q.dtype)
         return hidden_states
 
@@ -338,7 +305,7 @@ class AdaLayerNormContinuous(nn.Module):
 class FluxDiT(PreTrainedModel):
     converter = FluxDiTStateDictConverter()
 
-    def __init__(self, disable_guidance_embedder=False, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, disable_guidance_embedder=False, attn_impl:Optional[str] = None, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
         self.pos_embedder = RoPEEmbedding(3072, 10000, [16, 56, 56])
         self.time_embedder = TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
@@ -354,10 +321,10 @@ class FluxDiT(PreTrainedModel):
         self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
 
         self.blocks = nn.ModuleList(
-            [FluxJointTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(19)]
+            [FluxJointTransformerBlock(3072, 24, device=device, dtype=dtype, attn_impl=attn_impl) for _ in range(19)]
         )
         self.single_blocks = nn.ModuleList(
-            [FluxSingleTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(38)]
+            [FluxSingleTransformerBlock(3072, 24, device=device, dtype=dtype, attn_impl=attn_impl) for _ in range(38)]
         )
 
         self.final_norm_out = AdaLayerNormContinuous(3072, device=device, dtype=dtype)
@@ -467,38 +434,13 @@ class FluxDiT(PreTrainedModel):
         device: str,
         dtype: torch.dtype,
         disable_guidance_embedder: bool = False,
+        attn_impl:Optional[str] = None
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
-                cls, device=device, dtype=dtype, disable_guidance_embedder=disable_guidance_embedder
+                cls, device=device, dtype=dtype, disable_guidance_embedder=disable_guidance_embedder, attn_impl=attn_impl
             )
             model = model.requires_grad_(False)  # for loading gguf
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
-
-    @staticmethod
-    def set_attn_implementation(attn_implementation: str):
-        supported_implementations = ("sdpa", "sage_attn", "sparge_attn")
-        if attn_implementation not in supported_implementations:
-            raise ValueError(
-                f"attn_implementation must be one of {supported_implementations}, but got '{attn_implementation}'"
-            )
-
-        global _attn_func
-        if attn_implementation == "sage_attn":
-            try:
-                from sageattention import sageattn
-
-                _attn_func = sageattn
-            except ImportError:
-                raise ImportError("sageattn is not installed")
-        elif attn_implementation == "sparge_attn":
-            try:
-                from spas_sage_attn import spas_sage2_attn_meansim_cuda
-
-                _attn_func = spas_sage2_attn_meansim_cuda
-            except ImportError:
-                raise ImportError("spas_sage_attn is not installed")
-        else:
-            _attn_func = nn.functional.scaled_dot_product_attention
