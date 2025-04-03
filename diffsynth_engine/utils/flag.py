@@ -1,5 +1,5 @@
 import logging
-logger = logging.get_logger(__name__)
+logger = logging.getLogger(__name__)
 # 无损
 FLASH_ATTN_3_AVAILABLE=False
 FLASH_ATTN_2_AVAILABLE=False

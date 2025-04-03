@@ -196,13 +196,13 @@ class FluxJointAttention(nn.Module):
 
 
 class FluxJointTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, dim, num_attention_heads, attn_impl: Optional[str] = None, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
         self.norm1_a = AdaLayerNorm(dim, device=device, dtype=dtype)
         self.norm1_b = AdaLayerNorm(dim, device=device, dtype=dtype)
 
         self.attn = FluxJointAttention(
-            dim, dim, num_attention_heads, dim // num_attention_heads, device=device, dtype=dtype
+            dim, dim, num_attention_heads, dim // num_attention_heads, attn_impl=attn_impl, device=device, dtype=dtype
         )
 
         self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
@@ -238,7 +238,7 @@ class FluxJointTransformerBlock(nn.Module):
 
 
 class FluxSingleTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, dim, num_attention_heads, attn_impl:Optional[str] = None, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
         self.num_heads = num_attention_heads
         self.head_dim = dim // num_attention_heads
@@ -321,10 +321,10 @@ class FluxDiT(PreTrainedModel):
         self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
 
         self.blocks = nn.ModuleList(
-            [FluxJointTransformerBlock(3072, 24, device=device, dtype=dtype, attn_impl=attn_impl) for _ in range(19)]
+            [FluxJointTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(19)]
         )
         self.single_blocks = nn.ModuleList(
-            [FluxSingleTransformerBlock(3072, 24, device=device, dtype=dtype, attn_impl=attn_impl) for _ in range(38)]
+            [FluxSingleTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(38)]
         )
 
         self.final_norm_out = AdaLayerNormContinuous(3072, device=device, dtype=dtype)
