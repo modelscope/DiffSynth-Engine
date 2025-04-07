@@ -85,10 +85,11 @@ class SelfAttention(nn.Module):
         self.norm_k = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
 
     def forward(self, x, freqs):
-        q, k, v = self.norm_q(self.q(x)), self.norm_k(self.k(x)), self.v(x)    
-        q = rearrange(q, "b s (n d) -> b s n d", n=q.shape[2] // self.head_dim)
-        k = rearrange(k, "b s (n d) -> b s n d", n=q.shape[2] // self.head_dim)
-        v = rearrange(v, "b s (n d) -> b s n d", n=q.shape[2] // self.head_dim)
+        q, k, v = self.norm_q(self.q(x)), self.norm_k(self.k(x)), self.v(x)
+        num_heads = q.shape[2] // self.head_dim        
+        q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
+        k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
+        v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
         x = attention(
             q=rope_apply(q, freqs),
             k=rope_apply(k, freqs),
