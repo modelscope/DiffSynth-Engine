@@ -45,11 +45,11 @@ def precompute_freqs_cis(dim: int, end: int = 1024, theta: float = 10000.0):
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
     return freqs_cis
 
-def rope_apply(x, freqs):    
+def rope_apply(x, freqs):
     x_out = torch.view_as_complex(x.to(torch.float64).reshape(
         x.shape[0], x.shape[1], x.shape[2], -1, 2))
     x_out = torch.view_as_real(x_out * freqs)
-    return x_out.to(x.dtype)
+    return x_out.to(x.dtype).flatten(3)
 
 
 class RMSNorm(nn.Module):
@@ -83,6 +83,7 @@ class SelfAttention(nn.Module):
         self.o = nn.Linear(dim, dim, device=device, dtype=dtype)
         self.norm_q = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
         self.norm_k = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
+        self.attn_impl = attn_impl
 
     def forward(self, x, freqs):
         q, k, v = self.norm_q(self.q(x)), self.norm_k(self.k(x)), self.v(x)
