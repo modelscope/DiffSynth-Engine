@@ -40,7 +40,7 @@ class WanModelConfig:
 
 
 class WanLoRAConverter(LoRAStateDictConverter):
-    def from_modelscope(self, state_dict):
+    def _from_diffsynth(self, state_dict):
         dit_dict = {}
         for key, param in state_dict.items():
             lora_args = {}
@@ -58,8 +58,32 @@ class WanLoRAConverter(LoRAStateDictConverter):
             dit_dict[key] = lora_args
         return {"dit": dit_dict}
 
+    def _from_civitai(self, state_dict):
+        dit_dict = {}
+        for key, param in state_dict.items():
+            if ".lora_A.weight" not in key:
+                continue
+
+            lora_args = {}
+            lora_args["up"] = state_dict[key.replace(".lora_A.weight", ".lora_B.weight")]
+            lora_args["down"] = param
+            lora_args["rank"] = lora_args["up"].shape[1]
+            if key.replace(".lora_A.weight", ".alpha") in state_dict:
+                lora_args["alpha"] = state_dict[key.replace(".lora_A.weight", ".alpha")]
+            else:
+                lora_args["alpha"] = lora_args["rank"]
+            key = key.replace("diffusion_model.", "").replace(".lora_A.weight", "")
+            dit_dict[key] = lora_args
+        return {"dit": dit_dict}
+
     def convert(self, state_dict):
-        return self.from_modelscope(state_dict)
+        if "diffusion_model.blocks.0.cross_attn.k.lora_A.weight" in state_dict:
+            state_dict = self._from_civitai(state_dict)
+            logger.info("use civitai format state dict")
+        else:
+            state_dict = self._from_diffsynth(state_dict)
+            logger.info("use diffsynth format state dict")
+        return state_dict
 
 
 class WanVideoPipeline(BasePipeline):
