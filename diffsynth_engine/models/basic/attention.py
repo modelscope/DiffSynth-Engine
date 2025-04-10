@@ -8,12 +8,46 @@ from diffsynth_engine.utils.flag import (
     FLASH_ATTN_2_AVAILABLE,
     XFORMERS_AVAILABLE,
     SDPA_AVAILABLE,
+    SAGE_ATTN_AVAILABLE,
+    SPARGE_ATTN_AVAILABLE   
 )
+
+if FLASH_ATTN_3_AVAILABLE:
+    from flash_attn_interface import flash_attn_func as flash_attn3
+if FLASH_ATTN_2_AVAILABLE:
+    from flash_attn import flash_attn_func as flash_attn2
+if XFORMERS_AVAILABLE:
+    import xformers.ops.memory_efficient_attention as xformers_attn
+if SDPA_AVAILABLE:
+    def sdpa_attn(q, k, v, attn_mask=None, scale=None):
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        out =  torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, scale=scale)  
+        return out.transpose(1, 2)
+if SAGE_ATTN_AVAILABLE:
+    from sageattention import sageattn     
+    def sage_attn(q, k, v, attn_mask=None, scale=None):
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)        
+        out = sageattn(q, k, v, attn_mask=attn_mask, sm_scale=scale)
+        return out.transpose(1, 2)
+    
+if SPARGE_ATTN_AVAILABLE:
+    from spas_sage_attn import spas_sage2_attn_meansim_cuda
+    def sparge_attn(self, q, k, v, attn_mask=None, scale=None):
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2) 
+        out = spas_sage2_attn_meansim_cuda(q, k, v, attn_mask=attn_mask, scale=scale) 
+        return out.transpose(1, 2)
+
 
 logger = logging.get_logger(__name__)
 
 
-def _eager_attn(query, key, value, attn_mask=None, scale=None):
+def eager_attn(query, key, value, attn_mask=None, scale=None):
     scale = 1 / query.shape[-1] ** 0.5 if scale is None else scale
     query = query * scale
     attn = torch.matmul(query, key.transpose(-2, -1))
@@ -22,71 +56,42 @@ def _eager_attn(query, key, value, attn_mask=None, scale=None):
     attn = attn.softmax(-1)
     return attn @ value
 
-def attention(q, k, v, attn_mask=None, attn_impl:Optional[str]=None):
+def attention(q, k, v, attn_mask=None, attn_impl:Optional[str]=None, scale:Optional[float]=None):
     """
     q: [B, Lq, Nq, C1]
     k: [B, Lk, Nk, C1]
     v: [B, Lk, Nk, C2]
     """
     assert attn_impl in [None, 'auto', 'eager', 'flash_attn_2', 'flash_attn_3', 'xformers', 'sdpa', 'sage_attn', 'sparge_attn']
-    if attn_impl is None or attn_impl == "auto":    
+    if attn_impl is None or attn_impl == "auto":
         if FLASH_ATTN_3_AVAILABLE:
-            from flash_attn_interface import flash_attn_func
-            return flash_attn_func(q, k, v)
+            return flash_attn3(q, k, v, softmax_scale=scale)
         elif FLASH_ATTN_2_AVAILABLE:
-            from flash_attn import flash_attn_func
-            return flash_attn_func(q, k, v)
+            return flash_attn2(q, k, v, softmax_scale=scale)
         elif XFORMERS_AVAILABLE:
-            import xformers.ops as xops
-            return xops.memory_efficient_attention(q, k, v, attn_bias=attn_mask)
-        elif SDPA_AVAILABLE:            
-            q = q.transpose(1, 2)
-            k = k.transpose(1, 2)
-            v = v.transpose(1, 2)
-            return torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask).transpose(1, 2)
+            return xformers_attn(q, k, v, attn_bias=attn_mask, scale=scale)
+        elif SDPA_AVAILABLE:
+            return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         else:
-            return _eager_attn(q, k, v, attn_mask=attn_mask)
+            return eager_attn(q, k, v, attn_mask=attn_mask, scale=scale)
     else:
-        # (b, s, n, d)
-        if attn_impl == "eager":
-            return _eager_attn(q, k, v, attn_mask=attn_mask)
-        elif attn_impl == "flash_attn_3":
-            if not FLASH_ATTN_3_AVAILABLE:
-                raise ValueError("attn_impl is 'flash_attn_3', but Flash attention 3 is not available")
-            from flash_attn_interface import flash_attn_varlen_func
-            return flash_attn_varlen_func(q, k, v, attn_mask=attn_mask)
-        elif attn_impl == "flash_attn_2":
-            if not FLASH_ATTN_2_AVAILABLE:
-                raise ValueError("attn_impl is 'flash_attn_2', but Flash attention 2 is not available")
-            from flash_attn import flash_attn_varlen_func
-            return flash_attn_varlen_func(q, k, v, attn_mask=attn_mask)
-        elif attn_impl == "xformers":
-            if not XFORMERS_AVAILABLE:
-                raise ValueError("attn_impl is 'xformers', but XFormers is not available")
-            import xformers.ops as xops
-            return xops.memory_efficient_attention(q, k, v, attn_bias=attn_mask)
+        if attn_impl == 'eager':
+            return eager_attn(q, k, v, attn_mask=attn_mask, scale=scale)
+        elif attn_impl == 'flash_attn_3':
+            return flash_attn3(q, k, v, softmax_scale=scale)
+        elif attn_impl == 'flash_attn_2':
+            return flash_attn2(q, k, v, softmax_scale=scale)
+        elif attn_impl == 'xformers':
+            return xformers_attn(q, k, v, attn_bias=attn_mask, scale=scale)
+        elif attn_impl == 'sdpa':
+            return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
+        elif attn_impl == 'sage_attn':
+            return sage_attn(q, k, v, attn_mask=attn_mask, scale=scale)
+        elif attn_impl == 'sparge_attn':
+            return sparge_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         else:
-            # (b, n, s, d)        
-            q = q.transpose(1, 2)
-            k = k.transpose(1, 2)
-            v = v.transpose(1, 2)
-            if attn_impl == "sdpa":
-                if not SDPA_AVAILABLE:
-                    raise ValueError("attn_impl is 'sdpa', but Torch SDPA is not available")
-                output = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
-            elif attn_impl == "sage_attn":
-                if not SAGE_ATTN_AVAILABLE:
-                    raise ValueError("attn_impl is 'sage_attn', but Sage attention is not available")
-                from sageattention import sageattn
-                output = sageattn(q, k, v, attn_mask=attn_mask)
-            elif attn_impl == "sparge_attn":
-                if not SPARGE_ATTN_AVAILABLE:
-                    raise ValueError("attn_impl is 'sparge_attn', but Sparge attention is not available")
-                from spas_sage_attn import spas_sage2_attn_meansim_cuda
-                output = spas_sage2_attn_meansim_cuda(q, k, v, attn_mask=attn_mask)
-            else:
-                raise ValueError(f"Invalid attention implementation: {attn_impl}")
-            return output.transpose(1,2)
+            raise ValueError(f"Invalid attention implementation: {attn_impl}")
+    
 
 class Attention(nn.Module):
     def __init__(
@@ -114,6 +119,7 @@ class Attention(nn.Module):
         self.to_v = nn.Linear(kv_dim, dim_inner, bias=bias_kv, device=device, dtype=dtype)
         self.to_out = nn.Linear(dim_inner, q_dim, bias=bias_out, device=device, dtype=dtype)
         self.attn_impl = attn_impl
+        self.scale = scale
 
     def forward(
         self,
@@ -126,6 +132,6 @@ class Attention(nn.Module):
         q = rearrange(self.to_q(x), "b s (n d) -> b s n d", n=self.num_heads)
         k = rearrange(self.to_k(y), "b s (n d) -> b s n d", n=self.num_heads)
         v = rearrange(self.to_v(y), "b s (n d) -> b s n d", n=self.num_heads)
-        out = attention(q, k, v, attn_mask=attn_mask, attn_impl=self.attn_impl)
+        out = attention(q, k, v, attn_mask=attn_mask, attn_impl=self.attn_impl, scale=scale)
         out = rearrange(out, "b s n d -> b s (n d)", n=self.num_heads)
         return self.to_out(out)
