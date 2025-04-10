@@ -2,7 +2,7 @@ import torch
 
 
 class FlowMatchEulerSampler:
-    def initialize(self, init_latents, timesteps, sigmas, mask=None):        
+    def initialize(self, init_latents, timesteps, sigmas, mask=None):
         self.init_latents = init_latents
         self.timesteps = timesteps
         self.sigmas = sigmas

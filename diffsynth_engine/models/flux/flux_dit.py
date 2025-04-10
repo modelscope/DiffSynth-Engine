@@ -58,17 +58,17 @@ class FluxDiTStateDictConverter(StateDictConverter):
                 name_ = name.replace(".proj_in_besides_attn.", ".to_qkv_mlp.")
                 param = torch.concat(
                     [
-                        state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_q.")],
-                        state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_k.")],
-                        state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_v.")],
+                        state_dict_[name.replace(".proj_in_besides_attn.", ".a_to_q.")],
+                        state_dict_[name.replace(".proj_in_besides_attn.", ".a_to_k.")],
+                        state_dict_[name.replace(".proj_in_besides_attn.", ".a_to_v.")],
                         state_dict_[name],
                     ],
                     dim=0,
                 )
                 state_dict_[name_] = param
-                state_dict_.pop(name.replace(".proj_in_besides_attn.", f".a_to_q."))
-                state_dict_.pop(name.replace(".proj_in_besides_attn.", f".a_to_k."))
-                state_dict_.pop(name.replace(".proj_in_besides_attn.", f".a_to_v."))
+                state_dict_.pop(name.replace(".proj_in_besides_attn.", ".a_to_q."))
+                state_dict_.pop(name.replace(".proj_in_besides_attn.", ".a_to_k."))
+                state_dict_.pop(name.replace(".proj_in_besides_attn.", ".a_to_v."))
                 state_dict_.pop(name)
         for name in list(state_dict_.keys()):
             for component in ["a", "b"]:
@@ -130,7 +130,7 @@ class FluxJointAttention(nn.Module):
         num_heads,
         head_dim,
         only_out_a=False,
-        attn_impl: Optional[str] = None,        
+        attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -198,7 +198,14 @@ class FluxJointAttention(nn.Module):
 
 
 class FluxJointTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads, attn_impl: Optional[str] = None, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
+    def __init__(
+        self,
+        dim,
+        num_attention_heads,
+        attn_impl: Optional[str] = None,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.norm1_a = AdaLayerNorm(dim, device=device, dtype=dtype)
         self.norm1_b = AdaLayerNorm(dim, device=device, dtype=dtype)
@@ -240,7 +247,14 @@ class FluxJointTransformerBlock(nn.Module):
 
 
 class FluxSingleTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads, attn_impl:Optional[str] = None, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
+    def __init__(
+        self,
+        dim,
+        num_attention_heads,
+        attn_impl: Optional[str] = None,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.num_heads = num_attention_heads
         self.head_dim = dim // num_attention_heads
@@ -311,7 +325,13 @@ class AdaLayerNormContinuous(nn.Module):
 class FluxDiT(PreTrainedModel):
     converter = FluxDiTStateDictConverter()
 
-    def __init__(self, disable_guidance_embedder=False, attn_impl:Optional[str] = None, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
+    def __init__(
+        self,
+        disable_guidance_embedder=False,
+        attn_impl: Optional[str] = None,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.pos_embedder = RoPEEmbedding(3072, 10000, [16, 56, 56])
         self.time_embedder = TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
@@ -440,11 +460,15 @@ class FluxDiT(PreTrainedModel):
         device: str,
         dtype: torch.dtype,
         disable_guidance_embedder: bool = False,
-        attn_impl:Optional[str] = None
+        attn_impl: Optional[str] = None,
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
-                cls, device=device, dtype=dtype, disable_guidance_embedder=disable_guidance_embedder, attn_impl=attn_impl
+                cls,
+                device=device,
+                dtype=dtype,
+                disable_guidance_embedder=disable_guidance_embedder,
+                attn_impl=attn_impl,
             )
             model = model.requires_grad_(False)  # for loading gguf
         model.load_state_dict(state_dict, assign=True)

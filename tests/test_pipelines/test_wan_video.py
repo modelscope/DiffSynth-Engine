@@ -22,6 +22,3 @@ class TestWanVideo(VideoTestCase):
             height=480,
         )
         self.save_video(video, "wan_t2v.mp4")
-
-
-

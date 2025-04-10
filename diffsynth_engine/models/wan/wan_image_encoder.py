@@ -63,7 +63,6 @@ class SelfAttention(nn.Module):
         q, k, v = self.to_qkv(x).view(b, s, 3, n, d).unbind(2)
 
         # compute attention
-        p = self.attn_dropout if self.training else 0.0
         x = attention(q, k, v)
         x = x.reshape(b, s, c)
 

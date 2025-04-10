@@ -10,6 +10,7 @@ from .pipelines import (
 )
 from .utils.download import fetch_model, fetch_modelscope_model, fetch_civitai_model
 from .utils.video import load_video, save_video
+
 __all__ = [
     "FluxImagePipeline",
     "SDXLImagePipeline",
@@ -22,4 +23,6 @@ __all__ = [
     "fetch_model",
     "fetch_modelscope_model",
     "fetch_civitai_model",
+    "load_video",
+    "save_video",
 ]

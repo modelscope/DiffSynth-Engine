@@ -30,7 +30,7 @@ class FluxVAEStateDictConverter(VAEStateDictConverter):
         assert self.has_decoder or self.has_encoder, "Either decoder or encoder must be present"
         if "decoder.conv_in.weight" in state_dict or "encoder.conv_in.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
-            logger.info(f"use civitai format state dict")
+            logger.info("use civitai format state dict")
         else:
             logger.info("use diffsynth format state dict")
         return self._filter(state_dict)

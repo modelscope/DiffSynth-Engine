@@ -269,7 +269,9 @@ class FluxImagePipeline(BasePipeline):
         tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
         tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
-            dit = FluxDiT.from_state_dict(dit_state_dict, device=init_device, dtype=model_config.dit_dtype, attn_impl=model_config.dit_attn_impl)
+            dit = FluxDiT.from_state_dict(
+                dit_state_dict, device=init_device, dtype=model_config.dit_dtype, attn_impl=model_config.dit_attn_impl
+            )
             text_encoder_1 = FluxTextEncoder1.from_state_dict(
                 clip_state_dict, device=init_device, dtype=model_config.clip_dtype
             )
@@ -458,7 +460,6 @@ class FluxImagePipeline(BasePipeline):
 
     def enable_fp8_linear(self):
         enable_fp8_linear(self.dit)
-
 
     @torch.no_grad()
     def __call__(

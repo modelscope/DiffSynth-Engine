@@ -471,7 +471,7 @@ class WanVideoPipeline(BasePipeline):
                 model_type=model_type,
                 device="cpu",
                 dtype=model_config.dit_dtype,
-                attn_impl=model_config.dit_attn_impl
+                attn_impl=model_config.dit_attn_impl,
             )
             dit = ParallelModel(
                 dit,
@@ -487,7 +487,7 @@ class WanVideoPipeline(BasePipeline):
                     model_type=model_type,
                     device=init_device,
                     dtype=model_config.dit_dtype,
-                    attn_impl=model_config.dit_attn_impl
+                    attn_impl=model_config.dit_attn_impl,
                 )
 
         pipe = cls(

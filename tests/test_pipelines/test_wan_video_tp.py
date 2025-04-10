@@ -2,6 +2,7 @@ from ..common.test_case import VideoTestCase
 from diffsynth_engine.pipelines import WanVideoPipeline, WanModelConfig
 from diffsynth_engine.utils.download import fetch_model
 
+
 class TestWanVideoTP(VideoTestCase):
     @classmethod
     def setUpClass(cls):

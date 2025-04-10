@@ -6,7 +6,6 @@ import regex as re
 from .t5 import T5TokenizerFast
 
 
-
 def basic_clean(text):
     text = ftfy.fix_text(text)
     text = html.unescape(html.unescape(text))
@@ -14,28 +13,28 @@ def basic_clean(text):
 
 
 def whitespace_clean(text):
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r"\s+", " ", text)
     text = text.strip()
     return text
 
 
 def canonicalize(text, keep_punctuation_exact_string=None):
-    text = text.replace('_', ' ')
+    text = text.replace("_", " ")
     if keep_punctuation_exact_string:
         text = keep_punctuation_exact_string.join(
-            part.translate(str.maketrans('', '', string.punctuation))
-            for part in text.split(keep_punctuation_exact_string))
+            part.translate(str.maketrans("", "", string.punctuation))
+            for part in text.split(keep_punctuation_exact_string)
+        )
     else:
-        text = text.translate(str.maketrans('', '', string.punctuation))
+        text = text.translate(str.maketrans("", "", string.punctuation))
     text = text.lower()
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
 class WanT5Tokenizer:
-
     def __init__(self, name, seq_len=None, clean=None, **kwargs):
-        assert clean in (None, 'whitespace', 'lower', 'canonicalize')
+        assert clean in (None, "whitespace", "lower", "canonicalize")
         self.name = name
         self.seq_len = seq_len
         self.clean = clean
@@ -45,16 +44,12 @@ class WanT5Tokenizer:
         self.vocab_size = self.tokenizer.vocab_size
 
     def __call__(self, sequence, **kwargs):
-        return_mask = kwargs.pop('return_mask', False)
+        return_mask = kwargs.pop("return_mask", False)
 
         # arguments
-        _kwargs = {'return_tensors': 'pt'}
+        _kwargs = {"return_tensors": "pt"}
         if self.seq_len is not None:
-            _kwargs.update({
-                'padding': 'max_length',
-                'truncation': True,
-                'max_length': self.seq_len
-            })
+            _kwargs.update({"padding": "max_length", "truncation": True, "max_length": self.seq_len})
         _kwargs.update(**kwargs)
 
         # tokenization
@@ -65,15 +60,15 @@ class WanT5Tokenizer:
         ids = self.tokenizer(sequence, **_kwargs)
         # output
         if return_mask:
-            return ids['input_ids'], ids['attention_mask']
+            return ids["input_ids"], ids["attention_mask"]
         else:
-            return ids['input_ids']
+            return ids["input_ids"]
 
     def _clean(self, text):
-        if self.clean == 'whitespace':
+        if self.clean == "whitespace":
             text = whitespace_clean(basic_clean(text))
-        elif self.clean == 'lower':
+        elif self.clean == "lower":
             text = whitespace_clean(basic_clean(text)).lower()
-        elif self.clean == 'canonicalize':
+        elif self.clean == "canonicalize":
             text = canonicalize(basic_clean(text))
         return text

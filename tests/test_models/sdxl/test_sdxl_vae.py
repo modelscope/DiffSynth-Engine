@@ -12,9 +12,7 @@ from diffsynth_engine import fetch_model
 class TestSDXLVAE(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_model(
-            "muse/sd_xl_base_1.0", revision="20240425120250", path="sd_xl_base_1.0.safetensors"
-        )
+        model_path = fetch_model("muse/sd_xl_base_1.0", revision="20240425120250", path="sd_xl_base_1.0.safetensors")
         loaded_state_dict = load_file(model_path)
         cls.encoder = SDXLVAEEncoder.from_state_dict(loaded_state_dict, device="cuda:0", dtype=torch.float32).eval()
         cls.decoder = SDXLVAEDecoder.from_state_dict(loaded_state_dict, device="cuda:0", dtype=torch.float32).eval()

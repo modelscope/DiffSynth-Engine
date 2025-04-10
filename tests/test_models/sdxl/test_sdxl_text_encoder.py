@@ -16,9 +16,7 @@ class TestSDXLTextEncoder(TestCase):
         cls.tokenizer_1 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         cls.tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
 
-        model_path = fetch_model(
-            "muse/sd_xl_base_1.0", revision="20240425120250", path="sd_xl_base_1.0.safetensors"
-        )
+        model_path = fetch_model("muse/sd_xl_base_1.0", revision="20240425120250", path="sd_xl_base_1.0.safetensors")
         loaded_state_dict = load_file(model_path)
         cls.text_encoder_1 = SDXLTextEncoder.from_state_dict(
             loaded_state_dict, device="cuda:0", dtype=torch.float16

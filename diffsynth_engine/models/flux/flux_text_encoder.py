@@ -51,10 +51,8 @@ class FluxTextEncoder1(SDTextEncoder):
         embeds = self.token_embedding(input_ids)
         embeds += self.position_embeds.to(device=embeds.device, dtype=embeds.dtype)
         attn_mask = self.attn_mask.to(device=embeds.device, dtype=embeds.dtype)
-        for encoder_id, encoder in enumerate(self.encoders):
+        for encoder in self.encoders:
             embeds = encoder(embeds, attn_mask=attn_mask)
-            if encoder_id + clip_skip == len(self.encoders):
-                hidden_states = embeds  # clip_skip has no effect on the output
         embeds = self.final_layer_norm(embeds)
         pooled_embeds = embeds[torch.arange(embeds.shape[0]), input_ids.to(dtype=torch.int).argmax(dim=-1)]
         return embeds, pooled_embeds

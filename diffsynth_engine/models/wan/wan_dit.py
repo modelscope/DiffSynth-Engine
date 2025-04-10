@@ -45,9 +45,9 @@ def precompute_freqs_cis(dim: int, end: int = 1024, theta: float = 10000.0):
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
     return freqs_cis
 
+
 def rope_apply(x, freqs):
-    x_out = torch.view_as_complex(x.to(torch.float64).reshape(
-        x.shape[0], x.shape[1], x.shape[2], -1, 2))
+    x_out = torch.view_as_complex(x.to(torch.float64).reshape(x.shape[0], x.shape[1], x.shape[2], -1, 2))
     x_out = torch.view_as_real(x_out * freqs)
     return x_out.to(x.dtype).flatten(3)
 
@@ -73,7 +73,15 @@ class RMSNorm(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, eps: float = 1e-6, attn_impl: Optional[str] = None, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        eps: float = 1e-6,
+        attn_impl: Optional[str] = None,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.dim = dim
         self.head_dim = dim // num_heads
@@ -87,16 +95,11 @@ class SelfAttention(nn.Module):
 
     def forward(self, x, freqs):
         q, k, v = self.norm_q(self.q(x)), self.norm_k(self.k(x)), self.v(x)
-        num_heads = q.shape[2] // self.head_dim        
+        num_heads = q.shape[2] // self.head_dim
         q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
-        x = attention(
-            q=rope_apply(q, freqs),
-            k=rope_apply(k, freqs),
-            v=v,
-            attn_impl=self.attn_impl
-        ).flatten(2)
+        x = attention(q=rope_apply(q, freqs), k=rope_apply(k, freqs), v=v, attn_impl=self.attn_impl).flatten(2)
         return self.o(x)
 
 
@@ -107,7 +110,7 @@ class CrossAttention(nn.Module):
         num_heads: int,
         eps: float = 1e-6,
         has_image_input: bool = False,
-        attn_impl:Optional[str] = None,
+        attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -138,12 +141,12 @@ class CrossAttention(nn.Module):
         num_heads = q.shape[2] // self.head_dim
         q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
-        v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)        
+        v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
 
         x = attention(q, k, v, attn_impl=self.attn_impl).flatten(2)
         if self.has_image_input:
             k_img, v_img = self.norm_k_img(self.k_img(img)), self.v_img(img)
-            k_img = rearrange(k_img, 'b s (n d) -> b s n d', n=num_heads)
+            k_img = rearrange(k_img, "b s (n d) -> b s n d", n=num_heads)
             y = attention(q, k_img, v_img, attn_impl=self.attn_impl).flatten(2)
             x = x + y
         return self.o(x)
@@ -157,7 +160,7 @@ class DiTBlock(nn.Module):
         num_heads: int,
         ffn_dim: int,
         eps: float = 1e-6,
-        attn_impl:Optional[str] = None,
+        attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -256,8 +259,8 @@ class WanDiT(PreTrainedModel):
         num_layers: int,
         has_image_input: bool,
         attn_impl: Optional[str] = None,
-        device: str = 'cpu',
-        dtype: torch.dtype = torch.bfloat16
+        device: str = "cpu",
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
 
@@ -352,18 +355,19 @@ class WanDiT(PreTrainedModel):
             return x
 
     @classmethod
-    def from_state_dict(cls, state_dict, device, dtype, model_type='1.3b-t2v', attn_impl:Optional[str] = None, assign=True):
-        if model_type == '1.3b-t2v':
-            config = json.load(open(WAN_DIT_1_3B_T2V_CONFIG_FILE, 'r'))
-        elif model_type == '14b-t2v':
-            config = json.load(open(WAN_DIT_14B_T2V_CONFIG_FILE, 'r'))
-        elif model_type == '14b-i2v':
-            config = json.load(open(WAN_DIT_14B_I2V_CONFIG_FILE, 'r'))
+    def from_state_dict(
+        cls, state_dict, device, dtype, model_type="1.3b-t2v", attn_impl: Optional[str] = None, assign=True
+    ):
+        if model_type == "1.3b-t2v":
+            config = json.load(open(WAN_DIT_1_3B_T2V_CONFIG_FILE, "r"))
+        elif model_type == "14b-t2v":
+            config = json.load(open(WAN_DIT_14B_T2V_CONFIG_FILE, "r"))
+        elif model_type == "14b-i2v":
+            config = json.load(open(WAN_DIT_14B_I2V_CONFIG_FILE, "r"))
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
         with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls, **config, device=device, dtype=dtype, attn_impl=attn_impl)
+            model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype, attn_impl=attn_impl)
             model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=assign)
         model.to(device=device, dtype=dtype)

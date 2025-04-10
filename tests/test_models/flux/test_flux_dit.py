@@ -13,9 +13,7 @@ from tests.common.test_case import TestCase, RUN_EXTRA_TEST
 class TestFluxDiT(TestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_model(
-            "muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors"
-        )
+        model_path = fetch_model("muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors")
         loaded_state_dict = load_file(model_path)
         cls.dit = FluxDiT.from_state_dict(loaded_state_dict, device="cuda:0", dtype=torch.bfloat16).eval()
 
