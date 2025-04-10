@@ -2,13 +2,12 @@ from ..common.test_case import VideoTestCase
 from diffsynth_engine.pipelines import WanVideoPipeline, WanModelConfig
 from diffsynth_engine.utils.download import fetch_model
 
-
-class TestWanVideo(VideoTestCase):
+class TestWanVideoGGUF(VideoTestCase):
     @classmethod
     def setUpClass(cls):
         config = WanModelConfig(
-            model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
-            t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
+            model_path=fetch_model("city96/Wan2.1-T2V-14B-gguf", path="wan2.1-t2v-14b-Q4_1.gguf"),
+            t5_path=fetch_model("city96/umt5-xxl-encoder-gguf", path="umt5-xxl-encoder-Q4_K_M.gguf"),
             vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
         )
         cls.pipe = WanVideoPipeline.from_pretrained(config)
@@ -22,6 +21,3 @@ class TestWanVideo(VideoTestCase):
             height=480,
         )
         self.save_video(video, "wan_t2v.mp4")
-
-
-

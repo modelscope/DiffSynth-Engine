@@ -164,13 +164,13 @@ class FluxJointAttention(nn.Module):
 
         # Part A
         qkv_a = self.a_to_qkv(hidden_states_a)
-        qkv_a = qkv_a.view(batch_size, -1, 3 * self.num_heads, self.head_dim)
+        qkv_a = qkv_a.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
         q_a, k_a, v_a = qkv_a.chunk(3, dim=1)
         q_a, k_a = self.norm_q_a(q_a), self.norm_k_a(k_a)
 
         # Part B
         qkv_b = self.b_to_qkv(hidden_states_b)
-        qkv_b = qkv_b.view(batch_size, -1, 3 * self.num_heads, self.head_dim)
+        qkv_b = qkv_b.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
         q_b, k_b, v_b = qkv_b.chunk(3, dim=1)
         q_b, k_b = self.norm_q_b(q_b), self.norm_k_b(k_b)
 
@@ -179,7 +179,9 @@ class FluxJointAttention(nn.Module):
         v = torch.concat([v_b, v_a], dim=2)
 
         q, k = self.apply_rope(q, k, image_rotary_emb)
-
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
         hidden_states = attention(q, k, v, attn_impl=self.attn_impl)
         hidden_states = hidden_states.reshape(batch_size, -1, self.num_heads * self.head_dim)
         hidden_states = hidden_states.to(q.dtype)
@@ -250,6 +252,7 @@ class FluxSingleTransformerBlock(nn.Module):
         self.norm_k_a = RMSNorm(self.head_dim, eps=1e-6, device=device, dtype=dtype)
 
         self.proj_out = nn.Linear(dim * 5, dim)
+        self.attn_impl = attn_impl
 
     def apply_rope(self, xq, xk, freqs_cis):
         xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
@@ -261,11 +264,14 @@ class FluxSingleTransformerBlock(nn.Module):
     def process_attention(self, hidden_states, image_rotary_emb):
         batch_size = hidden_states.shape[0]
 
-        qkv = hidden_states.view(batch_size, -1, 3 * self.num_heads, self.head_dim)
+        qkv = hidden_states.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
         q, k, v = qkv.chunk(3, dim=1)
         q, k = self.norm_q_a(q), self.norm_k_a(k)
 
         q, k = self.apply_rope(q, k, image_rotary_emb)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
 
         hidden_states = attention(q, k, v, attn_impl=self.attn_impl)
         hidden_states = hidden_states.reshape(batch_size, -1, self.num_heads * self.head_dim)

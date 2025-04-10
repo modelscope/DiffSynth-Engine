@@ -31,15 +31,15 @@ def attention(q, k, v, attn_mask=None, attn_impl:Optional[str]=None):
     assert attn_impl in [None, 'auto', 'eager', 'flash_attn_2', 'flash_attn_3', 'xformers', 'sdpa', 'sage_attn', 'sparge_attn']
     if attn_impl is None or attn_impl == "auto":    
         if FLASH_ATTN_3_AVAILABLE:
-            from flash_attn_interface import flash_attn_varlen_func
-            return flash_attn_varlen_func(q, k, v, attn_mask=attn_mask)
+            from flash_attn_interface import flash_attn_func
+            return flash_attn_func(q, k, v)
         elif FLASH_ATTN_2_AVAILABLE:
-            from flash_attn import flash_attn_varlen_func
-            return flash_attn_varlen_func(q, k, v, attn_mask=attn_mask)
+            from flash_attn import flash_attn_func
+            return flash_attn_func(q, k, v)
         elif XFORMERS_AVAILABLE:
             import xformers.ops as xops
             return xops.memory_efficient_attention(q, k, v, attn_bias=attn_mask)
-        elif SDPA_AVAILABLE:
+        elif SDPA_AVAILABLE:            
             q = q.transpose(1, 2)
             k = k.transpose(1, 2)
             v = v.transpose(1, 2)

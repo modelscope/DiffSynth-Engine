@@ -51,12 +51,12 @@ class BasicTransformerBlock(nn.Module):
     def forward(self, hidden_states, encoder_hidden_states):
         # 1. Self-Attention
         norm_hidden_states = self.norm1(hidden_states)
-        attn_output = self.attn1(norm_hidden_states, encoder_hidden_states=None)
+        attn_output = self.attn1(norm_hidden_states)
         hidden_states = attn_output + hidden_states
 
         # 2. Cross-Attention
         norm_hidden_states = self.norm2(hidden_states)
-        attn_output = self.attn2(norm_hidden_states, encoder_hidden_states=encoder_hidden_states)
+        attn_output = self.attn2(norm_hidden_states, y=encoder_hidden_states)
         hidden_states = attn_output + hidden_states
 
         # 3. Feed-forward
