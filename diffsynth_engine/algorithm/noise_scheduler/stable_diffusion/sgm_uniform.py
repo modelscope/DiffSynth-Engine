@@ -1,6 +1,7 @@
 import torch
-from .linear import ScaledLinearScheduler
-from ..base_scheduler import append_zero
+
+from diffsynth_engine.algorithm.noise_scheduler.stable_diffusion.linear import ScaledLinearScheduler
+from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import append_zero
 
 
 class SGMUniformScheduler(ScaledLinearScheduler):
