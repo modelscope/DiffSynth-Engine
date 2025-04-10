@@ -52,6 +52,7 @@ def fetch_modelscope_model(
             model_id,
             revision=revision,
             local_dir=directory,
+            allow_patterns=path
         )
 
     if path is not None:
