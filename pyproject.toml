@@ -29,7 +29,8 @@ dependencies = [
     "scipy",
     "torchsde",
     "pillow",
-    "imageio[ffmpeg]"
+    "imageio[ffmpeg]",
+    "yunchang"
 ]
 
 [project.optional-dependencies]

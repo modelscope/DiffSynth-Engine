@@ -2,19 +2,24 @@ import math
 import json
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from typing import Tuple, Optional
 from einops import rearrange
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
+from diffsynth_engine.models.basic.attention import attention, long_context_attention
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import (
     WAN_DIT_1_3B_T2V_CONFIG_FILE,
     WAN_DIT_14B_I2V_CONFIG_FILE,
     WAN_DIT_14B_T2V_CONFIG_FILE,
 )
-
 from diffsynth_engine.utils.gguf import gguf_inference
-from diffsynth_engine.models.basic.attention import attention
+from diffsynth_engine.utils.parallel import (
+    get_sp_group,
+    get_sp_world_size,
+    get_sp_rank,
+)
 
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
@@ -99,7 +104,21 @@ class SelfAttention(nn.Module):
         q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
-        x = attention(q=rope_apply(q, freqs), k=rope_apply(k, freqs), v=v, attn_impl=self.attn_impl).flatten(2)
+        if getattr(self, "use_usp", False):
+            x = long_context_attention(
+                query=rope_apply(q, freqs),
+                key=rope_apply(k, freqs),
+                value=v,
+                attn_impl=self.attn_impl,
+            )
+        else:
+            x = attention(
+                q=rope_apply(q, freqs),
+                k=rope_apply(k, freqs),
+                v=v,
+                attn_impl=self.attn_impl,
+            )
+        x = x.flatten(2)
         return self.o(x)
 
 
@@ -259,6 +278,7 @@ class WanDiT(PreTrainedModel):
         num_layers: int,
         has_image_input: bool,
         attn_impl: Optional[str] = None,
+        use_usp: bool = False,
         device: str = "cpu",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -300,6 +320,11 @@ class WanDiT(PreTrainedModel):
 
         if has_image_input:
             self.img_emb = MLP(1280, dim, device=device, dtype=dtype)  # clip_feature_dim = 1280
+
+        if use_usp:
+            setattr(self, "use_usp", True)
+            for block in self.blocks:
+                setattr(block.self_attn, "use_usp", True)
 
     def patchify(self, x: torch.Tensor):
         x = self.patch_embedding(x)  # b c f h w -> b 4c f h/2 w/2
@@ -348,15 +373,34 @@ class WanDiT(PreTrainedModel):
                 .reshape(f * h * w, 1, -1)
                 .to(x.device)
             )
+            if getattr(self, "use_usp", False):
+                s, p = x.size(1), get_sp_world_size()  # (sequence_length, parallelism)
+                split_size = [s // p + 1 if i < s % p else s // p for i in range(p)]
+                x = torch.split(x, split_size, dim=1)[get_sp_rank()]
+                freqs = torch.split(freqs, split_size, dim=0)[get_sp_rank()]
+
             for block in self.blocks:
                 x = block(x, context, t_mod, freqs)
             x = self.head(x, t)
+
+            if getattr(self, "use_usp", False):
+                b, d = x.size(0), x.size(2)  # (batch_size, out_dim)
+                xs = [torch.zeros((b, s, d), dtype=x.dtype, device=x.device) for s in split_size]
+                dist.all_gather(xs, x, group=get_sp_group())
+                x = torch.concat(xs, dim=1)
             x = self.unpatchify(x, (f, h, w))
             return x
 
     @classmethod
     def from_state_dict(
-        cls, state_dict, device, dtype, model_type="1.3b-t2v", attn_impl: Optional[str] = None, assign=True
+        cls,
+        state_dict,
+        device,
+        dtype,
+        model_type="1.3b-t2v",
+        attn_impl: Optional[str] = None,
+        use_usp=False,
+        assign=True,
     ):
         if model_type == "1.3b-t2v":
             config = json.load(open(WAN_DIT_1_3B_T2V_CONFIG_FILE, "r"))
@@ -367,66 +411,10 @@ class WanDiT(PreTrainedModel):
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype, attn_impl=attn_impl)
+            model = torch.nn.utils.skip_init(
+                cls, **config, device=device, dtype=dtype, attn_impl=attn_impl, use_usp=use_usp
+            )
             model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=assign)
         model.to(device=device, dtype=dtype)
         return model
-
-    def get_tp_plan(self):
-        from torch.distributed.tensor.parallel import (
-            ColwiseParallel,
-            RowwiseParallel,
-            SequenceParallel,
-            PrepareModuleOutput,
-        )
-        from torch.distributed.tensor import Replicate, Shard
-
-        tp_plan = {
-            "text_embedding.0": ColwiseParallel(),
-            "text_embedding.2": RowwiseParallel(),
-            "time_embedding.0": ColwiseParallel(),
-            "time_embedding.2": RowwiseParallel(),
-            "time_projection.1": ColwiseParallel(output_layouts=Replicate()),
-        }
-        for idx in range(len(self.blocks)):
-            tp_plan.update(
-                {
-                    f"blocks.{idx}.norm1": SequenceParallel(use_local_output=True),
-                    f"blocks.{idx}.norm2": SequenceParallel(use_local_output=True),
-                    f"blocks.{idx}.norm3": SequenceParallel(use_local_output=True),
-                    f"blocks.{idx}.ffn.0": ColwiseParallel(),
-                    f"blocks.{idx}.ffn.2": RowwiseParallel(),
-                    f"blocks.{idx}.self_attn.q": ColwiseParallel(output_layouts=Replicate()),
-                    f"blocks.{idx}.self_attn.k": ColwiseParallel(output_layouts=Replicate()),
-                    f"blocks.{idx}.self_attn.v": ColwiseParallel(),
-                    f"blocks.{idx}.self_attn.o": RowwiseParallel(),
-                    f"blocks.{idx}.self_attn.norm_q": PrepareModuleOutput(
-                        output_layouts=Replicate(),
-                        desired_output_layouts=Shard(-1),
-                    ),
-                    f"blocks.{idx}.self_attn.norm_k": PrepareModuleOutput(
-                        output_layouts=Replicate(),
-                        desired_output_layouts=Shard(-1),
-                    ),
-                    f"blocks.{idx}.cross_attn.q": ColwiseParallel(output_layouts=Replicate()),
-                    f"blocks.{idx}.cross_attn.k": ColwiseParallel(output_layouts=Replicate()),
-                    f"blocks.{idx}.cross_attn.v": ColwiseParallel(),
-                    f"blocks.{idx}.cross_attn.o": RowwiseParallel(),
-                    f"blocks.{idx}.cross_attn.norm_q": PrepareModuleOutput(
-                        output_layouts=Replicate(),
-                        desired_output_layouts=Shard(-1),
-                    ),
-                    f"blocks.{idx}.cross_attn.norm_k": PrepareModuleOutput(
-                        output_layouts=Replicate(),
-                        desired_output_layouts=Shard(-1),
-                    ),
-                    f"blocks.{idx}.cross_attn.k_img": ColwiseParallel(output_layouts=Replicate()),
-                    f"blocks.{idx}.cross_attn.v_img": ColwiseParallel(),
-                    f"blocks.{idx}.cross_attn.norm_k_img": PrepareModuleOutput(
-                        output_layouts=Replicate(),
-                        desired_output_layouts=Shard(-1),
-                    ),
-                }
-            )
-        return tp_plan

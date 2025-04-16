@@ -2,6 +2,9 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 from typing import Optional
+from yunchang import LongContextAttention
+from yunchang.kernels import AttnType
+
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.flag import (
     FLASH_ATTN_3_AVAILABLE,
@@ -12,12 +15,15 @@ from diffsynth_engine.utils.flag import (
     SPARGE_ATTN_AVAILABLE,
 )
 
+logger = logging.get_logger(__name__)
+
+
 if FLASH_ATTN_3_AVAILABLE:
     from flash_attn_interface import flash_attn_func as flash_attn3
 if FLASH_ATTN_2_AVAILABLE:
     from flash_attn import flash_attn_func as flash_attn2
 if XFORMERS_AVAILABLE:
-    import xformers.ops.memory_efficient_attention as xformers_attn
+    from xformers.ops import memory_efficient_attention as xformers_attn
 if SDPA_AVAILABLE:
 
     def sdpa_attn(q, k, v, attn_mask=None, scale=None):
@@ -50,20 +56,28 @@ if SPARGE_ATTN_AVAILABLE:
         return out.transpose(1, 2)
 
 
-logger = logging.get_logger(__name__)
-
-
-def eager_attn(query, key, value, attn_mask=None, scale=None):
-    scale = 1 / query.shape[-1] ** 0.5 if scale is None else scale
-    query = query * scale
-    attn = torch.matmul(query, key.transpose(-2, -1))
+def eager_attn(q, k, v, attn_mask=None, scale=None):
+    q = q.transpose(1, 2)
+    k = k.transpose(1, 2)
+    v = v.transpose(1, 2)
+    scale = 1 / q.shape[-1] ** 0.5 if scale is None else scale
+    q = q * scale
+    attn = torch.matmul(q, k.transpose(-2, -1))
     if attn_mask is not None:
         attn = attn + attn_mask
     attn = attn.softmax(-1)
-    return attn @ value
+    out = attn @ v
+    return out.transpose(1, 2)
 
 
-def attention(q, k, v, attn_mask=None, attn_impl: Optional[str] = None, scale: Optional[float] = None):
+def attention(
+    q,
+    k,
+    v,
+    attn_impl: Optional[str] = None,
+    attn_mask: Optional[torch.Tensor] = None,
+    scale: Optional[float] = None,
+):
     """
     q: [B, Lq, Nq, C1]
     k: [B, Lk, Nk, C1]
@@ -152,3 +166,52 @@ class Attention(nn.Module):
         out = attention(q, k, v, attn_mask=attn_mask, attn_impl=self.attn_impl, scale=self.scale)
         out = rearrange(out, "b s n d -> b s (n d)", n=self.num_heads)
         return self.to_out(out)
+
+
+def long_context_attention(
+    q,
+    k,
+    v,
+    attn_impl: Optional[str] = None,
+    attn_mask: Optional[torch.Tensor] = None,
+    scale: Optional[float] = None,
+):
+    """
+    q: [B, Lq, Nq, C1]
+    k: [B, Lk, Nk, C1]
+    v: [B, Lk, Nk, C2]
+    """
+    assert attn_impl in [
+        None,
+        "auto",
+        "eager",
+        "flash_attn_2",
+        "flash_attn_3",
+        "xformers",
+        "sdpa",
+        "sage_attn",
+        "sparge_attn",
+    ]
+    if attn_impl is None or attn_impl == "auto":
+        if FLASH_ATTN_3_AVAILABLE:
+            attn_func = LongContextAttention(AttnType.FA3)
+        elif FLASH_ATTN_2_AVAILABLE:
+            attn_func = LongContextAttention(AttnType.FA)
+        elif SDPA_AVAILABLE:
+            attn_func = LongContextAttention(AttnType.TORCH)
+        else:
+            raise ValueError("No available long context attention implementation")
+    else:
+        if attn_impl == "flash_attn_3":
+            attn_func = LongContextAttention(AttnType.FA3)
+        elif attn_impl == "flash_attn_2":
+            attn_func = LongContextAttention(AttnType.FA)
+        elif attn_impl == "sdpa":
+            attn_func = LongContextAttention(AttnType.TORCH)
+        elif attn_impl == "sage_attn":
+            attn_func = LongContextAttention(AttnType.SAGE_FP8)
+        elif attn_impl == "sparge_attn":
+            attn_func = LongContextAttention(AttnType.SPARSE_SAGE)
+        else:
+            raise ValueError(f"Invalid long context attention implementation: {attn_impl}")
+        return attn_func(q, k, v, softmax_scale=scale)
