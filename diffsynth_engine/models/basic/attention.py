@@ -194,24 +194,24 @@ def long_context_attention(
     ]
     if attn_impl is None or attn_impl == "auto":
         if FLASH_ATTN_3_AVAILABLE:
-            attn_func = LongContextAttention(AttnType.FA3)
+            attn_func = LongContextAttention(attn_type=AttnType.FA3)
         elif FLASH_ATTN_2_AVAILABLE:
-            attn_func = LongContextAttention(AttnType.FA)
+            attn_func = LongContextAttention(attn_type=AttnType.FA)
         elif SDPA_AVAILABLE:
-            attn_func = LongContextAttention(AttnType.TORCH)
+            attn_func = LongContextAttention(attn_type=AttnType.TORCH)
         else:
             raise ValueError("No available long context attention implementation")
     else:
         if attn_impl == "flash_attn_3":
-            attn_func = LongContextAttention(AttnType.FA3)
+            attn_func = LongContextAttention(attn_type=AttnType.FA3)
         elif attn_impl == "flash_attn_2":
-            attn_func = LongContextAttention(AttnType.FA)
+            attn_func = LongContextAttention(attn_type=AttnType.FA)
         elif attn_impl == "sdpa":
-            attn_func = LongContextAttention(AttnType.TORCH)
+            attn_func = LongContextAttention(attn_type=AttnType.TORCH)
         elif attn_impl == "sage_attn":
-            attn_func = LongContextAttention(AttnType.SAGE_FP8)
+            attn_func = LongContextAttention(attn_type=AttnType.SAGE_FP8)
         elif attn_impl == "sparge_attn":
-            attn_func = LongContextAttention(AttnType.SPARSE_SAGE)
+            attn_func = LongContextAttention(attn_type=AttnType.SPARSE_SAGE)
         else:
             raise ValueError(f"Invalid long context attention implementation: {attn_impl}")
-        return attn_func(q, k, v, softmax_scale=scale)
+    return attn_func(q, k, v, softmax_scale=scale)

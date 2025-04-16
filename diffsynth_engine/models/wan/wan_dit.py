@@ -106,9 +106,9 @@ class SelfAttention(nn.Module):
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
         if getattr(self, "use_usp", False):
             x = long_context_attention(
-                query=rope_apply(q, freqs),
-                key=rope_apply(k, freqs),
-                value=v,
+                q=rope_apply(q, freqs),
+                k=rope_apply(k, freqs),
+                v=v,
                 attn_impl=self.attn_impl,
             )
         else:
