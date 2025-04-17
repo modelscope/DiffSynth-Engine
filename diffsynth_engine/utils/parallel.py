@@ -2,9 +2,14 @@ import os
 import copy
 import torch
 import torch.nn as nn
-import torch.distributed as dist
 import torch.multiprocessing as mp
+import torch.distributed as dist
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import ShardingStrategy
+from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 from datetime import timedelta
+from functools import partial
+from typing import Callable, List, Optional
 from yunchang.globals import Singleton, set_seq_parallel_pg
 
 from diffsynth_engine.utils import logging
@@ -108,6 +113,31 @@ def split_and_get(data, num, dim, index):
     return data
 
 
+def shard_model(
+    module: nn.Module,
+    device_id: int,
+    sharding_strategy: ShardingStrategy = ShardingStrategy.FULL_SHARD,
+    wrap_module_names: Optional[List[str]] = None,
+):
+    wrap_module_names = wrap_module_names or []
+
+    def wrap_fn(m):
+        for name in wrap_module_names:
+            submodule = getattr(module, name)
+            if isinstance(submodule, nn.ModuleList) and m in submodule:
+                return True
+            elif not isinstance(submodule, nn.ModuleList) and m is submodule:
+                return True
+        return False
+
+    return FSDP(
+        module,
+        device_id=device_id,
+        sharding_strategy=sharding_strategy,
+        auto_wrap_policy=partial(lambda_auto_wrap_policy, lambda_fn=wrap_fn),
+    )
+
+
 NCCL_TIMEOUT_SEC = int(os.environ.get("NCCL_TIMEOUT_SEC", 600))
 PARALLEL_FWD_TIMEOUT_SEC = int(os.environ.get("PARALLEL_FWD_TIMEOUT_SEC", 300))
 
@@ -121,6 +151,7 @@ def _worker_loop(
     sp_ulysses_degree: int = 1,
     sp_ring_degree: int = 1,
     cfg_degree: int = 1,
+    shard_fn: Optional[Callable] = None,
     master_port: int = 29500,
     device: str = "cuda",
 ):
@@ -143,7 +174,10 @@ def _worker_loop(
             rank=rank,
         )
         init_parallel_pgs(sp_ulysses_degree, sp_ring_degree, cfg_degree, rank, world_size)
-        module = module.to(device)
+        if shard_fn:
+            module = shard_fn(module, device_id=rank)
+        else:
+            module = module.to(device)
         while True:
             if rank == 0:
                 kwargs = queue_in.get()
@@ -182,6 +216,7 @@ class ParallelModel(nn.Module):
         sp_ulysses_degree: int = 4,
         sp_ring_degree: int = 1,
         cfg_degree: int = 2,
+        shard_fn: Optional[Callable] = None,
         master_port: int = 29500,
         device: str = "cuda",
     ):
@@ -200,6 +235,7 @@ class ParallelModel(nn.Module):
                 sp_ulysses_degree,
                 sp_ring_degree,
                 cfg_degree,
+                shard_fn,
                 master_port,
                 device,
             ),

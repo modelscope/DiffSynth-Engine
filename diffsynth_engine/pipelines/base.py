@@ -205,12 +205,12 @@ class BasePipeline:
         for model_name in self.model_names:
             if model_name not in load_model_names:
                 model = getattr(self, model_name)
-                if model is not None and next(model.parameters()).device != "cpu":
+                if model is not None and (p := next(model.parameters(), None)) is not None and p.device != "cpu":
                     model.to("cpu")
         # load the needed models to device
         for model_name in load_model_names:
             model = getattr(self, model_name)
-            if model is not None and next(model.parameters()).device != self.device:
+            if model is not None and (p := next(model.parameters(), None)) is not None and p.device != self.device:
                 model.to(self.device)
         # fresh the cuda cache
         torch.cuda.empty_cache()

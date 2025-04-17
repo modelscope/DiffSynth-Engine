@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from einops import rearrange
 from dataclasses import dataclass
+from functools import partial
 from typing import Callable, List, Tuple, Optional
 from tqdm import tqdm
 from PIL import Image
@@ -19,7 +20,7 @@ from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.loader import load_file
-from diffsynth_engine.utils.parallel import ParallelModel
+from diffsynth_engine.utils.parallel import ParallelModel, shard_model
 from diffsynth_engine.utils import logging
 
 
@@ -39,6 +40,10 @@ class WanModelConfig:
     image_encoder_dtype: torch.dtype = torch.bfloat16
 
     dit_attn_impl: Optional[str] = "auto"
+    dit_fsdp: bool = False
+
+    sp_ulysses_degree: Optional[int] = None
+    sp_ring_degree: Optional[int] = None
 
 
 class WanLoRAConverter(LoRAStateDictConverter):
@@ -402,8 +407,6 @@ class WanVideoPipeline(BasePipeline):
         batch_cfg: bool = False,
         offload_mode: str | None = None,
         parallelism: int = 1,
-        sp_ulysses_degree: Optional[int] = None,
-        sp_ring_degree: Optional[int] = None,
         use_cfg_parallel: bool = False,
     ) -> "WanVideoPipeline":
         cls.validate_offload_mode(offload_mode)
@@ -464,6 +467,8 @@ class WanVideoPipeline(BasePipeline):
             batch_cfg = True if use_cfg_parallel else batch_cfg
             cfg_degree = 2 if use_cfg_parallel else 1
             sp_degree = parallelism // cfg_degree
+            sp_ulysses_degree = model_config.sp_ulysses_degree
+            sp_ring_degree = model_config.sp_ring_degree
             if sp_ulysses_degree is None and sp_ring_degree is None:
                 # use ulysses if not specified
                 sp_ulysses_degree = sp_degree
@@ -489,6 +494,7 @@ class WanVideoPipeline(BasePipeline):
                     sp_ulysses_degree,
                     sp_ring_degree,
                     cfg_degree,
+                    shard_fn=partial(shard_model, wrap_module_names=["blocks"]) if model_config.dit_fsdp else None,
                     device="cuda",
                 )
         else:
