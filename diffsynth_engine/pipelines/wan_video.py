@@ -44,6 +44,7 @@ class WanModelConfig:
 
     sp_ulysses_degree: Optional[int] = None
     sp_ring_degree: Optional[int] = None
+    tp_degree: Optional[int] = None
 
 
 class WanLoRAConverter(LoRAStateDictConverter):
@@ -466,17 +467,33 @@ class WanVideoPipeline(BasePipeline):
             assert parallelism in (2, 4, 8), "parallelism must be 2, 4 or 8"
             batch_cfg = True if use_cfg_parallel else batch_cfg
             cfg_degree = 2 if use_cfg_parallel else 1
-            sp_degree = parallelism // cfg_degree
             sp_ulysses_degree = model_config.sp_ulysses_degree
             sp_ring_degree = model_config.sp_ring_degree
-            if sp_ulysses_degree is None and sp_ring_degree is None:
-                # use ulysses if not specified
-                sp_ulysses_degree = sp_degree
-                sp_ring_degree = 1
-            elif sp_ulysses_degree is not None and sp_ring_degree is not None:
-                assert sp_degree == sp_ulysses_degree * sp_ring_degree, (
-                    f"sp_degree ({sp_degree}) must be equal to sp_ulysses_degree ({sp_ulysses_degree}) * sp_ring_degree ({sp_ring_degree})"
+            tp_degree = model_config.tp_degree
+
+            if tp_degree is not None:
+                assert sp_ulysses_degree is None and sp_ring_degree is None, (
+                    "sequence parallel and tensor parallel does not work together"
                 )
+                assert model_config.dit_fsdp is False, (
+                    "fully sharded data parallel and tensor parallel does not work together"
+                )
+                assert parallelism == cfg_degree * tp_degree, (
+                    f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * tp_degree ({tp_degree})"
+                )
+                sp_ulysses_degree = 1
+                sp_ring_degree = 1
+            elif sp_ulysses_degree is None and sp_ring_degree is None:
+                # use ulysses if not specified
+                sp_ulysses_degree = parallelism // cfg_degree
+                sp_ring_degree = 1
+                tp_degree = 1
+            elif sp_ulysses_degree is not None and sp_ring_degree is not None:
+                assert parallelism == cfg_degree * sp_ulysses_degree * sp_ring_degree, (
+                    f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * "
+                    f"sp_ulysses_degree ({sp_ulysses_degree}) * sp_ring_degree ({sp_ring_degree})"
+                )
+                tp_degree = 1
             else:
                 raise ValueError("sp_ulysses_degree and sp_ring_degree must be specified at the same time")
 
@@ -487,13 +504,14 @@ class WanVideoPipeline(BasePipeline):
                     device="cpu",
                     dtype=model_config.dit_dtype,
                     attn_impl=model_config.dit_attn_impl,
-                    use_usp=True,
+                    use_usp=(sp_ulysses_degree * sp_ring_degree > 1),
                 )
                 dit = ParallelModel(
                     dit,
-                    sp_ulysses_degree,
-                    sp_ring_degree,
-                    cfg_degree,
+                    cfg_degree=cfg_degree,
+                    sp_ulysses_degree=sp_ulysses_degree,
+                    sp_ring_degree=sp_ring_degree,
+                    tp_degree=tp_degree,
                     shard_fn=partial(shard_model, wrap_module_names=["blocks"]) if model_config.dit_fsdp else None,
                     device="cuda",
                 )

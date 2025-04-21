@@ -418,3 +418,80 @@ class WanDiT(PreTrainedModel):
         model.load_state_dict(state_dict, assign=assign)
         model.to(device=device, dtype=dtype)
         return model
+
+    def get_tp_plan(self):
+        from torch.distributed.tensor.parallel import (
+            ColwiseParallel,
+            RowwiseParallel,
+            PrepareModuleInput,
+            PrepareModuleOutput,
+        )
+        from torch.distributed.tensor import Replicate, Shard
+
+        tp_plan = {
+            "text_embedding.0": ColwiseParallel(),
+            "text_embedding.2": RowwiseParallel(),
+            "time_embedding.0": ColwiseParallel(),
+            "time_embedding.2": RowwiseParallel(),
+            "time_projection.1": ColwiseParallel(output_layouts=Replicate()),
+            "blocks.0": PrepareModuleInput(
+                input_layouts=(Replicate(), None, None, None),
+                desired_input_layouts=(Shard(1), None, None, None),  # sequence parallel
+                use_local_output=True,
+            ),
+            "head": PrepareModuleOutput(
+                output_layouts=Shard(1),
+                desired_output_layouts=Replicate(),
+                use_local_output=True,
+            ),
+        }
+        for idx in range(len(self.blocks)):
+            tp_plan.update(
+                {
+                    f"blocks.{idx}.self_attn": PrepareModuleInput(
+                        input_layouts=(Shard(1), None),
+                        desired_input_layouts=(Replicate(), None),
+                    ),
+                    f"blocks.{idx}.self_attn.q": ColwiseParallel(output_layouts=Shard(1)),
+                    f"blocks.{idx}.self_attn.k": ColwiseParallel(output_layouts=Shard(1)),
+                    f"blocks.{idx}.self_attn.v": ColwiseParallel(),
+                    f"blocks.{idx}.self_attn.o": RowwiseParallel(output_layouts=Shard(1)),
+                    f"blocks.{idx}.self_attn.norm_q": PrepareModuleOutput(
+                        output_layouts=Shard(1),
+                        desired_output_layouts=Shard(-1),
+                    ),
+                    f"blocks.{idx}.self_attn.norm_k": PrepareModuleOutput(
+                        output_layouts=Shard(1),
+                        desired_output_layouts=Shard(-1),
+                    ),
+                    f"blocks.{idx}.cross_attn": PrepareModuleInput(
+                        input_layouts=(Shard(1), None),
+                        desired_input_layouts=(Replicate(), None),
+                    ),
+                    f"blocks.{idx}.cross_attn.q": ColwiseParallel(output_layouts=Shard(1)),
+                    f"blocks.{idx}.cross_attn.k": ColwiseParallel(output_layouts=Shard(1)),
+                    f"blocks.{idx}.cross_attn.v": ColwiseParallel(),
+                    f"blocks.{idx}.cross_attn.o": RowwiseParallel(output_layouts=Shard(1)),
+                    f"blocks.{idx}.cross_attn.norm_q": PrepareModuleOutput(
+                        output_layouts=Shard(1),
+                        desired_output_layouts=Shard(-1),
+                    ),
+                    f"blocks.{idx}.cross_attn.norm_k": PrepareModuleOutput(
+                        output_layouts=Shard(1),
+                        desired_output_layouts=Shard(-1),
+                    ),
+                    f"blocks.{idx}.cross_attn.k_img": ColwiseParallel(output_layouts=Shard(1)),
+                    f"blocks.{idx}.cross_attn.v_img": ColwiseParallel(),
+                    f"blocks.{idx}.cross_attn.norm_k_img": PrepareModuleOutput(
+                        output_layouts=Shard(1),
+                        desired_output_layouts=Shard(-1),
+                    ),
+                    f"blocks.{idx}.ffn": PrepareModuleInput(
+                        input_layouts=(Shard(1),),
+                        desired_input_layouts=(Replicate(),),
+                    ),
+                    f"blocks.{idx}.ffn.0": ColwiseParallel(),
+                    f"blocks.{idx}.ffn.2": RowwiseParallel(output_layouts=Shard(1)),
+                }
+            )
+        return tp_plan

@@ -7,9 +7,12 @@ import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor.parallel.style import ParallelStyle
+from torch.distributed.tensor.parallel._utils import _validate_tp_mesh_dim
 from datetime import timedelta
 from functools import partial
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Union, Optional
 from yunchang.globals import Singleton, set_seq_parallel_pg
 
 from diffsynth_engine.utils import logging
@@ -19,23 +22,16 @@ logger = logging.get_logger(__name__)
 
 class ProcessGroupSingleton(Singleton):
     def __init__(self):
-        self.SP_GROUP: dist.ProcessGroup = None
         self.CFG_GROUP: dist.ProcessGroup = None
+        self.SP_GROUP: dist.ProcessGroup = None
+        self.TP_GROUP: dist.ProcessGroup = None
+
+        self.CFG_RANKS: List[int] = []
+        self.SP_RANKS: List[int] = []
+        self.TP_RANKS: List[int] = []
 
 
 PROCESS_GROUP = ProcessGroupSingleton()
-
-
-def get_sp_group():
-    return PROCESS_GROUP.SP_GROUP
-
-
-def get_sp_world_size():
-    return PROCESS_GROUP.SP_GROUP.size()
-
-
-def get_sp_rank():
-    return PROCESS_GROUP.SP_GROUP.rank()
 
 
 def get_cfg_group():
@@ -50,31 +46,87 @@ def get_cfg_rank():
     return PROCESS_GROUP.CFG_GROUP.rank()
 
 
+def get_cfg_ranks():
+    return PROCESS_GROUP.CFG_RANKS
+
+
+def get_sp_group():
+    return PROCESS_GROUP.SP_GROUP
+
+
+def get_sp_world_size():
+    return PROCESS_GROUP.SP_GROUP.size()
+
+
+def get_sp_rank():
+    return PROCESS_GROUP.SP_GROUP.rank()
+
+
+def get_sp_ranks():
+    return PROCESS_GROUP.SP_RANKS
+
+
+def get_tp_group():
+    return PROCESS_GROUP.TP_GROUP
+
+
+def get_tp_world_size():
+    return PROCESS_GROUP.TP_GROUP.size()
+
+
+def get_tp_rank():
+    return PROCESS_GROUP.TP_GROUP.rank()
+
+
+def get_tp_ranks():
+    return PROCESS_GROUP.TP_RANKS
+
+
 def init_parallel_pgs(
+    cfg_degree: int = 1,
     sp_ulysses_degree: int = 1,
     sp_ring_degree: int = 1,
-    cfg_degree: int = 1,
+    tp_degree: int = 1,
     rank: int = 0,
     world_size: int = 1,
 ):
     sp_degree = sp_ulysses_degree * sp_ring_degree
 
-    assert world_size == sp_degree * cfg_degree, (
-        f"world_size ({world_size}) must be equal to sp_degree ({sp_degree}) * cfg_degree ({cfg_degree})"
+    assert sp_degree == 1 or tp_degree == 1, "sequence parallel and tensor parallel does not work together"
+    assert world_size == cfg_degree * sp_degree * tp_degree, (
+        f"world_size ({world_size}) must be equal to cfg_degree ({cfg_degree}) * sp_degree ({sp_degree}) * tp_degree ({tp_degree})"
     )
 
-    num_sp_pgs = world_size // sp_degree
-    num_cfg_pgs = world_size // cfg_degree
-    for i in range(num_sp_pgs):
-        sp_ranks = list(range(i * sp_degree, (i + 1) * sp_degree))
+    def make_parallel_groups(blocks: List[List[int]], degree: int):
+        groups, chunks = [], []
+        for block in blocks:
+            size = len(block) // degree
+            chunk = [block[i * size : (i + 1) * size] for i in range(degree)]
+            chunks.extend(chunk)
+            groups.extend(list(zip(*chunk)))
+        return groups, chunks
+
+    blocks = [list(range(world_size))]
+    cfg_groups, cfg_blocks = make_parallel_groups(blocks, cfg_degree)
+    for cfg_ranks in cfg_groups:
+        cfg_group = dist.new_group(cfg_ranks)
+        if rank in cfg_ranks:
+            PROCESS_GROUP.CFG_GROUP = cfg_group
+            PROCESS_GROUP.CFG_RANKS = cfg_ranks
+
+    sp_groups, sp_blocks = make_parallel_groups(cfg_blocks, sp_degree)
+    for sp_ranks in sp_groups:
         group = dist.new_group(sp_ranks)
         if rank in sp_ranks:
             PROCESS_GROUP.SP_GROUP = group
-    for i in range(num_cfg_pgs):
-        cfg_ranks = list(range(i, sp_degree * cfg_degree, sp_degree))
-        group = dist.new_group(cfg_ranks)
-        if rank in cfg_ranks:
-            PROCESS_GROUP.CFG_GROUP = group
+            PROCESS_GROUP.SP_RANKS = sp_ranks
+
+    tp_groups, _ = make_parallel_groups(sp_blocks, tp_degree)
+    for tp_ranks in tp_groups:
+        group = dist.new_group(tp_ranks)
+        if rank in tp_ranks:
+            PROCESS_GROUP.TP_GROUP = group
+            PROCESS_GROUP.TP_RANKS = tp_ranks
 
     set_seq_parallel_pg(sp_ulysses_degree, sp_ring_degree, rank, world_size)
 
@@ -138,6 +190,27 @@ def shard_model(
     )
 
 
+def parallelize_module(
+    module: nn.Module,
+    device_mesh: DeviceMesh,
+    parallelize_plan: Optional[Union[ParallelStyle, Dict[str, ParallelStyle]]] = None,
+):
+    _validate_tp_mesh_dim(device_mesh)
+    if parallelize_plan is None:
+        return module
+    if isinstance(parallelize_plan, ParallelStyle):
+        return parallelize_plan._apply(module, device_mesh)
+    for module_path, parallelize_style in parallelize_plan.items():
+        if module_path.strip() == "":
+            raise ValueError("Expect module path to be non-empty, but got empty string!")
+        try:
+            submodule = module.get_submodule(module_path)
+            parallelize_style._apply(submodule, device_mesh)
+        except AttributeError:
+            continue
+    return module
+
+
 NCCL_TIMEOUT_SEC = int(os.environ.get("NCCL_TIMEOUT_SEC", 600))
 PARALLEL_FWD_TIMEOUT_SEC = int(os.environ.get("PARALLEL_FWD_TIMEOUT_SEC", 300))
 
@@ -148,9 +221,10 @@ def _worker_loop(
     queue_in: mp.Queue,
     queue_out: mp.Queue,
     module: nn.Module,
-    sp_ulysses_degree: int = 1,
-    sp_ring_degree: int = 1,
-    cfg_degree: int = 1,
+    cfg_degree: int,
+    sp_ulysses_degree: int,
+    sp_ring_degree: int,
+    tp_degree: int,
     shard_fn: Optional[Callable] = None,
     master_port: int = 29500,
     device: str = "cuda",
@@ -173,9 +247,22 @@ def _worker_loop(
             world_size=world_size,
             rank=rank,
         )
-        init_parallel_pgs(sp_ulysses_degree, sp_ring_degree, cfg_degree, rank, world_size)
+        init_parallel_pgs(
+            cfg_degree=cfg_degree,
+            sp_ulysses_degree=sp_ulysses_degree,
+            sp_ring_degree=sp_ring_degree,
+            tp_degree=tp_degree,
+            rank=rank,
+            world_size=world_size,
+        )
+        if tp_degree > 1:
+            module = parallelize_module(
+                module=module,
+                device_mesh=DeviceMesh(device, torch.tensor(get_tp_ranks())),
+                parallelize_plan=module.get_tp_plan(),
+            ).to(device)
         if shard_fn:
-            module = shard_fn(module, device_id=rank)
+            module = shard_fn(module=module, device_id=rank)
         else:
             module = module.to(device)
         while True:
@@ -189,13 +276,13 @@ def _worker_loop(
             kwargs = split_and_get(kwargs, get_cfg_world_size(), 0, get_cfg_rank())
             del data
             with torch.no_grad():
-                res = module(**kwargs)
+                y = module(**kwargs)
             if get_sp_rank() == 0:
-                gathered = torch.zeros((get_cfg_world_size(), *res.shape[1:]), dtype=res.dtype, device=res.device)
-                dist.all_gather_into_tensor(gathered, res, group=get_cfg_group())
-                res = gathered
+                gathered = torch.zeros((get_cfg_world_size(), *y.shape[1:]), dtype=y.dtype, device=y.device)
+                dist.all_gather_into_tensor(gathered, y, group=get_cfg_group())
+                y = gathered
             if rank == 0:
-                queue_out.put(res)
+                queue_out.put(y)
             dist.barrier()
     except Exception as e:
         import traceback
@@ -213,15 +300,16 @@ class ParallelModel(nn.Module):
     def __init__(
         self,
         module: nn.Module,
-        sp_ulysses_degree: int = 4,
-        sp_ring_degree: int = 1,
-        cfg_degree: int = 2,
+        cfg_degree: int,
+        sp_ulysses_degree: int,
+        sp_ring_degree: int,
+        tp_degree: int,
         shard_fn: Optional[Callable] = None,
         master_port: int = 29500,
         device: str = "cuda",
     ):
         super().__init__()
-        self.world_size = sp_ulysses_degree * sp_ring_degree * cfg_degree
+        self.world_size = cfg_degree * sp_ulysses_degree * sp_ring_degree * tp_degree
         self.device = device
         self.queue_in = mp.Queue()
         self.queue_out = mp.Queue()
@@ -232,9 +320,10 @@ class ParallelModel(nn.Module):
                 self.queue_in,
                 self.queue_out,
                 module,
+                cfg_degree,
                 sp_ulysses_degree,
                 sp_ring_degree,
-                cfg_degree,
+                tp_degree,
                 shard_fn,
                 master_port,
                 device,
