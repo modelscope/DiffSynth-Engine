@@ -255,16 +255,18 @@ def _worker_loop(
             rank=rank,
             world_size=world_size,
         )
+
         if tp_degree > 1:
             module = parallelize_module(
                 module=module,
                 device_mesh=DeviceMesh(device, torch.tensor(get_tp_ranks())),
                 parallelize_plan=module.get_tp_plan(),
             ).to(device)
-        if shard_fn:
+        elif shard_fn:
             module = shard_fn(module=module, device_id=rank)
         else:
             module = module.to(device)
+
         while True:
             if rank == 0:
                 kwargs = queue_in.get()
