@@ -279,7 +279,7 @@ def _worker_loop(
             del data
             with torch.no_grad():
                 y = module(**kwargs)
-            if get_sp_rank() == 0:
+            if get_sp_rank() == 0 and get_tp_rank() == 0:
                 gathered = torch.zeros((get_cfg_world_size(), *y.shape[1:]), dtype=y.dtype, device=y.device)
                 dist.all_gather_into_tensor(gathered, y, group=get_cfg_group())
                 y = gathered
