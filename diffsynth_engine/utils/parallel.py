@@ -13,6 +13,7 @@ from torch.distributed.tensor.parallel._utils import _validate_tp_mesh_dim
 from datetime import timedelta
 from functools import partial
 from typing import Callable, Dict, List, Union, Optional
+from queue import Empty
 from yunchang.globals import Singleton, set_seq_parallel_pg
 
 from diffsynth_engine.utils import logging
@@ -213,6 +214,7 @@ def parallelize_module(
 
 NCCL_TIMEOUT_SEC = int(os.environ.get("NCCL_TIMEOUT_SEC", 600))
 PARALLEL_FWD_TIMEOUT_SEC = int(os.environ.get("PARALLEL_FWD_TIMEOUT_SEC", 300))
+PARALLEL_LORA_TIMEOUT_SEC = int(os.environ.get("PARALLEL_LORA_TIMEOUT_SEC ", 60))
 
 
 def _worker_loop(
@@ -277,12 +279,20 @@ def _worker_loop(
             kwargs = to_device(clone(data[0]), device)
             kwargs = split_and_get(kwargs, get_cfg_world_size(), 0, get_cfg_rank())
             del data
-            with torch.no_grad():
-                y = module(**kwargs)
-            if get_sp_rank() == 0 and get_tp_rank() == 0:
-                gathered = torch.zeros((get_cfg_world_size(), *y.shape[1:]), dtype=y.dtype, device=y.device)
-                dist.all_gather_into_tensor(gathered, y, group=get_cfg_group())
-                y = gathered
+
+            y = None
+            if kwargs.get("method", None) == "load_loras":
+                module.load_loras(lora_args=kwargs["lora_args"], fused=kwargs["fused"])
+            elif kwargs.get("method", None) == "unload_loras":
+                module.unload_loras()
+            else:
+                with torch.no_grad():
+                    y = module(**kwargs)
+                if get_sp_rank() == 0 and get_tp_rank() == 0:
+                    gathered = torch.zeros((get_cfg_world_size(), *y.shape[1:]), dtype=y.dtype, device=y.device)
+                    dist.all_gather_into_tensor(gathered, y, group=get_cfg_group())
+                    y = gathered
+
             if rank == 0:
                 queue_out.put(y)
             dist.barrier()
@@ -334,10 +344,38 @@ class ParallelModel(nn.Module):
             join=False,
         )
 
+    def load_loras(self, lora_args: List[Dict[str, any]], fused: bool = True):
+        self.queue_in.put(
+            {
+                "method": "load_loras",
+                "lora_args": lora_args,
+                "fused": fused,
+            }
+        )
+        try:
+            _ = self.queue_out.get(timeout=PARALLEL_LORA_TIMEOUT_SEC)
+        except Empty:
+            logger.error("Parallel model load LoRA timeout")
+            raise RuntimeError("Parallel model load LoRA timeout")
+        logger.info("Parallel model load LoRA done")
+
+    def unload_loras(self):
+        self.queue_in.put({"method": "unload_loras"})
+        try:
+            _ = self.queue_out.get(timeout=PARALLEL_LORA_TIMEOUT_SEC)
+        except Empty:
+            logger.error("Parallel model unload LoRA timeout")
+            raise RuntimeError("Parallel model unload LoRA timeout")
+        logger.info("Parallel model unload LoRA done")
+
     def forward(self, **kwargs):
         self.queue_in.put(kwargs)
-        res = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
-        return res
+        try:
+            y = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
+        except Empty:
+            logger.error("Parallel model forward timeout")
+            raise RuntimeError("Parallel model forward timeout")
+        return y
 
     def __del__(self):
         # Send terminate signal to all workers

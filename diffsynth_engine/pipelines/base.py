@@ -1,7 +1,7 @@
 import os
 import torch
 import numpy as np
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from PIL import Image, ImageOps
 from einops import repeat
 from dataclasses import dataclass
@@ -19,7 +19,14 @@ class ModelConfig:
     pass
 
 
+class LoRAStateDictConverter:
+    def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
+        return {"lora": lora_state_dict}
+
+
 class BasePipeline:
+    lora_converter = LoRAStateDictConverter()
+
     def __init__(self, device="cuda:0", dtype=torch.float16):
         super().__init__()
         self.device = device
@@ -41,6 +48,36 @@ class BasePipeline:
     def from_state_dict(
         cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda:0", dtype: torch.dtype = torch.float16
     ) -> "BasePipeline":
+        raise NotImplementedError()
+
+    def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
+        for lora_path, lora_scale in lora_list:
+            logger.info(f"loading lora from {lora_path} with scale {lora_scale}")
+            state_dict = load_file(lora_path, device="cpu")
+            lora_state_dict = self.lora_converter.convert(state_dict)
+            for model_name, state_dict in lora_state_dict.items():
+                model = getattr(self, model_name)
+                lora_args = []
+                for key, param in state_dict.items():
+                    lora_args.append(
+                        {
+                            "name": key,
+                            "scale": lora_scale,
+                            "rank": param["rank"],
+                            "alpha": param["alpha"],
+                            "up": param["up"],
+                            "down": param["down"],
+                            "device": self.device,
+                            "dtype": self.dtype,
+                            "save_original_weight": save_original_weight,
+                        }
+                    )
+                model.load_loras(lora_args, fused=fused)
+
+    def load_lora(self, lora_path: str, lora_scale: float, fused: bool = True, save_original_weight: bool = False):
+        self.load_loras([(lora_path, lora_scale)], fused, save_original_weight)
+
+    def unload_loras(self):
         raise NotImplementedError()
 
     @staticmethod

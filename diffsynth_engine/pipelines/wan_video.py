@@ -13,13 +13,11 @@ from diffsynth_engine.models.wan.wan_dit import WanDiT
 from diffsynth_engine.models.wan.wan_text_encoder import WanTextEncoder
 from diffsynth_engine.models.wan.wan_vae import WanVideoVAE
 from diffsynth_engine.models.wan.wan_image_encoder import WanImageEncoder
-from diffsynth_engine.models.basic.lora import LoRAContext, LoRALinear, LoRAConv2d
-from diffsynth_engine.models.base import LoRAStateDictConverter
+from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.tokenizers import WanT5Tokenizer
-from diffsynth_engine.pipelines import BasePipeline
+from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_model
-from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.utils.parallel import ParallelModel, shard_model
 from diffsynth_engine.utils import logging
 
@@ -122,42 +120,12 @@ class WanVideoPipeline(BasePipeline):
         self.model_names = ["text_encoder", "dit", "vae"]
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
-        for lora_path, lora_scale in lora_list:
-            logger.info(f"loading lora from {lora_path} with scale {lora_scale}")
-            state_dict = load_file(lora_path, device="cpu")
-            lora_state_dict = self.lora_converter.convert(state_dict)
-            for model_name, state_dict in lora_state_dict.items():
-                model = getattr(self, model_name)
-                for key, param in state_dict.items():
-                    module = model.get_submodule(key)
-                    if not isinstance(module, (LoRALinear, LoRAConv2d)):
-                        raise ValueError(f"Unsupported lora key: {key}")
-                    lora_args = {
-                        "name": key,
-                        "scale": lora_scale,
-                        "rank": param["rank"],
-                        "alpha": param["alpha"],
-                        "up": param["up"],
-                        "down": param["down"],
-                        "device": self.device,
-                        "dtype": self.dtype,
-                        "save_original_weight": save_original_weight,
-                    }
-                    if fused:
-                        module.add_frozen_lora(**lora_args)
-                    else:
-                        module.add_lora(**lora_args)
-
-    def load_lora(self, lora_path: str, lora_scale: float, fused: bool = True, save_original_weight: bool = False):
-        self.load_loras([(lora_path, lora_scale)], fused, save_original_weight)
+        assert self.config.tp_degree == 1, "lora and tensor parallel does not work together"
+        super().load_loras(lora_list, fused, save_original_weight)
 
     def unload_loras(self):
-        for key, module in self.dit.named_modules():
-            if isinstance(module, (LoRALinear, LoRAConv2d)):
-                module.clear()
-        for key, module in self.text_encoder.named_modules():
-            if isinstance(module, (LoRALinear, LoRAConv2d)):
-                module.clear()
+        self.dit.unload_loras()
+        self.text_encoder.unload_loras()
 
     def denoising_model(self):
         return self.dit

@@ -1,22 +1,15 @@
 import os
 import torch
 import torch.nn as nn
-from typing import Dict, Union
+from typing import Dict, List, Union
 from safetensors.torch import load_file
 
+from diffsynth_engine.models.basic.lora import LoRALinear, LoRAConv2d
 from diffsynth_engine.models.utils import no_init_weights
 
 
-class LoRAStateDictConverter:
-    def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
-        return {"lora": lora_state_dict}
-
-
-StateDictType = Dict[str, torch.Tensor]
-
-
 class StateDictConverter:
-    def convert(self, state_dict: StateDictType) -> StateDictType:
+    def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         return state_dict
 
 
@@ -39,6 +32,22 @@ class PreTrainedModel(nn.Module):
         model.load_state_dict(state_dict)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
+
+    def load_loras(self, lora_args: List[Dict[str, any]], fused: bool = True):
+        for args in lora_args:
+            key = args["name"]
+            module = self.get_submodule(key)
+            if not isinstance(module, (LoRALinear, LoRAConv2d)):
+                raise ValueError(f"Unsupported lora key: {key}")
+            if fused:
+                module.add_frozen_lora(**args)
+            else:
+                module.add_lora(**args)
+
+    def unload_loras(self):
+        for module in self.modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
 
 
 def split_suffix(name: str):

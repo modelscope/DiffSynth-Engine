@@ -2,8 +2,7 @@ import re
 import os
 import torch
 import math
-from typing import Callable, Dict, List, Tuple, Optional
-from safetensors.torch import load_file
+from typing import Callable, Dict, Optional
 from tqdm import tqdm
 from PIL import Image
 from dataclasses import dataclass
@@ -16,9 +15,8 @@ from diffsynth_engine.models.flux import (
     flux_dit_config,
     flux_text_encoder_config,
 )
-from diffsynth_engine.models.basic.lora import LoRAContext, LoRALinear, LoRAConv2d
-from diffsynth_engine.models.base import LoRAStateDictConverter
-from diffsynth_engine.pipelines import BasePipeline
+from diffsynth_engine.models.basic.lora import LoRAContext
+from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
@@ -298,42 +296,10 @@ class FluxImagePipeline(BasePipeline):
             pipe.enable_sequential_cpu_offload()
         return pipe
 
-    def load_lora(self, path: str, scale: float, fused: bool = False, save_original_weight: bool = True):
-        self.load_loras([(path, scale)], fused, save_original_weight)
-
-    def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = False, save_original_weight: bool = True):
-        for lora_path, lora_scale in lora_list:
-            state_dict = load_file(lora_path, device="cpu")
-            lora_state_dict = self.lora_converter.convert(state_dict)
-            for model_name, state_dict in lora_state_dict.items():
-                model = getattr(self, model_name)
-                for key, param in state_dict.items():
-                    module = model.get_submodule(key)
-                    if not isinstance(module, (LoRALinear, LoRAConv2d)):
-                        raise ValueError(f"Unsupported lora key: {key}")
-                    lora_args = {
-                        "name": key,
-                        "scale": lora_scale,
-                        "rank": param["rank"],
-                        "alpha": param["alpha"],
-                        "up": param["up"],
-                        "down": param["down"],
-                        "device": self.device,
-                        "dtype": self.dtype,
-                        "save_original_weight": save_original_weight,
-                    }
-                    if fused:
-                        module.add_frozen_lora(**lora_args)
-                    else:
-                        module.add_lora(**lora_args)
-
     def unload_loras(self):
-        for key, module in self.dit.named_modules():
-            if isinstance(module, (LoRALinear, LoRAConv2d)):
-                module.clear()
-        for key, module in self.text_encoder_1.named_modules():
-            if isinstance(module, (LoRALinear, LoRAConv2d)):
-                module.clear()
+        self.dit.unload_loras()
+        self.text_encoder_1.unload_loras()
+        self.text_encoder_2.unload_loras()
 
     @classmethod
     def from_state_dict(
