@@ -74,8 +74,8 @@ class BasePipeline:
                     )
                 model.load_loras(lora_args, fused=fused)
 
-    def load_lora(self, lora_path: str, lora_scale: float, fused: bool = True, save_original_weight: bool = False):
-        self.load_loras([(lora_path, lora_scale)], fused, save_original_weight)
+    def load_lora(self, path: str, scale: float, fused: bool = True, save_original_weight: bool = False):
+        self.load_loras([(path, scale)], fused, save_original_weight)
 
     def unload_loras(self):
         raise NotImplementedError()
