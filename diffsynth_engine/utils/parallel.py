@@ -93,7 +93,7 @@ def init_parallel_pgs(
 ):
     sp_degree = sp_ulysses_degree * sp_ring_degree
 
-    assert sp_degree == 1 or tp_degree == 1, "sequence parallel and tensor parallel does not work together"
+    assert sp_degree == 1 or tp_degree == 1, "not allowed to enable sequence parallel and tensor parallel together"
     assert world_size == cfg_degree * sp_degree * tp_degree, (
         f"world_size ({world_size}) must be equal to cfg_degree ({cfg_degree}) * sp_degree ({sp_degree}) * tp_degree ({tp_degree})"
     )

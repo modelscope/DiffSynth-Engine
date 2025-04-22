@@ -120,7 +120,14 @@ class WanVideoPipeline(BasePipeline):
         self.model_names = ["text_encoder", "dit", "vae"]
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
-        assert self.config.tp_degree == 1, "lora and tensor parallel does not work together"
+        assert self.config.tp_degree is None, (
+            "load LoRA is not allowed when tensor parallel is enabled; "
+            "set tp_degree=None during pipeline initialization"
+        )
+        assert not (self.config.dit_fsdp and fused), (
+            "load fused LoRA is not allowed when fully sharded data parallel is enabled; "
+            "either load LoRA with fused=False or set dit_fsdp=False during pipeline initialization"
+        )
         super().load_loras(lora_list, fused, save_original_weight)
 
     def unload_loras(self):
@@ -371,7 +378,7 @@ class WanVideoPipeline(BasePipeline):
     def from_pretrained(
         cls,
         model_path_or_config: str | WanModelConfig,
-        device: str = "cuda:0",
+        device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
         batch_cfg: bool = False,
         offload_mode: str | None = None,
@@ -441,10 +448,12 @@ class WanVideoPipeline(BasePipeline):
 
             if tp_degree is not None:
                 assert sp_ulysses_degree is None and sp_ring_degree is None, (
-                    "sequence parallel and tensor parallel does not work together"
+                    "not allowed to enable sequence parallel and tensor parallel together; "
+                    "either set sp_ulysses_degree=None, sp_ring_degree=None or set tp_degree=None during pipeline initialization"
                 )
                 assert model_config.dit_fsdp is False, (
-                    "fully sharded data parallel and tensor parallel does not work together"
+                    "not allowed to enable fully sharded data parallel and tensor parallel together; "
+                    "either set dit_fsdp=False or set tp_degree=None during pipeline initialization"
                 )
                 assert parallelism == cfg_degree * tp_degree, (
                     f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * tp_degree ({tp_degree})"
@@ -463,7 +472,7 @@ class WanVideoPipeline(BasePipeline):
                 )
                 tp_degree = 1
             else:
-                raise ValueError("sp_ulysses_degree and sp_ring_degree must be specified at the same time")
+                raise ValueError("sp_ulysses_degree and sp_ring_degree must be specified together")
 
             with LoRAContext():
                 dit = WanDiT.from_state_dict(
