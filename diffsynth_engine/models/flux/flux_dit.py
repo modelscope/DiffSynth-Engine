@@ -1,6 +1,7 @@
 import json
 import torch
 import torch.nn as nn
+from enum import Enum
 from typing import Dict, Optional
 from einops import rearrange
 
@@ -18,6 +19,11 @@ logger = logging.get_logger(__name__)
 
 with open(FLUX_DIT_CONFIG_FILE, "r") as f:
     config = json.load(f)
+
+
+class FluxPatchPoint(Enum):
+    AFTER_EACH_DOUBLE_BLOCK = "after each double block"
+    AFTER_EACH_SINGLE_BLOCK = "after each single block"
 
 
 class FluxDiTStateDictConverter(StateDictConverter):
@@ -327,7 +333,6 @@ class FluxDiT(PreTrainedModel):
 
     def __init__(
         self,
-        disable_guidance_embedder=False,
         attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
@@ -335,9 +340,7 @@ class FluxDiT(PreTrainedModel):
         super().__init__()
         self.pos_embedder = RoPEEmbedding(3072, 10000, [16, 56, 56])
         self.time_embedder = TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
-        self.guidance_embedder = (
-            None if disable_guidance_embedder else TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
-        )
+        self.guidance_embedder = TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
         self.pooled_text_embedder = nn.Sequential(
             nn.Linear(768, 3072, device=device, dtype=dtype),
             nn.SiLU(),
@@ -392,6 +395,9 @@ class FluxDiT(PreTrainedModel):
         text_ids,
         image_ids=None,
         use_gradient_checkpointing=False,
+        controlnet_block_outputs=None,
+        controlnet_single_block_outputs=None,
+        patch_callback=None,
         **kwargs,
     ):
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
@@ -413,16 +419,10 @@ class FluxDiT(PreTrainedModel):
             hidden_states = self.patchify(hidden_states)
             hidden_states = self.x_embedder(hidden_states)
 
-            def create_custom_forward(module):
-                def custom_forward(*inputs):
-                    return module(*inputs)
-
-                return custom_forward
-
-            for block in self.blocks:
+            for i, block in enumerate(self.blocks):
                 if self.training and use_gradient_checkpointing:
                     hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
+                        block,
                         hidden_states,
                         prompt_emb,
                         conditioning,
@@ -431,12 +431,16 @@ class FluxDiT(PreTrainedModel):
                     )
                 else:
                     hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
+                if controlnet_block_outputs is not None and patch_callback is not None:
+                    hidden_states = patch_callback(
+                        hidden_states, controlnet_block_outputs, i, FluxPatchPoint.AFTER_EACH_DOUBLE_BLOCK
+                    )
 
             hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
             for block in self.single_blocks:
                 if self.training and use_gradient_checkpointing:
                     hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
+                        block,
                         hidden_states,
                         prompt_emb,
                         conditioning,
@@ -445,12 +449,15 @@ class FluxDiT(PreTrainedModel):
                     )
                 else:
                     hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
-            hidden_states = hidden_states[:, prompt_emb.shape[1] :]
+                if controlnet_single_block_outputs is not None and patch_callback is not None:
+                    hidden_states = patch_callback(
+                        hidden_states, controlnet_single_block_outputs, i, FluxPatchPoint.AFTER_EACH_SINGLE_BLOCK
+                    )
 
+            hidden_states = hidden_states[:, prompt_emb.shape[1] :]
             hidden_states = self.final_norm_out(hidden_states, conditioning)
             hidden_states = self.final_proj_out(hidden_states)
             hidden_states = self.unpatchify(hidden_states, height, width)
-
             return hidden_states
 
     @classmethod
@@ -459,7 +466,6 @@ class FluxDiT(PreTrainedModel):
         state_dict: Dict[str, torch.Tensor],
         device: str,
         dtype: torch.dtype,
-        disable_guidance_embedder: bool = False,
         attn_impl: Optional[str] = None,
     ):
         with no_init_weights():
@@ -467,7 +473,6 @@ class FluxDiT(PreTrainedModel):
                 cls,
                 device=device,
                 dtype=dtype,
-                disable_guidance_embedder=disable_guidance_embedder,
                 attn_impl=attn_impl,
             )
             model = model.requires_grad_(False)  # for loading gguf
