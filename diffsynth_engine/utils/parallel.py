@@ -276,8 +276,7 @@ def _worker_loop(
             else:
                 data = [None]
             dist.broadcast_object_list(data, src=0)
-            kwargs = to_device(clone(data[0]), device)
-            kwargs = split_and_get(kwargs, get_cfg_world_size(), 0, get_cfg_rank())
+            kwargs = clone(data[0])
             del data
 
             y = None
@@ -286,6 +285,8 @@ def _worker_loop(
             elif kwargs.get("method", None) == "unload_loras":
                 module.unload_loras()
             else:
+                kwargs = to_device(kwargs, device)
+                kwargs = split_and_get(kwargs, get_cfg_world_size(), 0, get_cfg_rank())
                 with torch.no_grad():
                     y = module(**kwargs)
                 if get_sp_rank() == 0 and get_tp_rank() == 0:
