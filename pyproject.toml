@@ -1,6 +1,6 @@
 [project]
 name = "diffsynth_engine"
-version = "0.1.1"
+dynamic = ["version"]
 authors = [
     { name = "MuseAI x ModelScope" },
 ]
@@ -42,9 +42,6 @@ dev = [
     "pytest",
     "pre-commit"
 ]
-all = [
-    "diffsynth-engine[dev]",
-]
 
 [build-system]
 requires = ["setuptools>=75", "setuptools_scm>=8", "wheel"]
@@ -58,6 +55,8 @@ diffsynth_engine = [
     "conf/tokenizers/**/*.*",
     "conf/models/**/*.*",
 ]
+
+[tool.setuptools_scm]
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
