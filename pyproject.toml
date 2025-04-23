@@ -6,10 +6,9 @@ authors = [
 ]
 # uncomment this after adding a readme
 # readme = "README.md"
-license = { file = "LICENSE" }
+license-files = ["LICENSE"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
 ]
 requires-python = ">=3.10"
