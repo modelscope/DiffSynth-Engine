@@ -36,6 +36,7 @@ dependencies = [
 dev = [
     "diffusers == 0.31.0",
     "transformers == 4.45.2",
+    "build",
     "ruff",
     "scikit-image",
     "pytest",
