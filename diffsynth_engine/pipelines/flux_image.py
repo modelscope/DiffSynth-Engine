@@ -1,5 +1,7 @@
 import re
 import os
+from einops import repeat
+import numpy as np
 import torch
 import torch.nn as nn
 import math
@@ -477,16 +479,30 @@ class FluxImagePipeline(BasePipeline):
         sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
         return init_latents, latents, sigmas, timesteps
 
+    def prepare_controlnet_condition(self, image, mask):
+        if mask is None:
+            image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
+            latent = self.encode_image(image, tiled=False)
+        else:
+            image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
+            mask = torch.Tensor(np.array(mask) / 255).unsqueeze(0).unsqueeze(0)
+            mask = repeat(mask, "b 1 h w -> b c h w", c=latent.shape[1])
+            masked_image = image * mask
+            latent = self.encode_image(masked_image, tiled=False)
+            mask = torch.nn.functional.interpolate(mask, size=(latent.shape[2], latent.shape[3]))
+            mask = 1 - mask
+            latent = torch.cat([latent, mask], dim=1)
+        return latent
+
     def prepare_controlnets(self, controlnet_params: List[ControlNetParams]):
         results = []
         for param in controlnet_params:
-            image = self.preprocess_image(param.image).to(device=self.device, dtype=self.dtype)
-            latent = self.encode_image(image, tiled=False)
+            condition = self.prepare_controlnet_condition(param.image, param.mask)
             results.append(
                 ControlNetParams(
                     model=param.model,
                     scale=param.scale,
-                    image=latent,
+                    image=condition,
                 )
             )
         return results
@@ -504,9 +520,8 @@ class FluxImagePipeline(BasePipeline):
     ):
         double_block_output_results, single_block_output_results = None, None
         for param in controlnet_params:
-            condition = torch.sum(torch.stack([param.image]), dim=0, keepdim=True)
             double_block_output, single_block_output = param.model(
-                latents, condition, param.scale, timestep, prompt_emb, add_text_embeds, guidance, image_ids, text_ids
+                latents, param.image, param.scale, timestep, prompt_emb, add_text_embeds, guidance, image_ids, text_ids
             )
             accumulate(double_block_output_results, double_block_output)
             accumulate(single_block_output_results, single_block_output)
