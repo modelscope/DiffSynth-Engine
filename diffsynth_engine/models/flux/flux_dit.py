@@ -25,6 +25,13 @@ class FluxPatchPoint(Enum):
     AFTER_EACH_DOUBLE_BLOCK = "after each double block"
     AFTER_EACH_SINGLE_BLOCK = "after each single block"
 
+def default_patch_callback(hidden_states, controlnet_outputs, index, patch_point:FluxPatchPoint):
+    for controlnet_output in controlnet_outputs:
+        if len(controlnet_output) <= index:
+            continue
+        #  主模型第i层输出的hidden_states和每个controlnet第i层的输出结果相加        
+        hidden_states = hidden_states + controlnet_output[index]
+    return hidden_states
 
 class FluxDiTStateDictConverter(StateDictConverter):
     def __init__(self):
@@ -395,9 +402,9 @@ class FluxDiT(PreTrainedModel):
         text_ids,
         image_ids=None,
         use_gradient_checkpointing=False,
-        controlnet_block_outputs=None,
+        controlnet_double_block_outputs=None,
         controlnet_single_block_outputs=None,
-        patch_callback=None,
+        patch_callback=default_patch_callback,
         **kwargs,
     ):
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
@@ -431,9 +438,9 @@ class FluxDiT(PreTrainedModel):
                     )
                 else:
                     hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
-                if controlnet_block_outputs is not None and patch_callback is not None:
+                if controlnet_double_block_outputs is not None and patch_callback is not None:
                     hidden_states = patch_callback(
-                        hidden_states, controlnet_block_outputs, i, FluxPatchPoint.AFTER_EACH_DOUBLE_BLOCK
+                        hidden_states, controlnet_double_block_outputs, i, FluxPatchPoint.AFTER_EACH_DOUBLE_BLOCK
                     )
 
             hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)

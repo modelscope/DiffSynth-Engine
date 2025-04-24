@@ -52,21 +52,13 @@ class FluxControlNet(PreTrainedModel):
             [nn.Linear(3072, 3072, device=device, dtype=dtype) for _ in range(len(self.single_blocks))]
         )
 
-    def prepare_image_ids(self, latents):
-        batch_size, _, height, width = latents.shape
-        latent_image_ids = torch.zeros(height // 2, width // 2, 3)
-        latent_image_ids[..., 1] = latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
-        latent_image_ids[..., 2] = latent_image_ids[..., 2] + torch.arange(width // 2)[None, :]
+    def get_patch_callback(self):
+        def patch_callback(hidden_states, controlnet_outputs, index, patch_point:FluxPatchPoint):            
+            
+            pass
 
-        latent_image_id_height, latent_image_id_width, latent_image_id_channels = latent_image_ids.shape
-
-        latent_image_ids = latent_image_ids[None, :].repeat(batch_size, 1, 1, 1)
-        latent_image_ids = latent_image_ids.reshape(
-            batch_size, latent_image_id_height * latent_image_id_width, latent_image_id_channels
-        )
-        latent_image_ids = latent_image_ids.to(device=latents.device, dtype=latents.dtype)
-
-        return latent_image_ids
+        return patch_callback
+        
 
     def forward(
         self,
@@ -77,6 +69,8 @@ class FluxControlNet(PreTrainedModel):
         prompt_emb,
         pooled_prompt_emb,
         guidance,
+        image_ids,
+        text_ids
     ):
         hidden_states = self.x_embedder(hidden_states) + self.controlnet_x_embedder(control_condition)
         condition = (
@@ -85,10 +79,6 @@ class FluxControlNet(PreTrainedModel):
             + self.pooled_text_embedder(pooled_prompt_emb)
         )
         prompt_emb = self.context_embedder(prompt_emb)
-        image_ids = self.prepare_image_ids(hidden_states)
-        text_ids = torch.zeros(prompt_emb.shape[0], prompt_emb.shape[1], 3).to(
-            device=self.device, dtype=prompt_emb.dtype
-        )
         image_rotary_emb = self.pos_embedder(torch.cat((text_ids, image_ids), dim=1))
 
         # double block
