@@ -5,7 +5,6 @@ from typing import Optional, Dict
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.flux.flux_dit import (
     FluxJointTransformerBlock,
-    FluxSingleTransformerBlock,
     RoPEEmbedding,
     TimestepEmbeddings,
 )
@@ -17,14 +16,64 @@ class FluxControlNetStateDictConverter(StateDictConverter):
 
     def _from_alimama_flux_inpainting(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # 阿里妈妈
-
-        return state_dict
+        new_state_dict = {}
+        for key, value in state_dict.items():
+            new_key = key
+            if "attn.to_q" in new_key:
+                q = state_dict[new_key]
+                k = state_dict[new_key.replace("attn.to_q", "attn.to_k")]
+                v = state_dict[new_key.replace("attn.to_q", "attn.to_v")]
+                new_key = new_key.replace("transformer_blocks", "blocks")
+                new_key = new_key.replace("attn.to_q", "attn.a_to_qkv")
+                new_state_dict[new_key] = torch.cat((q, k, v), dim=0)
+            elif "attn.add_q_proj" in new_key:
+                q = state_dict[new_key]
+                k = state_dict[new_key.replace("attn.add_q_proj", "attn.add_k_proj")]
+                v = state_dict[new_key.replace("attn.add_q_proj", "attn.add_v_proj")]
+                new_key = new_key.replace("transformer_blocks", "blocks")
+                new_key = new_key.replace("attn.add_q_proj", "attn.b_to_qkv")
+                new_state_dict[new_key.replace("attn.add_q_proj", "attn.b_to_qkv")] = torch.cat((q, k, v), dim=0)
+            elif (
+                "attn.to_k" in new_key
+                or "attn.to_v" in new_key
+                or "attn.add_k_proj" in new_key
+                or "attn.add_v_proj" in new_key
+            ):
+                continue
+            else:
+                new_key = new_key.replace("transformer_blocks", "blocks")
+                new_key = new_key.replace("controlnet_blocks", "blocks_proj")
+                new_key = new_key.replace("time_text_embed.guidance_embedder", "guidance_embedder")
+                new_key = new_key.replace("time_text_embed.timestep_embedder", "time_embedder")
+                new_key = new_key.replace("time_text_embed.text_embedder.linear_1", "pooled_text_embedder.0")
+                new_key = new_key.replace("time_text_embed.text_embedder.linear_2", "pooled_text_embedder.2")
+                new_key = new_key.replace("transformer_blocks", "blocks")
+                new_key = new_key.replace("time_embedder.linear_1", "time_embedder.timestep_embedder.0")
+                new_key = new_key.replace("time_embedder.linear_2", "time_embedder.timestep_embedder.2")
+                new_key = new_key.replace("guidance_embedder.linear_1", "guidance_embedder.timestep_embedder.0")
+                new_key = new_key.replace("guidance_embedder.linear_2", "guidance_embedder.timestep_embedder.2")
+                # joint block
+                new_key = new_key.replace("norm1.linear", "norm1_a.linear")
+                new_key = new_key.replace("norm1_context.linear", "norm1_b.linear")
+                new_key = new_key.replace("attn.to_out.0", "attn.a_to_out")
+                new_key = new_key.replace("attn.to_add_out", "attn.b_to_out")
+                new_key = new_key.replace("attn.norm_q", "attn.norm_q_a")
+                new_key = new_key.replace("attn.norm_k", "attn.norm_k_a")
+                new_key = new_key.replace("attn.norm_added_q", "attn.norm_q_b")
+                new_key = new_key.replace("attn.norm_added_k", "attn.norm_k_b")
+                new_key = new_key.replace("ff.net", "ff_a")
+                new_key = new_key.replace("ff_context.net", "ff_b")
+                new_key = new_key.replace("0.proj", "0")
+                new_state_dict[new_key] = value
+        return new_state_dict
 
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         return self._from_alimama_flux_inpainting(state_dict)
 
 
 class FluxControlNet(PreTrainedModel):
+    converter = FluxControlNetStateDictConverter()
+
     def __init__(self, attn_impl: Optional[str] = None, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
         self.pos_embedder = RoPEEmbedding(3072, 10000, [16, 56, 56])
@@ -39,26 +88,12 @@ class FluxControlNet(PreTrainedModel):
         self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
         self.controlnet_x_embedder = nn.Linear(64 + 4, 3072)
         self.blocks = nn.ModuleList(
-            [FluxJointTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(19)]
-        )
-        self.single_blocks = nn.ModuleList(
-            [FluxSingleTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(38)]
+            [FluxJointTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(6)]
         )
         # controlnet projection
         self.blocks_proj = nn.ModuleList(
             [nn.Linear(3072, 3072, device=device, dtype=dtype) for _ in range(len(self.blocks))]
         )
-        self.single_blocks_proj = nn.ModuleList(
-            [nn.Linear(3072, 3072, device=device, dtype=dtype) for _ in range(len(self.single_blocks))]
-        )
-
-    def get_patch_callback(self):
-        def patch_callback(hidden_states, controlnet_outputs, index, patch_point:FluxPatchPoint):            
-            
-            pass
-
-        return patch_callback
-        
 
     def forward(
         self,
@@ -70,7 +105,7 @@ class FluxControlNet(PreTrainedModel):
         pooled_prompt_emb,
         guidance,
         image_ids,
-        text_ids
+        text_ids,
     ):
         hidden_states = self.x_embedder(hidden_states) + self.controlnet_x_embedder(control_condition)
         condition = (
@@ -87,15 +122,22 @@ class FluxControlNet(PreTrainedModel):
             hidden_states, prompt_emb = block(hidden_states, prompt_emb, condition, image_rotary_emb)
             double_block_outputs.append(self.blocks_proj[i](hidden_states))
 
-        # single block
-        single_block_outputs = []
-        hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
-        for i, block in enumerate(self.single_blocks):
-            hidden_states, prompt_emb = block(hidden_states, prompt_emb, condition, image_rotary_emb)
-            single_block_outputs.append(self.single_blocks_proj[i](hidden_states[:, prompt_emb.shape[1] :]))
-
         # apply control scale
         double_block_outputs = [control_scale * output for output in double_block_outputs]
-        single_block_outputs = [control_scale * output for output in single_block_outputs]
 
-        return double_block_outputs, single_block_outputs
+        # np.ceil(19/6) = 4, np.ceil(38/6) = 7
+        extend_double_block_outputs = []
+        for i in range(len(double_block_outputs)):
+            extend_double_block_outputs[i] = double_block_outputs[i // 4]
+
+        return extend_double_block_outputs, None
+
+    @classmethod
+    def from_state_dict(
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+        attn_impl: Optional[str] = None,
+    ):
+        return super().from_state_dict(state_dict, device, dtype, attn_impl=attn_impl)

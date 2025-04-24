@@ -7,3 +7,5 @@ build/
 dist/
 *.egg-info/
 .DS_Store/
+.pytest_cache/
+.ruff_cache/

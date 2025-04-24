@@ -19,8 +19,9 @@ if FLASH_ATTN_2_AVAILABLE:
 else:
     logger.info("Flash attention 2 is not available")
 
+XFORMERS_AVAILABLE = False
 try:
-    import xformers.ops.memory_efficient_attention
+    importlib.util.find_spec("xformers")  # noqa: F401
     XFORMERS_AVAILABLE = True
     logger.info("XFormers is available")
 except ModuleNotFoundError:
