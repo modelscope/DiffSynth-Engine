@@ -188,7 +188,8 @@ def accumulate(result, new_item):
 class ControlNetParams:
     model: nn.Module
     scale: float
-    images: List[Image.Image | torch.Tensor]
+    image: List[Image.Image | torch.Tensor]
+    mask: Optional[List[Image.Image | torch.Tensor]] = None
 
 
 @dataclass
@@ -503,7 +504,7 @@ class FluxImagePipeline(BasePipeline):
     ):
         double_block_output_results, single_block_output_results = None, None
         for param in controlnet_params:
-            condition = torch.sum(torch.stack(param.images), dim=0, keepdim=True)
+            condition = torch.sum(torch.stack([param.image]), dim=0, keepdim=True)
             double_block_output, single_block_output = param.model(
                 latents, condition, param.scale, timestep, prompt_emb, add_text_embeds, guidance, image_ids, text_ids
             )
