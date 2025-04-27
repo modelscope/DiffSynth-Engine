@@ -166,6 +166,7 @@ class CrossAttention(nn.Module):
         if self.has_image_input:
             k_img, v_img = self.norm_k_img(self.k_img(img)), self.v_img(img)
             k_img = rearrange(k_img, "b s (n d) -> b s n d", n=num_heads)
+            v_img = rearrange(v_img, "b s (n d) -> b s n d", n=num_heads)
             y = attention(q, k_img, v_img, attn_impl=self.attn_impl).flatten(2)
             x = x + y
         return self.o(x)

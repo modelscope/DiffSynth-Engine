@@ -8,7 +8,7 @@ from diffsynth_engine.utils.video import save_video
 if __name__ == "__main__":
     mp.set_start_method("spawn")
     config = WanModelConfig(
-        model_path=fetch_model("muse/wan2.1-14b-bf16", path="dit.safetensors"),
+        model_path=fetch_model("muse/wan2.1-t2v-14b-bf16", path="dit.safetensors"),
         t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
         vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
         dit_fsdp=True,
