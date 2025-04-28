@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from typing import Optional, Dict
-
+from einops import rearrange
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.flux.flux_dit import (
     FluxJointTransformerBlock,
@@ -71,7 +71,7 @@ class FluxControlNetStateDictConverter(StateDictConverter):
         return self._from_alimama_flux_inpainting(state_dict)
 
 
-class FluxControlNet(PreTrainedModel):
+class FluxInpaintingControlNet(PreTrainedModel):
     converter = FluxControlNetStateDictConverter()
 
     def __init__(self, attn_impl: Optional[str] = None, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
@@ -95,6 +95,10 @@ class FluxControlNet(PreTrainedModel):
             [nn.Linear(3072, 3072, device=device, dtype=dtype) for _ in range(len(self.blocks))]
         )
 
+    def patchify(self, hidden_states):
+        hidden_states = rearrange(hidden_states, "B C (H P) (W Q) -> B (H W) (C P Q)", P=2, Q=2)
+        return hidden_states
+
     def forward(
         self,
         hidden_states,
@@ -107,6 +111,8 @@ class FluxControlNet(PreTrainedModel):
         image_ids,
         text_ids,
     ):
+        hidden_states = self.patchify(hidden_states)
+        control_condition = self.patchify(control_condition)
         hidden_states = self.x_embedder(hidden_states) + self.controlnet_x_embedder(control_condition)
         condition = (
             self.time_embedder(timestep, hidden_states.dtype)
@@ -124,12 +130,10 @@ class FluxControlNet(PreTrainedModel):
 
         # apply control scale
         double_block_outputs = [control_scale * output for output in double_block_outputs]
-
         # np.ceil(19/6) = 4, np.ceil(38/6) = 7
         extend_double_block_outputs = []
-        for i in range(len(double_block_outputs)):
-            extend_double_block_outputs[i] = double_block_outputs[i // 4]
-
+        for i in range(19):
+            extend_double_block_outputs.append(double_block_outputs[i // 4])
         return extend_double_block_outputs, None
 
     @classmethod

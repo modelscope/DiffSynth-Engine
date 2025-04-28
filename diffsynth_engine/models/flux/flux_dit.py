@@ -404,16 +404,16 @@ class FluxDiT(PreTrainedModel):
         text_ids,
         image_ids=None,
         use_gradient_checkpointing=False,
-        controlnet_double_block_outputs=None,
-        controlnet_single_block_outputs=None,
+        controlnet_double_block_output=None,
+        controlnet_single_block_output=None,
         **kwargs,
     ):
-        assert controlnet_double_block_outputs is None or len(controlnet_double_block_outputs) == len(self.blocks), (
-            "controlnet_double_block_outputs must be None or have the same length as self.blocks"
+        assert controlnet_double_block_output is None or len(controlnet_double_block_output) == len(self.blocks), (
+            "controlnet_double_block_output must be None or have the same length as self.blocks"
         )
-        assert controlnet_single_block_outputs is None or len(controlnet_single_block_outputs) == len(
+        assert controlnet_single_block_output is None or len(controlnet_single_block_output) == len(
             self.single_blocks
-        ), "controlnet_single_block_outputs must be None or have the same length as self.single_blocks"
+        ), "controlnet_single_block_output must be None or have the same length as self.single_blocks"
 
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         with fp8_inference(fp8_linear_enabled), gguf_inference():
@@ -446,8 +446,8 @@ class FluxDiT(PreTrainedModel):
                     )
                 else:
                     hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
-                if controlnet_double_block_outputs is not None and controlnet_double_block_outputs[i] is not None:
-                    hidden_states = hidden_states + controlnet_double_block_outputs[i]
+                if controlnet_double_block_output is not None and controlnet_double_block_output[i] is not None:
+                    hidden_states = hidden_states + controlnet_double_block_output[i]
 
             hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
             for block in self.single_blocks:
@@ -462,8 +462,8 @@ class FluxDiT(PreTrainedModel):
                     )
                 else:
                     hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
-                if controlnet_single_block_outputs is not None and controlnet_single_block_outputs[i] is not None:
-                    hidden_states = hidden_states + controlnet_single_block_outputs[i]
+                if controlnet_single_block_output is not None and controlnet_single_block_output[i] is not None:
+                    hidden_states = hidden_states + controlnet_single_block_output[i]
 
             hidden_states = hidden_states[:, prompt_emb.shape[1] :]
             hidden_states = self.final_norm_out(hidden_states, conditioning)

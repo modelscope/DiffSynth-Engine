@@ -1,10 +1,9 @@
 import torch
 import torch.nn as nn
-from einops import rearrange
+from einops import rearrange, repeat
 from typing import Optional
-from yunchang import LongContextAttention
-from yunchang.kernels import AttnType
 
+import torch.nn.functional as F
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.flag import (
     FLASH_ATTN_3_AVAILABLE,
@@ -18,14 +17,24 @@ from diffsynth_engine.utils.flag import (
 logger = logging.get_logger(__name__)
 
 
+def memory_align(x:torch.Tensor, dim=-1, alignment:int=8):
+    padding_size = (alignment - x.shape[dim] % alignment) % alignment
+    padded_x = F.pad(x, (0, padding_size), "constant", 0)
+    return padded_x[..., :x.shape[dim]]
+    
+
 if FLASH_ATTN_3_AVAILABLE:
     from flash_attn_interface import flash_attn_func as flash_attn3
 if FLASH_ATTN_2_AVAILABLE:
     from flash_attn import flash_attn_func as flash_attn2
 if XFORMERS_AVAILABLE:
-    from xformers.ops import memory_efficient_attention as xformers_attn
+    from xformers.ops import memory_efficient_attention 
+    def xformers_attn(q, k, v, attn_mask=None, scale=None):
+        if attn_mask is not None:
+            attn_mask = repeat(attn_mask, "S L -> B H S L", B=q.shape[0], H=q.shape[2])
+            attn_mask = memory_align(attn_mask)
+        return memory_efficient_attention(q, k, v, attn_bias=attn_mask, scale=scale)
 if SDPA_AVAILABLE:
-
     def sdpa_attn(q, k, v, attn_mask=None, scale=None):
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
@@ -36,7 +45,6 @@ if SDPA_AVAILABLE:
 
 if SAGE_ATTN_AVAILABLE:
     from sageattention import sageattn
-
     def sage_attn(q, k, v, attn_mask=None, scale=None):
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
@@ -100,7 +108,7 @@ def attention(
         elif FLASH_ATTN_2_AVAILABLE:
             return flash_attn2(q, k, v, softmax_scale=scale)
         elif XFORMERS_AVAILABLE:
-            return xformers_attn(q, k, v, attn_bias=attn_mask, scale=scale)
+            return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         elif SDPA_AVAILABLE:
             return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         else:
@@ -113,7 +121,7 @@ def attention(
         elif attn_impl == "flash_attn_2":
             return flash_attn2(q, k, v, softmax_scale=scale)
         elif attn_impl == "xformers":
-            return xformers_attn(q, k, v, attn_bias=attn_mask, scale=scale)
+            return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         elif attn_impl == "sdpa":
             return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         elif attn_impl == "sage_attn":
@@ -181,6 +189,8 @@ def long_context_attention(
     k: [B, Lk, Nk, C1]
     v: [B, Lk, Nk, C2]
     """
+    from yunchang import LongContextAttention
+    from yunchang.kernels import AttnType
     assert attn_impl in [
         None,
         "auto",

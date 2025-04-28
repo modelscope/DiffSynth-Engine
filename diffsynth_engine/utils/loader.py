@@ -1,17 +1,27 @@
 import os
+import time
+import diffsynth_engine.utils.logging as logging
 
+logger = logging.get_logger(__name__)
 try:
     from fast_safetensors import load_safetensors
 
     use_fast_safetensors = True
 except ImportError:
     from safetensors.torch import load_file as _load_file
-
     use_fast_safetensors = False
 
 
 def load_file(path: str, device: str = "cpu"):
-    if use_fast_safetensors:
-        return load_safetensors(path, num_threads=os.environ.get("FAST_SAFETENSORS_NUM_THREADS", 16))
+    if use_fast_safetensors:        
+        logger.info(f"FastSafetensors load model from {path}")
+        start_time = time.time()
+        result = load_safetensors(path, num_threads=os.environ.get("FAST_SAFETENSORS_NUM_THREADS", 16))
+        logger.info(f"FastSafetensors Load Model End. Time: {time.time() - start_time:.2f}s")
+        return result
     else:
-        return _load_file(path, device=device)
+        logger.info(f"Safetensors load model from {path}")        
+        start_time = time.time()
+        result = _load_file(path, device=device)
+        logger.info(f"Safetensors Load Model End. Time: {time.time() - start_time:.2f}s")        
+        return result

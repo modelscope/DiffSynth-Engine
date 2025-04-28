@@ -275,8 +275,29 @@ class SDImagePipeline(BasePipeline):
         return noise_pred
 
     def unload_loras(self):
-        self.unet.unload_loras()
-        self.text_encoder.unload_loras()
+        for key, module in self.unet.named_modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
+        for key, module in self.text_encoder.named_modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
+    
+    def prepare_mask(
+        self, input_image: Image.Image, mask_image: Image.Image, vae_scale_factor: int = 8, latent_channels=4
+    ) -> torch.Tensor:
+        height, width = mask_image.size
+        # mask
+        mask = torch.Tensor(np.array(mask_image) / 255).unsqueeze(0).unsqueeze(0)
+        mask = torch.nn.functional.interpolate(mask, size=(height // vae_scale_factor, width // vae_scale_factor))
+        mask = repeat(mask, "b 1 h w -> b c h w", c=latent_channels)
+        mask = mask.to(self.device, self.dtype)
+        # overlay_image
+        overlay_image = Image.new("RGBa", (width, height))
+        overlay_image.paste(input_image.convert("RGBA").convert("RGBa"), mask=ImageOps.invert(mask_image.convert("L")))
+        overlay_image = overlay_image.convert("RGBA")
+        # mask: [1, 4, H, W]  = mask_image[1, 1, H//8, W//8] * 4
+        # overlay_image: [1, 4, H, W]  = mask_image[1, 1, H, W] + input_image[1, 3, H, W]
+        return mask, overlay_image
 
     @torch.no_grad()
     def __call__(

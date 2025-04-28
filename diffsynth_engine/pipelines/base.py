@@ -5,8 +5,7 @@ from typing import Dict, List, Tuple
 from PIL import Image, ImageOps
 from einops import repeat
 from dataclasses import dataclass
-from safetensors.torch import load_file
-
+from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
 from diffsynth_engine.utils import logging
@@ -108,12 +107,22 @@ class BasePipeline:
             raise ValueError(f"expects height and width to be multiples of {multiple_of}")
 
     @staticmethod
-    def preprocess_image(image: Image.Image) -> torch.Tensor:
+    def preprocess_image(image: Image.Image, mode='RGB') -> torch.Tensor:
+        image = image.convert(mode)
         image_array = np.array(image, dtype=np.float32)
         if len(image_array.shape) == 2:
             image_array = image_array[:, :, np.newaxis]
-
         image = torch.Tensor((image_array / 255) * 2 - 1).permute(2, 0, 1).unsqueeze(0)
+        return image
+    
+    @staticmethod
+    def preprocess_mask(image: Image.Image, mode='L') -> torch.Tensor:
+        image = image.convert(mode)
+        image_array = np.array(image, dtype=np.float32)
+        image = torch.Tensor((image_array / 255)).unsqueeze(0).unsqueeze(0)
+        # binary
+        image[image < 0.5] = 0
+        image[image >= 0.5] = 1
         return image
 
     @staticmethod
@@ -140,23 +149,6 @@ class BasePipeline:
         vae_dtype = self.vae_decoder.conv_in.weight.dtype
         image = self.vae_decoder(latent.to(vae_dtype), tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         return image
-
-    def prepare_mask(
-        self, input_image: Image.Image, mask_image: Image.Image, vae_scale_factor: int = 8, latent_channels=4
-    ) -> torch.Tensor:
-        height, width = mask_image.size
-        # mask
-        mask = torch.Tensor(np.array(mask_image) / 255).unsqueeze(0).unsqueeze(0)
-        mask = torch.nn.functional.interpolate(mask, size=(height // vae_scale_factor, width // vae_scale_factor))
-        mask = repeat(mask, "b 1 h w -> b c h w", c=latent_channels)
-        mask = mask.to(self.device, self.dtype)
-        # overlay_image
-        overlay_image = Image.new("RGBa", (width, height))
-        overlay_image.paste(input_image.convert("RGBA").convert("RGBa"), mask=ImageOps.invert(mask_image.convert("L")))
-        overlay_image = overlay_image.convert("RGBA")
-        # mask: [1, 4, H, W]  = mask_image[1, 1, H//8, W//8] * 4
-        # overlay_image: [1, 4, H, W]  = mask_image[1, 1, H, W] + input_image[1, 3, H, W]
-        return mask, overlay_image
 
     def prepare_latents(
         self,
