@@ -5,7 +5,7 @@ import torch
 from pathlib import Path
 from PIL import Image
 from typing import Dict, List
-from safetensors.torch import load_file
+from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.utils.video import save_video, load_video, VideoReader
 
 from tests.common.utils import make_deterministic, compute_normalized_ssim

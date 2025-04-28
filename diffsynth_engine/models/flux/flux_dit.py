@@ -1,6 +1,7 @@
 import json
 import torch
 import torch.nn as nn
+import numpy as np
 from enum import Enum
 from typing import Dict, Optional
 from einops import rearrange
@@ -408,13 +409,6 @@ class FluxDiT(PreTrainedModel):
         controlnet_single_block_output=None,
         **kwargs,
     ):
-        assert controlnet_double_block_output is None or len(controlnet_double_block_output) == len(self.blocks), (
-            "controlnet_double_block_output must be None or have the same length as self.blocks"
-        )
-        assert controlnet_single_block_output is None or len(controlnet_single_block_output) == len(
-            self.single_blocks
-        ), "controlnet_single_block_output must be None or have the same length as self.single_blocks"
-
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         with fp8_inference(fp8_linear_enabled), gguf_inference():
             if image_ids is None:
@@ -446,8 +440,10 @@ class FluxDiT(PreTrainedModel):
                     )
                 else:
                     hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
-                if controlnet_double_block_output is not None and controlnet_double_block_output[i] is not None:
-                    hidden_states = hidden_states + controlnet_double_block_output[i]
+                if controlnet_double_block_output is not None:
+                    interval_control = len(self.blocks) / len(controlnet_double_block_output)
+                    interval_control = int(np.ceil(interval_control))
+                    hidden_states = hidden_states + controlnet_double_block_output[i // interval_control]
 
             hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
             for block in self.single_blocks:
@@ -463,7 +459,9 @@ class FluxDiT(PreTrainedModel):
                 else:
                     hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
                 if controlnet_single_block_output is not None and controlnet_single_block_output[i] is not None:
-                    hidden_states = hidden_states + controlnet_single_block_output[i]
+                    interval_control = len(self.single_blocks) / len(controlnet_double_block_output)
+                    interval_control = int(np.ceil(interval_control))
+                    hidden_states = hidden_states + controlnet_single_block_output[i // interval_control]
 
             hidden_states = hidden_states[:, prompt_emb.shape[1] :]
             hidden_states = self.final_norm_out(hidden_states, conditioning)

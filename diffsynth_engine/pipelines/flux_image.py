@@ -192,6 +192,8 @@ class ControlNetParams:
     scale: float
     image: List[Image.Image | torch.Tensor]
     mask: Optional[List[Image.Image | torch.Tensor]] = None
+    control_start: float = 0
+    control_end: float = 1
 
 
 @dataclass
@@ -360,6 +362,8 @@ class FluxImagePipeline(BasePipeline):
         cfg_scale: float,
         guidance: torch.Tensor,
         controlnet_params: List[ControlNetParams],
+        current_step: int,
+        total_step: int,
         use_cfg: bool = False,
         batch_cfg: bool = False,
     ):
@@ -373,6 +377,8 @@ class FluxImagePipeline(BasePipeline):
                 text_ids,
                 guidance,
                 controlnet_params,
+                current_step,
+                total_step,
             )
         if not batch_cfg:
             # cfg by predict noise one by one
@@ -385,6 +391,8 @@ class FluxImagePipeline(BasePipeline):
                 text_ids,
                 guidance,
                 controlnet_params,
+                current_step,
+                total_step,
             )
             negative_noise_pred = self.predict_noise(
                 latents,
@@ -395,6 +403,8 @@ class FluxImagePipeline(BasePipeline):
                 text_ids,
                 guidance,
                 controlnet_params,
+                current_step,
+                total_step,
             )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
@@ -405,7 +415,16 @@ class FluxImagePipeline(BasePipeline):
             latents = torch.cat([latents, latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
             positive_noise_pred, negative_noise_pred = self.predict_noise(
-                latents, timestep, prompt_emb, add_text_embeds, image_ids, text_ids, guidance, controlnet_params
+                latents,
+                timestep,
+                prompt_emb,
+                add_text_embeds,
+                image_ids,
+                text_ids,
+                guidance,
+                controlnet_params,
+                current_step,
+                total_step,
             )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
@@ -420,6 +439,8 @@ class FluxImagePipeline(BasePipeline):
         text_ids: torch.Tensor,
         guidance: float,
         controlnet_params: List[ControlNetParams],
+        current_step: int,
+        total_step: int,
     ):
         double_block_output, single_block_output = self.predict_multicontrolnet(
             latents=latents,
@@ -430,6 +451,8 @@ class FluxImagePipeline(BasePipeline):
             text_ids=text_ids,
             image_ids=image_ids,
             controlnet_params=controlnet_params,
+            current_step=current_step,
+            total_step=total_step,
         )
         noise_pred = self.dit(
             hidden_states=latents,
@@ -479,7 +502,7 @@ class FluxImagePipeline(BasePipeline):
         sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
         return init_latents, latents, sigmas, timesteps
 
-    def prepare_masked_latent(self, image:Image.Image, mask: Image.Image | None, height:int, width:int):
+    def prepare_masked_latent(self, image: Image.Image, mask: Image.Image | None, height: int, width: int):
         if mask is None:
             image = image.resize((width, height))
             image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
@@ -520,14 +543,31 @@ class FluxImagePipeline(BasePipeline):
         text_ids: torch.Tensor,
         guidance: float,
         controlnet_params: List[ControlNetParams],
+        current_step: int,
+        total_step: int,
     ):
         double_block_output_results, single_block_output_results = None, None
         for param in controlnet_params:
+            current_scale = param.scale
+            if not (
+                current_step >= param.control_start * total_step and current_step <= param.control_end * total_step
+            ):
+                # if current_step is not in the control range
+                # skip thie controlnet
+                continue
             double_block_output, single_block_output = param.model(
-                latents, param.image, param.scale, timestep, prompt_emb, add_text_embeds, guidance, image_ids, text_ids
+                latents,
+                param.image,
+                current_scale,
+                timestep,
+                prompt_emb,
+                add_text_embeds,
+                guidance,
+                image_ids,
+                text_ids,
             )
             double_block_output_results = accumulate(double_block_output_results, double_block_output)
-            single_block_output_results = accumulate(single_block_output_results, single_block_output)        
+            single_block_output_results = accumulate(single_block_output_results, single_block_output)
         return double_block_output_results, single_block_output_results
 
     def enable_fp8_linear(self):
@@ -597,6 +637,8 @@ class FluxImagePipeline(BasePipeline):
                 cfg_scale=cfg_scale,
                 guidance=guidance,
                 controlnet_params=controlnet_params,
+                current_step=i,
+                total_step=len(timesteps),
                 use_cfg=self.use_cfg,
                 batch_cfg=self.batch_cfg,
             )

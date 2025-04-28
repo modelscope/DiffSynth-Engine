@@ -1,7 +1,6 @@
 import unittest
 import torch
-from safetensors.torch import load_file, save_file
-
+from diffsynth_engine.utils.loader import load_file, save_file
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.models.flux import FluxTextEncoder1, FluxTextEncoder2
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH

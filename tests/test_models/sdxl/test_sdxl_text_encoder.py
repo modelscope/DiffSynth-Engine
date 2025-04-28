@@ -1,6 +1,6 @@
 import unittest
 import torch
-from safetensors.torch import load_file, save_file
+from diffsynth_engine.utils.loader import load_file, save_file
 
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.models.sdxl import SDXLTextEncoder, SDXLTextEncoder2

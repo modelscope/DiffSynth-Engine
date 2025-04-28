@@ -1,7 +1,9 @@
 import torch
 import numpy as np
 from PIL import Image
-def tensor_to_image(t:torch.Tensor, denormalize:bool = True) -> Image.Image:
+
+
+def tensor_to_image(t: torch.Tensor, denormalize: bool = True) -> Image.Image:
     """
     Convert a tensor to an image.
     """
@@ -21,4 +23,3 @@ def tensor_to_image(t:torch.Tensor, denormalize:bool = True) -> Image.Image:
     else:
         mode = "RGB"
     return Image.fromarray(t, mode=mode)
-    

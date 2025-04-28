@@ -8,14 +8,15 @@ from diffsynth_engine.models.flux.flux_dit import (
     RoPEEmbedding,
     TimestepEmbeddings,
 )
+from diffsynth_engine.utils.loader import load_file
+from diffsynth_engine.models.utils import no_init_weights
 
 
 class FluxControlNetStateDictConverter(StateDictConverter):
     def __init__(self):
         super().__init__()
 
-    def _from_alimama_flux_inpainting(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        # 阿里妈妈
+    def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         new_state_dict = {}
         for key, value in state_dict.items():
             new_key = key
@@ -68,13 +69,19 @@ class FluxControlNetStateDictConverter(StateDictConverter):
         return new_state_dict
 
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        return self._from_alimama_flux_inpainting(state_dict)
+        return self._from_diffusers(state_dict)
 
 
-class FluxInpaintingControlNet(PreTrainedModel):
+class FluxControlNet(PreTrainedModel):
     converter = FluxControlNetStateDictConverter()
 
-    def __init__(self, attn_impl: Optional[str] = None, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
+    def __init__(
+        self,
+        condition_channels: int = 64,
+        attn_impl: Optional[str] = None,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.pos_embedder = RoPEEmbedding(3072, 10000, [16, 56, 56])
         self.time_embedder = TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
@@ -86,7 +93,7 @@ class FluxInpaintingControlNet(PreTrainedModel):
         )
         self.context_embedder = nn.Linear(4096, 3072, device=device, dtype=dtype)
         self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
-        self.controlnet_x_embedder = nn.Linear(64 + 4, 3072)
+        self.controlnet_x_embedder = nn.Linear(condition_channels, 3072)
         self.blocks = nn.ModuleList(
             [FluxJointTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(6)]
         )
@@ -130,11 +137,7 @@ class FluxInpaintingControlNet(PreTrainedModel):
 
         # apply control scale
         double_block_outputs = [control_scale * output for output in double_block_outputs]
-        # np.ceil(19/6) = 4, np.ceil(38/6) = 7
-        extend_double_block_outputs = []
-        for i in range(19):
-            extend_double_block_outputs.append(double_block_outputs[i // 4])
-        return extend_double_block_outputs, None
+        return double_block_outputs, None
 
     @classmethod
     def from_state_dict(
@@ -144,4 +147,15 @@ class FluxInpaintingControlNet(PreTrainedModel):
         dtype: torch.dtype,
         attn_impl: Optional[str] = None,
     ):
-        return super().from_state_dict(state_dict, device, dtype, attn_impl=attn_impl)
+        if "controlnet_x_embedder" in state_dict:
+            condition_channels = state_dict["controlnet_x_embedder.weight"].shape[1]
+        else:
+            condition_channels = 64
+
+        with no_init_weights():
+            model = torch.nn.utils.skip_init(
+                cls, condition_channels=condition_channels, attn_impl=attn_impl, device=device, dtype=dtype
+            )
+        model.load_state_dict(state_dict)
+        model.to(device=device, dtype=dtype, non_blocking=True)
+        return model

@@ -9,19 +9,25 @@ try:
     use_fast_safetensors = True
 except ImportError:
     from safetensors.torch import load_file as _load_file
+
     use_fast_safetensors = False
 
 
 def load_file(path: str, device: str = "cpu"):
-    if use_fast_safetensors:        
+    if use_fast_safetensors:
         logger.info(f"FastSafetensors load model from {path}")
         start_time = time.time()
         result = load_safetensors(path, num_threads=os.environ.get("FAST_SAFETENSORS_NUM_THREADS", 16))
         logger.info(f"FastSafetensors Load Model End. Time: {time.time() - start_time:.2f}s")
         return result
     else:
-        logger.info(f"Safetensors load model from {path}")        
+        logger.info(f"Safetensors load model from {path}")
         start_time = time.time()
         result = _load_file(path, device=device)
-        logger.info(f"Safetensors Load Model End. Time: {time.time() - start_time:.2f}s")        
+        logger.info(f"Safetensors Load Model End. Time: {time.time() - start_time:.2f}s")
         return result
+
+
+from safetensors.torch import save_file as _save_file
+
+save_file = _save_file

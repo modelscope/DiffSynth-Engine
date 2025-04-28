@@ -1,6 +1,6 @@
 import unittest
 import torch
-from safetensors.torch import load_file, save_file
+from diffsynth_engine.utils.loader import load_file, save_file
 from einops import repeat
 
 from diffsynth_engine.models.flux import FluxDiT

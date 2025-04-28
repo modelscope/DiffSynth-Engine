@@ -1,7 +1,8 @@
 import os
 import re
 import torch
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Tuple, Optional
+from diffsynth_engine.utils.loader import load_file, save_file
 from tqdm import tqdm
 from PIL import Image
 from dataclasses import dataclass
@@ -315,7 +316,7 @@ class SDXLImagePipeline(BasePipeline):
         for key, module in self.text_encoder_2.named_modules():
             if isinstance(module, (LoRALinear, LoRAConv2d)):
                 module.clear()
-    
+
     def prepare_mask(
         self, input_image: Image.Image, mask_image: Image.Image, vae_scale_factor: int = 8, latent_channels=4
     ) -> torch.Tensor:

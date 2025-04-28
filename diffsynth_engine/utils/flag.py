@@ -47,6 +47,6 @@ if SPARGE_ATTN_AVAILABLE:
 else:
     logger.info("Sparge attention is not available")
 
-FLASH_ATTN_3_AVAILABLE=False
-FLASH_ATTN_2_AVAILABLE=False # only use for test on amd machine TODO
-XFORMERS_AVAILABLE=False
+FLASH_ATTN_3_AVAILABLE = False
+FLASH_ATTN_2_AVAILABLE = False  # only use for test on amd machine TODO
+XFORMERS_AVAILABLE = False

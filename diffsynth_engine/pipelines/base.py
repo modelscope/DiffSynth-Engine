@@ -107,16 +107,16 @@ class BasePipeline:
             raise ValueError(f"expects height and width to be multiples of {multiple_of}")
 
     @staticmethod
-    def preprocess_image(image: Image.Image, mode='RGB') -> torch.Tensor:
+    def preprocess_image(image: Image.Image, mode="RGB") -> torch.Tensor:
         image = image.convert(mode)
         image_array = np.array(image, dtype=np.float32)
         if len(image_array.shape) == 2:
             image_array = image_array[:, :, np.newaxis]
         image = torch.Tensor((image_array / 255) * 2 - 1).permute(2, 0, 1).unsqueeze(0)
         return image
-    
+
     @staticmethod
-    def preprocess_mask(image: Image.Image, mode='L') -> torch.Tensor:
+    def preprocess_mask(image: Image.Image, mode="L") -> torch.Tensor:
         image = image.convert(mode)
         image_array = np.array(image, dtype=np.float32)
         image = torch.Tensor((image_array / 255)).unsqueeze(0).unsqueeze(0)

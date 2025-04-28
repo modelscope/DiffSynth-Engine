@@ -1,8 +1,7 @@
 import unittest
 import torch
 import numpy as np
-from safetensors.torch import load_file, save_file
-
+from diffsynth_engine.utils.loader import load_file, save_file
 from diffsynth_engine.models.flux import FluxVAEEncoder, FluxVAEDecoder
 from diffsynth_engine.utils.download import ensure_directory_exists
 from diffsynth_engine import fetch_model
