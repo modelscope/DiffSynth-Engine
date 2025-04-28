@@ -15,4 +15,5 @@ __all__ = [
     "SDModelConfig",
     "WanVideoPipeline",
     "WanModelConfig",
+    "ControlNetParams",
 ]

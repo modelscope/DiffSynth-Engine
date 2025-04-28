@@ -1,6 +1,7 @@
 import os
 import time
 import diffsynth_engine.utils.logging as logging
+from safetensors.torch import save_file as _save_file
 
 logger = logging.get_logger(__name__)
 try:
@@ -27,7 +28,5 @@ def load_file(path: str, device: str = "cpu"):
         logger.info(f"Safetensors Load Model End. Time: {time.time() - start_time:.2f}s")
         return result
 
-
-from safetensors.torch import save_file as _save_file
 
 save_file = _save_file

@@ -8,7 +8,6 @@ from diffsynth_engine.models.flux.flux_dit import (
     RoPEEmbedding,
     TimestepEmbeddings,
 )
-from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.models.utils import no_init_weights
 
 

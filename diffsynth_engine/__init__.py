@@ -7,7 +7,7 @@ from .pipelines import (
     SDXLModelConfig,
     SDModelConfig,
     WanModelConfig,
-    ControlNetParams
+    ControlNetParams,
 )
 from .models.flux import FluxControlNet
 from .utils.download import fetch_model, fetch_modelscope_model, fetch_civitai_model
@@ -23,6 +23,7 @@ __all__ = [
     "SDXLModelConfig",
     "SDModelConfig",
     "WanModelConfig",
+    "ControlNetParams",
     "fetch_model",
     "fetch_modelscope_model",
     "fetch_civitai_model",

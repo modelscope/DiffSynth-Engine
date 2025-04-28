@@ -1,16 +1,13 @@
 from ..common.test_case import ImageTestCase
-from diffsynth_engine import (
-    FluxImagePipeline, FluxControlNet, ControlNetParams, FluxModelConfig, fetch_model
-)
+from diffsynth_engine import FluxImagePipeline, FluxControlNet, ControlNetParams, fetch_model
 import torch
 
 
-class TestFluxControlNet(ImageTestCase):    
+class TestFluxControlNet(ImageTestCase):
     @classmethod
     def setUpClass(cls):
         model_path = fetch_model("muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors")
         cls.pipe = FluxImagePipeline.from_pretrained(model_path).eval()
-
 
     def test_union_control(self):
         canny_image = self.get_input_image("canny.png")
@@ -18,7 +15,7 @@ class TestFluxControlNet(ImageTestCase):
             fetch_model("LiblibAI/FLUX.1-dev-ControlNet-Union-Pro-2.0", path="diffusion_pytorch_model.safetensors"),
             device="cuda:0",
             dtype=torch.bfloat16,
-        )        
+        )
         output_image = self.pipe(
             prompt="A young girl stands gracefully at the edge of a serene beach, her long, flowing hair gently tousled by the sea breeze. She wears a soft, pastel-colored dress that complements the tranquil blues and greens of the coastal scenery. The golden hues of the setting sun cast a warm glow on her face, highlighting her serene expression. The background features a vast, azure ocean with gentle waves lapping at the shore, surrounded by distant cliffs and a clear, cloudless sky. The composition emphasizes the girl's serene presence amidst the natural beauty, with a balanced blend of warm and cool tones.",
             height=canny_image.height,
@@ -34,28 +31,23 @@ class TestFluxControlNet(ImageTestCase):
         )
         self.assertImageEqualAndSaveFailed(output_image, "flux/flux_union_pro_canny.png")
 
-
-
     def test_inpainting(self):
         mask_image = self.get_input_image("mask_image.png")
         input_image = self.get_input_image("test_image.png")
         controlnet = FluxControlNet.from_pretrained(
-            fetch_model("alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta", path="diffusion_pytorch_model.safetensors"),
+            fetch_model(
+                "alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta", path="diffusion_pytorch_model.safetensors"
+            ),
             device="cuda:0",
             dtype=torch.bfloat16,
-        )        
+        )
         output_image = self.pipe(
-            prompt="a beautiful girl with green hair",            
+            prompt="a beautiful girl with green hair",
             height=input_image.height,
             width=input_image.width,
             denoising_strength=0.8,
             num_inference_steps=20,
             seed=42,
-            controlnet_params=ControlNetParams(
-                model=controlnet,
-                scale=0.9,            
-                image=input_image,
-                mask=mask_image
-            ),
+            controlnet_params=ControlNetParams(model=controlnet, scale=0.9, image=input_image, mask=mask_image),
         )
         self.assertImageEqualAndSaveFailed(output_image, "flux/flux_inpainting.png")

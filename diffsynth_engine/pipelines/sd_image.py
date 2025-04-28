@@ -1,11 +1,13 @@
 import re
 import os
 import torch
+import numpy as np
+from einops import repeat
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, List, Tuple
 from diffsynth_engine.utils.loader import load_file
 from tqdm import tqdm
-from PIL import Image
+from PIL import Image, ImageOps
 
 from diffsynth_engine.models.base import split_suffix
 from diffsynth_engine.models.basic.lora import LoRAContext

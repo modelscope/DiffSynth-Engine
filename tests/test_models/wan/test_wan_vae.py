@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from diffsynth_engine.utils.loader import load_file, save_file
+from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.models.wan.wan_vae import WanVideoVAE
 from diffsynth_engine import fetch_model
 from tests.common.test_case import VideoTestCase
