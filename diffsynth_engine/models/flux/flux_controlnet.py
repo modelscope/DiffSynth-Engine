@@ -147,7 +147,7 @@ class FluxControlNet(PreTrainedModel):
         dtype: torch.dtype,
         attn_impl: Optional[str] = None,
     ):
-        if "controlnet_x_embedder" in state_dict:
+        if "controlnet_x_embedder.weight" in state_dict:
             condition_channels = state_dict["controlnet_x_embedder.weight"].shape[1]
         else:
             condition_channels = 64

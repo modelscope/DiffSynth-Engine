@@ -1,5 +1,5 @@
 from .base import BasePipeline, LoRAStateDictConverter
-from .flux_image import FluxImagePipeline, FluxModelConfig
+from .flux_image import FluxImagePipeline, FluxModelConfig, ControlNetParams
 from .sdxl_image import SDXLImagePipeline, SDXLModelConfig
 from .sd_image import SDImagePipeline, SDModelConfig
 from .wan_video import WanVideoPipeline, WanModelConfig

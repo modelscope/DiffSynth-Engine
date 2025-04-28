@@ -7,6 +7,7 @@ from .pipelines import (
     SDXLModelConfig,
     SDModelConfig,
     WanModelConfig,
+    ControlNetParams
 )
 from .models.flux import FluxControlNet
 from .utils.download import fetch_model, fetch_modelscope_model, fetch_civitai_model
