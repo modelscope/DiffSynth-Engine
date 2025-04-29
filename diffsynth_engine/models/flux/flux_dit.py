@@ -2,7 +2,6 @@ import json
 import torch
 import torch.nn as nn
 import numpy as np
-from enum import Enum
 from typing import Dict, Optional
 from einops import rearrange
 
@@ -21,10 +20,6 @@ logger = logging.get_logger(__name__)
 with open(FLUX_DIT_CONFIG_FILE, "r") as f:
     config = json.load(f)
 
-
-class FluxPatchPoint(Enum):
-    AFTER_EACH_DOUBLE_BLOCK = "after each double block"
-    AFTER_EACH_SINGLE_BLOCK = "after each single block"
 
 
 def default_patch_callback(hidden_states, controlnet_outputs, index, patch_point: FluxPatchPoint):
@@ -458,7 +453,7 @@ class FluxDiT(PreTrainedModel):
                     )
                 else:
                     hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
-                if controlnet_single_block_output is not None and controlnet_single_block_output[i] is not None:
+                if controlnet_single_block_output is not None:
                     interval_control = len(self.single_blocks) / len(controlnet_double_block_output)
                     interval_control = int(np.ceil(interval_control))
                     hidden_states = hidden_states + controlnet_single_block_output[i // interval_control]

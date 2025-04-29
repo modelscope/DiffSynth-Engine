@@ -260,12 +260,6 @@ class SDXLUNet(PreTrainedModel):
         res_stack = [hidden_states]
 
         # 3. blocks
-        def create_custom_forward(module):
-            def custom_forward(*inputs):
-                return module(*inputs)
-
-            return custom_forward
-
         for i, block in enumerate(self.blocks):
             if (
                 self.training
@@ -273,7 +267,7 @@ class SDXLUNet(PreTrainedModel):
                 and not (isinstance(block, PushBlock) or isinstance(block, PopBlock))
             ):
                 hidden_states, time_emb, text_emb, res_stack = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
+                    block,
                     hidden_states,
                     time_emb,
                     text_emb,

@@ -268,16 +268,10 @@ class SD3DiT(PreTrainedModel):
         height, width = hidden_states.shape[-2:]
         hidden_states = self.pos_embedder(hidden_states)
 
-        def create_custom_forward(module):
-            def custom_forward(*inputs):
-                return module(*inputs)
-
-            return custom_forward
-
         for block in self.blocks:
             if self.training and use_gradient_checkpointing:
                 hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
+                    block,
                     hidden_states,
                     prompt_emb,
                     conditioning,

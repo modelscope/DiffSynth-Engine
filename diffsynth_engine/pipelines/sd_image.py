@@ -278,12 +278,8 @@ class SDImagePipeline(BasePipeline):
         return noise_pred
 
     def unload_loras(self):
-        for key, module in self.unet.named_modules():
-            if isinstance(module, (LoRALinear, LoRAConv2d)):
-                module.clear()
-        for key, module in self.text_encoder.named_modules():
-            if isinstance(module, (LoRALinear, LoRAConv2d)):
-                module.clear()
+        self.unet.unload_loras()
+        self.text_encoder.unload_loras()
 
     def prepare_mask(
         self, input_image: Image.Image, mask_image: Image.Image, vae_scale_factor: int = 8, latent_channels=4

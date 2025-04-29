@@ -19,12 +19,10 @@ if FLASH_ATTN_2_AVAILABLE:
 else:
     logger.info("Flash attention 2 is not available")
 
-XFORMERS_AVAILABLE = False
-try:
-    importlib.util.find_spec("xformers")  # noqa: F401
-    XFORMERS_AVAILABLE = True
+XFORMERS_AVAILABLE = importlib.util.find_spec("xformers") is not None
+if XFORMERS_AVAILABLE:
     logger.info("XFormers is available")
-except ModuleNotFoundError:
+else:
     logger.info("XFormers is not available")
 
 SDPA_AVAILABLE = hasattr(torch.nn.functional, "scaled_dot_product_attention")
