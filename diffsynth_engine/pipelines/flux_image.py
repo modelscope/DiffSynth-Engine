@@ -3,8 +3,7 @@ import os
 import torch
 import torch.nn as nn
 import math
-from typing import Callable, Dict, List, Tuple, Optional
-from diffsynth_engine.utils.loader import load_file
+from typing import Callable, Dict, List, Optional
 from tqdm import tqdm
 from PIL import Image
 from dataclasses import dataclass

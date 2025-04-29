@@ -21,16 +21,6 @@ with open(FLUX_DIT_CONFIG_FILE, "r") as f:
     config = json.load(f)
 
 
-
-def default_patch_callback(hidden_states, controlnet_outputs, index, patch_point: FluxPatchPoint):
-    for controlnet_output in controlnet_outputs:
-        if len(controlnet_output) <= index:
-            continue
-        #  主模型第i层输出的hidden_states和每个controlnet第i层的输出结果相加
-        hidden_states = hidden_states + controlnet_output[index]
-    return hidden_states
-
-
 class FluxDiTStateDictConverter(StateDictConverter):
     def __init__(self):
         pass

@@ -3,8 +3,7 @@ import re
 import torch
 import numpy as np
 from einops import repeat
-from typing import Callable, Dict, List, Tuple, Optional
-from diffsynth_engine.utils.loader import load_file
+from typing import Callable, Dict, Optional
 from tqdm import tqdm
 from PIL import Image, ImageOps
 from dataclasses import dataclass
