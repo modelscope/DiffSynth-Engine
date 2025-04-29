@@ -82,8 +82,32 @@ class WanLoRAConverter(LoRAStateDictConverter):
             dit_dict[key] = lora_args
         return {"dit": dit_dict}
 
+    def _from_fun(self, state_dict):
+        dit_dict = {}
+        for key, param in state_dict.items():
+            if ".lora_down.weight" not in key:
+                continue
+
+            lora_args = {}
+            lora_args["up"] = state_dict[key.replace(".lora_down.weight", ".lora_up.weight")]
+            lora_args["down"] = param
+            lora_args["rank"] = lora_args["up"].shape[1]
+            if key.replace(".lora_down.weight", ".alpha") in state_dict:
+                lora_args["alpha"] = state_dict[key.replace(".lora_down.weight", ".alpha")]
+            else:
+                lora_args["alpha"] = lora_args["rank"]
+            key = key.replace("lora_unet_blocks_", "blocks.").replace(".lora_down.weight", "")
+            key = key.replace("_self_attn_", ".self_attn.")
+            key = key.replace("_cross_attn_", ".cross_attn.")
+            key = key.replace("_ffn_", ".ffn.")
+            dit_dict[key] = lora_args
+        return {"dit": dit_dict}
+
     def convert(self, state_dict):
-        if "diffusion_model.blocks.0.cross_attn.k.lora_A.weight" in state_dict:
+        if "lora_unet_blocks_0_cross_attn_k.lora_down.weight" in state_dict:
+            state_dict = self._from_fun(state_dict)
+            logger.info("use fun format state dict")
+        elif "diffusion_model.blocks.0.cross_attn.k.lora_A.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")
         else:
