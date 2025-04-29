@@ -1,10 +1,8 @@
 import os
 import torch
 import torch.nn as nn
-from typing import Dict, Union
+from typing import Dict, Union, List
 from diffsynth_engine.utils.loader import load_file
-from typing import List
-
 from diffsynth_engine.models.basic.lora import LoRALinear, LoRAConv2d
 from diffsynth_engine.models.utils import no_init_weights
 
