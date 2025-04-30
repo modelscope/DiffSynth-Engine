@@ -21,7 +21,7 @@ class PreTrainedModel(nn.Module):
 
     @classmethod
     def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike], device: str, dtype: torch.dtype, **kwargs):
-        state_dict = load_file(str(pretrained_model_path))
+        state_dict = load_file(pretrained_model_path)
         return cls.from_state_dict(state_dict, device=device, dtype=dtype, **kwargs)
 
     @classmethod

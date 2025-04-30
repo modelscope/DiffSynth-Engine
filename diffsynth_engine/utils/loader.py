@@ -14,7 +14,7 @@ except ImportError:
     use_fast_safetensors = False
 
 
-def load_file(path: str, device: str = "cpu"):
+def load_file(path: str | os.PathLike, device: str = "cpu"):
     if use_fast_safetensors:
         logger.info(f"FastSafetensors load model from {path}")
         start_time = time.time()
