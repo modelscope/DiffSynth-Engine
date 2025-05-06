@@ -13,7 +13,7 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "torch >= 2.4.1",
+    "torch >= 2.6",
     "torchvision",
     "xformers ; sys_platform == 'linux'",
     "safetensors",
@@ -29,7 +29,7 @@ dependencies = [
     "torchsde",
     "pillow",
     "imageio[ffmpeg]",
-    "yunchang"
+    "yunchang ; sys_platform == 'linux'"
 ]
 
 [project.optional-dependencies]
