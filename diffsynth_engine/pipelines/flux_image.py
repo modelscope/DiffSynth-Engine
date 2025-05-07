@@ -187,8 +187,8 @@ def accumulate(result, new_item):
 class ControlNetParams:
     model: nn.Module
     scale: float
-    image: List[Image.Image | torch.Tensor]
-    mask: Optional[List[Image.Image | torch.Tensor]] = None
+    image: List[Image.Image | torch.Tensor] | Image.Image | torch.Tensor
+    mask: Optional[List[Image.Image | torch.Tensor]] | Image.Image | torch.Tensor = None
     control_start: float = 0
     control_end: float = 1
 

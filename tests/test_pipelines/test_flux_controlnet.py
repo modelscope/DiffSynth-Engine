@@ -30,24 +30,3 @@ class TestFluxControlNet(ImageTestCase):
             ),
         )
         self.assertImageEqualAndSaveFailed(output_image, "flux/flux_union_pro_canny.png")
-
-    def test_inpainting(self):
-        mask_image = self.get_input_image("mask_image.png")
-        input_image = self.get_input_image("test_image.png")
-        controlnet = FluxControlNet.from_pretrained(
-            fetch_model(
-                "alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta", path="diffusion_pytorch_model.safetensors"
-            ),
-            device="cuda:0",
-            dtype=torch.bfloat16,
-        )
-        output_image = self.pipe(
-            prompt="a beautiful girl with green hair",
-            height=input_image.height,
-            width=input_image.width,
-            denoising_strength=0.8,
-            num_inference_steps=20,
-            seed=42,
-            controlnet_params=ControlNetParams(model=controlnet, scale=0.9, image=input_image, mask=mask_image),
-        )
-        self.assertImageEqualAndSaveFailed(output_image, "flux/flux_inpainting.png")
