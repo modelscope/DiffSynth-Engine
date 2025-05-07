@@ -3,7 +3,7 @@ import os
 import torch
 import torch.nn as nn
 import math
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Union
 from tqdm import tqdm
 from PIL import Image
 from dataclasses import dataclass
@@ -183,12 +183,15 @@ def accumulate(result, new_item):
     return result
 
 
+ImageType = Union[Image.Image, torch.Tensor, List[Image.Image], List[torch.Tensor]]
+
+
 @dataclass
 class ControlNetParams:
     model: nn.Module
     scale: float
-    image: List[Image.Image | torch.Tensor] | Image.Image | torch.Tensor
-    mask: Optional[List[Image.Image | torch.Tensor]] | Image.Image | torch.Tensor = None
+    image: ImageType
+    mask: Optional[ImageType] = None
     control_start: float = 0
     control_end: float = 1
 
