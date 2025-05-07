@@ -225,10 +225,19 @@ class FluxImagePipeline(BasePipeline):
         vae_encoder: FluxVAEEncoder,
         use_cfg: bool = False,
         batch_cfg: bool = False,
+        vae_tiled: bool = False,
+        vae_tile_size: int = 256,
+        vae_tile_stride: int = 256,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
-        super().__init__(device=device, dtype=dtype)
+        super().__init__(
+            vae_tiled=vae_tiled,
+            vae_tile_size=vae_tile_size,
+            vae_tile_stride=vae_tile_stride,
+            device=device,
+            dtype=dtype,
+        )
         self.noise_scheduler = RecifitedFlowScheduler(shift=3.0, use_dynamic_shifting=True)
         self.sampler = FlowMatchEulerSampler()
         # models
@@ -474,9 +483,6 @@ class FluxImagePipeline(BasePipeline):
         denoising_strength: float,
         num_inference_steps: int,
         mu: float,
-        tiled: bool = False,
-        tile_size: int = 128,
-        tile_stride: int = 64,
     ):
         # Prepare scheduler
         if input_image is not None:
@@ -491,7 +497,7 @@ class FluxImagePipeline(BasePipeline):
             self.load_models_to_device(["vae_encoder"])
             noise = latents
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
-            latents = self.encode_image(image, tiled, tile_size, tile_stride)
+            latents = self.encode_image(image)
             init_latents = latents.clone()
             latents = self.sampler.add_noise(latents, noise, sigma_start)
         else:
@@ -506,7 +512,7 @@ class FluxImagePipeline(BasePipeline):
         if mask is None:
             image = image.resize((width, height))
             image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
-            latent = self.encode_image(image, tiled=False)
+            latent = self.encode_image(image)
         else:
             image = image.resize((width, height))
             mask = mask.resize((width, height))
@@ -514,7 +520,7 @@ class FluxImagePipeline(BasePipeline):
             mask = self.preprocess_mask(mask).to(device=self.device, dtype=self.dtype)
             masked_image = image.clone()
             masked_image[(mask > 0.5).repeat(1, 3, 1, 1)] = -1
-            latent = self.encode_image(masked_image, tiled=False)
+            latent = self.encode_image(masked_image)
             mask = torch.nn.functional.interpolate(mask, size=(latent.shape[2], latent.shape[3]))
             mask = 1 - mask
             latent = torch.cat([latent, mask], dim=1)
@@ -585,9 +591,6 @@ class FluxImagePipeline(BasePipeline):
         height: int = 1024,
         width: int = 1024,
         num_inference_steps: int = 30,
-        tiled: bool = False,
-        tile_size: int = 128,
-        tile_stride: int = 64,
         seed: int | None = None,
         controlnet_params: List[ControlNetParams] | ControlNetParams = [],
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
@@ -605,7 +608,7 @@ class FluxImagePipeline(BasePipeline):
         image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
         mu = calculate_shift(image_seq_len)
         init_latents, latents, sigmas, timesteps = self.prepare_latents(
-            noise, input_image, denoising_strength, num_inference_steps, mu, tiled, tile_size, tile_stride
+            noise, input_image, denoising_strength, num_inference_steps, mu
         )
         # Initialize sampler
         self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas)
@@ -649,7 +652,7 @@ class FluxImagePipeline(BasePipeline):
                 progress_callback(i, len(timesteps), "DENOISING")
         # Decode image
         self.load_models_to_device(["vae_decoder"])
-        vae_output = self.decode_image(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
+        vae_output = self.decode_image(latents)
         image = self.vae_output_to_image(vae_output)
         # Offload all models
         self.load_models_to_device([])

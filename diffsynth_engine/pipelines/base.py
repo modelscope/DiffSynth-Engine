@@ -25,11 +25,14 @@ class LoRAStateDictConverter:
 class BasePipeline:
     lora_converter = LoRAStateDictConverter()
 
-    def __init__(self, device="cuda:0", dtype=torch.float16):
+    def __init__(self, vae_tiled, vae_tile_size, vae_tile_stride, device="cuda:0", dtype=torch.float16):
         super().__init__()
         self.device = device
         self.dtype = dtype
         self.offload_mode = None
+        self.vae_tiled = vae_tiled
+        self.vae_tile_size = vae_tile_size
+        self.vae_tile_stride = vae_tile_stride
         self.model_names = []
 
     @classmethod
@@ -140,13 +143,17 @@ class BasePipeline:
         noise = torch.randn(shape, generator=generator, device=device, dtype=dtype)
         return noise
 
-    def encode_image(self, image: torch.Tensor, tiled=False, tile_size=64, tile_stride=32) -> torch.Tensor:
-        latents = self.vae_encoder(image, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
+    def encode_image(self, image: torch.Tensor) -> torch.Tensor:
+        latents = self.vae_encoder(
+            image, tiled=self.vae_tiled, tile_size=self.vae_tile_size, tile_stride=self.vae_tile_stride
+        )
         return latents
 
-    def decode_image(self, latent: torch.Tensor, tiled=False, tile_size=64, tile_stride=32) -> torch.Tensor:
+    def decode_image(self, latent: torch.Tensor) -> torch.Tensor:
         vae_dtype = self.vae_decoder.conv_in.weight.dtype
-        image = self.vae_decoder(latent.to(vae_dtype), tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
+        image = self.vae_decoder(
+            latent.to(vae_dtype), tiled=self.vae_tiled, tile_size=self.vae_tile_size, tile_stride=self.vae_tile_stride
+        )
         return image
 
     def prepare_latents(

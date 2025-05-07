@@ -124,10 +124,19 @@ class SDXLImagePipeline(BasePipeline):
         vae_decoder: SDXLVAEDecoder,
         vae_encoder: SDXLVAEEncoder,
         batch_cfg: bool = True,
+        vae_tiled: bool = False,
+        vae_tile_size: int = 256,
+        vae_tile_stride: int = 256,
         device: str = "cuda",
         dtype: torch.dtype = torch.float16,
     ):
-        super().__init__(device=device, dtype=dtype)
+        super().__init__(
+            vae_tiled=vae_tiled,
+            vae_tile_size=vae_tile_size,
+            vae_tile_stride=vae_tile_stride,
+            device=device,
+            dtype=dtype,
+        )
         self.noise_scheduler = ScaledLinearScheduler()
         self.sampler = EulerSampler()
         # models
@@ -342,9 +351,6 @@ class SDXLImagePipeline(BasePipeline):
         height: int = 1024,
         width: int = 1024,
         num_inference_steps: int = 20,
-        tiled: bool = False,
-        tile_size: int = 64,
-        tile_stride: int = 32,
         seed: int | None = None,
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
@@ -354,7 +360,7 @@ class SDXLImagePipeline(BasePipeline):
         noise = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device, dtype=self.dtype)
 
         init_latents, latents, sigmas, timesteps = self.prepare_latents(
-            noise, input_image, denoising_strength, num_inference_steps, tiled, tile_size, tile_stride
+            noise, input_image, denoising_strength, num_inference_steps
         )
         mask, overlay_image = None, None
         if mask_image is not None:
@@ -402,7 +408,7 @@ class SDXLImagePipeline(BasePipeline):
             latents = latents * mask + init_latents * (1 - mask)
         # Decode image
         self.load_models_to_device(["vae_decoder"])
-        vae_output = self.decode_image(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
+        vae_output = self.decode_image(latents)
         image = self.vae_output_to_image(vae_output)
 
         if mask_image is not None:

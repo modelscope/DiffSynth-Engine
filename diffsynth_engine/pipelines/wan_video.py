@@ -128,10 +128,19 @@ class WanVideoPipeline(BasePipeline):
         vae: WanVideoVAE,
         image_encoder: WanImageEncoder,
         batch_cfg: bool = False,
+        vae_tiled: bool = True,
+        vae_tile_size: Tuple[int, int] = (34, 34),
+        vae_tile_stride: Tuple[int, int] = (18, 16),
         device="cuda",
         dtype=torch.bfloat16,
     ):
-        super().__init__(device=device, dtype=dtype)
+        super().__init__(
+            vae_tiled=vae_tiled,
+            vae_tile_size=vae_tile_size,
+            vae_tile_stride=vae_tile_stride,
+            device=device,
+            dtype=dtype,
+        )
         self.noise_scheduler = RecifitedFlowScheduler(shift=5.0, sigma_min=0.001, sigma_max=0.999)
         self.sampler = FlowMatchEulerSampler()
         self.tokenizer = tokenizer
@@ -202,22 +211,26 @@ class WanVideoPipeline(BasePipeline):
         frames = [Image.fromarray(frame) for frame in frames]
         return frames
 
-    def encode_video(self, videos: torch.Tensor, tiled=True, tile_size=(34, 34), tile_stride=(18, 16)):
+    def encode_video(self, videos: torch.Tensor):
         videos = videos.to(dtype=self.config.vae_dtype, device=self.device)
-        latents = self.vae.encode(videos, device=self.device, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
+        latents = self.vae.encode(
+            videos,
+            device=self.device,
+            tiled=self.vae_tiled,
+            tile_size=self.vae_tile_size,
+            tile_stride=self.vae_tile_stride,
+        )
         latents = latents.to(dtype=self.config.dit_dtype, device=self.device)
         return latents
 
-    def decode_video(
-        self, latents, tiled=True, tile_size=(34, 34), tile_stride=(18, 16), progress_callback=None
-    ) -> List[torch.Tensor]:
+    def decode_video(self, latents, progress_callback=None) -> List[torch.Tensor]:
         latents = latents.to(dtype=self.config.vae_dtype, device=self.device)
         videos = self.vae.decode(
             latents,
             device=self.device,
-            tiled=tiled,
-            tile_size=tile_size,
-            tile_stride=tile_stride,
+            tiled=self.vae_tiled,
+            tile_size=self.vae_tile_size,
+            tile_stride=self.vae_tile_stride,
             progress_callback=progress_callback,
         )
         videos = [video.to(dtype=self.config.dit_dtype, device=self.device) for video in videos]
@@ -297,9 +310,6 @@ class WanVideoPipeline(BasePipeline):
         input_video,
         denoising_strength,
         num_inference_steps,
-        tiled=True,
-        tile_size=(34, 34),
-        tile_stride=(18, 16),
     ):
         if input_video is not None:
             total_steps = num_inference_steps
@@ -311,9 +321,7 @@ class WanVideoPipeline(BasePipeline):
             noise = latents
             input_video = self.preprocess_images(input_video)
             input_video = torch.stack(input_video, dim=2)
-            latents = self.encode_video(input_video, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride).to(
-                dtype=latents.dtype, device=latents.device
-            )
+            latents = self.encode_video(input_video).to(dtype=latents.dtype, device=latents.device)
             init_latents = latents.clone()
             latents = self.sampler.add_noise(latents, noise, sigma_start)
         else:
@@ -336,9 +344,6 @@ class WanVideoPipeline(BasePipeline):
         num_frames=81,
         cfg_scale=5.0,
         num_inference_steps=50,
-        tiled=True,
-        tile_size=(34, 34),
-        tile_stride=(18, 16),
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
         assert height % 16 == 0 and width % 16 == 0, "height and width must be divisible by 16"
@@ -353,9 +358,6 @@ class WanVideoPipeline(BasePipeline):
             input_video,
             denoising_strength,
             num_inference_steps,
-            tiled=tiled,
-            tile_size=tile_size,
-            tile_stride=tile_stride,
         )
         self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas)
         # Encode prompts
@@ -392,9 +394,7 @@ class WanVideoPipeline(BasePipeline):
 
         # Decode
         self.load_models_to_device(["vae"])
-        frames = self.decode_video(
-            latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride, progress_callback=progress_callback
-        )
+        frames = self.decode_video(latents, progress_callback=progress_callback)
         frames = self.tensor2video(frames[0])
         return frames
 
