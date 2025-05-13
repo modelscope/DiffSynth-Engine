@@ -65,17 +65,30 @@ class RoPEEmbedding(nn.Module):
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, dim, eps, device: str, dtype: torch.dtype):
+    def __init__(
+        self,
+        dim,
+        eps=1e-5,
+        elementwise_affine=True,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones((dim,), device=device, dtype=dtype))
         self.eps = eps
+        self.dim = dim
+        self.elementwise_affine = elementwise_affine        
+        if elementwise_affine:
+            self.weight = nn.Parameter(torch.ones(dim, device=device, dtype=dtype))
+        
+    def norm(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
 
-    def forward(self, hidden_states):
-        input_dtype = hidden_states.dtype
-        variance = hidden_states.to(torch.float32).square().mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.eps)
-        hidden_states = hidden_states.to(input_dtype) * self.weight
-        return hidden_states
+    def forward(self, x):
+        norm_result = self.norm(x.float()).to(x.dtype)
+        if self.elementwise_affine:
+            return norm_result * self.weight
+        return norm_result
+        
 
 
 class NewGELUActivation(nn.Module):

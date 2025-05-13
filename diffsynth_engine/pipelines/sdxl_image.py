@@ -1,9 +1,10 @@
 import os
 import re
+from torch._tensor import Tensor
 import torch
 import numpy as np
 from einops import repeat
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 from tqdm import tqdm
 from PIL import Image, ImageOps
 from dataclasses import dataclass
@@ -203,8 +204,8 @@ class SDXLImagePipeline(BasePipeline):
                 clip_g_state_dict, device=init_device, dtype=model_config.clip_g_dtype
             )
             unet = SDXLUNet.from_state_dict(unet_state_dict, device=init_device, dtype=model_config.unet_dtype)
-        vae_decoder = SDXLVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
-        vae_encoder = SDXLVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
+        vae_decoder = SDXLVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa")
+        vae_encoder = SDXLVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa")
 
         pipe = cls(
             tokenizer=tokenizer,
@@ -387,6 +388,11 @@ class SDXLImagePipeline(BasePipeline):
         self.load_models_to_device(["unet"])
         for i, timestep in enumerate(tqdm(timesteps)):
             timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
+            positive_prompt_emb = positive_prompt_emb.to(self.dtype)
+            negative_prompt_emb = negative_prompt_emb.to(self.dtype)
+            positive_add_text_embeds = positive_add_text_embeds.to(self.dtype)
+            negative_add_text_embeds = negative_add_text_embeds.to(self.dtype)
+            add_time_id = add_time_id.to(self.dtype)
             # Classifier-free guidance
             noise_pred = self.predict_noise_with_cfg(
                 latents=latents,

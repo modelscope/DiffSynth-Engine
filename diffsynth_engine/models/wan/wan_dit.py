@@ -8,6 +8,7 @@ from einops import rearrange
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.basic.attention import attention, long_context_attention
+from diffsynth_engine.models.basic.transformer_helper import RMSNorm
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import (
     WAN_DIT_1_3B_T2V_CONFIG_FILE,
@@ -56,25 +57,6 @@ def rope_apply(x, freqs):
     x_out = torch.view_as_real(x_out * freqs)
     return x_out.to(x.dtype).flatten(3)
 
-
-class RMSNorm(nn.Module):
-    def __init__(
-        self,
-        dim,
-        eps=1e-5,
-        device: str = "cuda:0",
-        dtype: torch.dtype = torch.bfloat16,
-    ):
-        super().__init__()
-        self.eps = eps
-        self.dim = dim
-        self.weight = nn.Parameter(torch.ones(dim, device=device, dtype=dtype))
-
-    def norm(self, x):
-        return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-
-    def forward(self, x):
-        return self.norm(x.float()).to(x.dtype) * self.weight
 
 
 class SelfAttention(nn.Module):

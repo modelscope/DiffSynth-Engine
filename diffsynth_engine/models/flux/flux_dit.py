@@ -227,7 +227,7 @@ class FluxJointTransformerBlock(nn.Module):
             nn.Linear(dim * 4, dim, device=device, dtype=dtype),
         )
 
-    def forward(self, hidden_states_a, hidden_states_b, temb, image_rotary_emb):
+    def forward(self, hidden_states_a, hidden_states_b, temb, image_rotary_emb, image_emb):
         norm_hidden_states_a, gate_msa_a, shift_mlp_a, scale_mlp_a, gate_mlp_a = self.norm1_a(hidden_states_a, emb=temb)
         norm_hidden_states_b, gate_msa_b, shift_mlp_b, scale_mlp_b, gate_mlp_b = self.norm1_b(hidden_states_b, emb=temb)
 
@@ -293,7 +293,7 @@ class FluxSingleTransformerBlock(nn.Module):
         hidden_states = hidden_states.to(q.dtype)
         return hidden_states
 
-    def forward(self, hidden_states_a, hidden_states_b, temb, image_rotary_emb):
+    def forward(self, hidden_states_a, hidden_states_b, temb, image_rotary_emb, image_emb):
         residual = hidden_states_a
         norm_hidden_states, gate = self.norm(hidden_states_a, emb=temb)
         hidden_states_a = self.to_qkv_mlp(norm_hidden_states)
@@ -386,6 +386,7 @@ class FluxDiT(PreTrainedModel):
         timestep,
         prompt_emb,
         pooled_prompt_emb,
+        image_emb,
         guidance,
         text_ids,
         image_ids=None,
@@ -421,10 +422,11 @@ class FluxDiT(PreTrainedModel):
                         prompt_emb,
                         conditioning,
                         image_rotary_emb,
+                        image_emb,
                         use_reentrant=False,
                     )
                 else:
-                    hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
+                    hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb, image_emb)
                 if controlnet_double_block_output is not None:
                     interval_control = len(self.blocks) / len(controlnet_double_block_output)
                     interval_control = int(np.ceil(interval_control))
@@ -439,10 +441,11 @@ class FluxDiT(PreTrainedModel):
                         prompt_emb,
                         conditioning,
                         image_rotary_emb,
+                        image_emb,
                         use_reentrant=False,
                     )
                 else:
-                    hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
+                    hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb, image_emb)
                 if controlnet_single_block_output is not None:
                     interval_control = len(self.single_blocks) / len(controlnet_double_block_output)
                     interval_control = int(np.ceil(interval_control))

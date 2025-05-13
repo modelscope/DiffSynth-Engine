@@ -366,6 +366,7 @@ class FluxImagePipeline(BasePipeline):
         negative_prompt_emb: torch.Tensor,
         positive_add_text_embeds: torch.Tensor,
         negative_add_text_embeds: torch.Tensor,
+        image_emb: torch.Tensor | None,
         image_ids: torch.Tensor,
         text_ids: torch.Tensor,
         cfg_scale: float,
@@ -382,6 +383,7 @@ class FluxImagePipeline(BasePipeline):
                 timestep,
                 positive_prompt_emb,
                 positive_add_text_embeds,
+                image_emb,
                 image_ids,
                 text_ids,
                 guidance,
@@ -396,6 +398,7 @@ class FluxImagePipeline(BasePipeline):
                 timestep,
                 positive_prompt_emb,
                 positive_add_text_embeds,
+                image_emb,
                 image_ids,
                 text_ids,
                 guidance,
@@ -408,6 +411,7 @@ class FluxImagePipeline(BasePipeline):
                 timestep,
                 negative_prompt_emb,
                 negative_add_text_embeds,
+                image_emb,
                 image_ids,
                 text_ids,
                 guidance,
@@ -428,6 +432,7 @@ class FluxImagePipeline(BasePipeline):
                 timestep,
                 prompt_emb,
                 add_text_embeds,
+                image_emb,
                 image_ids,
                 text_ids,
                 guidance,
@@ -444,6 +449,7 @@ class FluxImagePipeline(BasePipeline):
         timestep: torch.Tensor,
         prompt_emb: torch.Tensor,
         add_text_embeds: torch.Tensor,
+        image_emb: torch.Tensor | None,
         image_ids: torch.Tensor,
         text_ids: torch.Tensor,
         guidance: float,
@@ -468,6 +474,7 @@ class FluxImagePipeline(BasePipeline):
             timestep=timestep,
             prompt_emb=prompt_emb,
             pooled_prompt_emb=add_text_embeds,
+            image_emb=image_emb,
             guidance=guidance,
             text_ids=text_ids,
             image_ids=image_ids,
@@ -579,14 +586,24 @@ class FluxImagePipeline(BasePipeline):
     def enable_fp8_linear(self):
         enable_fp8_linear(self.dit)
 
+    def load_ip_adapter(self, ip_adapter):
+        self.ip_adapter = ip_adapter
+        self.ip_adapter.inject(self.dit)
+    
+    def unload_ip_adapter(self):
+        if self.ip_adapter is not None:
+            self.ip_adapter.remove(self.dit)
+            self.ip_adapter = None
+
     @torch.no_grad()
     def __call__(
         self,
         prompt: str,
         negative_prompt: str = "",
-        cfg_scale: float = 1.0,
+        ref_image: Image.Image | None = None, # use for ip-adapter, instance-id
+        cfg_scale: float = 1.0, # 官方的flux模型不支持cfg调整
         clip_skip: int = 2,
-        input_image: Image.Image | None = None,
+        input_image: Image.Image | None = None, # use for img2img
         denoising_strength: float = 1.0,
         height: int = 1024,
         width: int = 1024,
@@ -623,6 +640,9 @@ class FluxImagePipeline(BasePipeline):
 
         # ControlNet
         controlnet_params = self.prepare_controlnet_params(controlnet_params, h=height, w=width)
+        
+        # image_emb
+        image_emb = self.ip_adapter.encode_image(ref_image) if self.ip_adapter is not None and ref_image is not None else None
 
         # Denoise
         self.load_models_to_device(["dit"])
@@ -635,6 +655,7 @@ class FluxImagePipeline(BasePipeline):
                 negative_prompt_emb=negative_prompt_emb,
                 positive_add_text_embeds=positive_add_text_embeds,
                 negative_add_text_embeds=negative_add_text_embeds,
+                image_emb=image_emb,
                 image_ids=image_ids,
                 text_ids=text_ids,
                 cfg_scale=cfg_scale,

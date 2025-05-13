@@ -67,6 +67,7 @@ class VAEAttentionBlock(nn.Module):
         num_layers=1,
         norm_num_groups=32,
         eps=1e-5,
+        attn_impl:str = "auto",
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float32,
     ):
@@ -86,6 +87,7 @@ class VAEAttentionBlock(nn.Module):
                     bias_q=True,
                     bias_kv=True,
                     bias_out=True,
+                    attn_impl=attn_impl,
                     device=device,
                     dtype=dtype,
                 )
@@ -119,6 +121,7 @@ class VAEDecoder(PreTrainedModel):
         scaling_factor: float = 0.18215,
         shift_factor: float = 0,
         use_post_quant_conv: bool = True,
+        attn_impl:str = "auto",        
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float32,
     ):
@@ -137,7 +140,7 @@ class VAEDecoder(PreTrainedModel):
             [
                 # UNetMidBlock2D
                 ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-                VAEAttentionBlock(1, 512, 512, 1, eps=1e-6, device=device, dtype=dtype),
+                VAEAttentionBlock(1, 512, 512, 1, eps=1e-6, device=device, dtype=dtype, attn_impl=attn_impl),
                 ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
                 # UpDecoderBlock2D
                 ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
@@ -202,6 +205,7 @@ class VAEDecoder(PreTrainedModel):
         scaling_factor: float = 0.18215,
         shift_factor: float = 0,
         use_post_quant_conv: bool = True,
+        attn_impl:str = "auto",
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
@@ -210,6 +214,7 @@ class VAEDecoder(PreTrainedModel):
                 scaling_factor=scaling_factor,
                 shift_factor=shift_factor,
                 use_post_quant_conv=use_post_quant_conv,
+                attn_impl=attn_impl,
                 device=device,
                 dtype=dtype,
             )
@@ -230,6 +235,7 @@ class VAEEncoder(PreTrainedModel):
         scaling_factor: float = 0.18215,
         shift_factor: float = 0,
         use_quant_conv: bool = True,
+        attn_impl:str = "auto",
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float32,
     ):
@@ -263,7 +269,7 @@ class VAEEncoder(PreTrainedModel):
                 ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
                 # UNetMidBlock2D
                 ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-                VAEAttentionBlock(1, 512, 512, 1, eps=1e-6, device=device, dtype=dtype),
+                VAEAttentionBlock(1, 512, 512, 1, eps=1e-6, device=device, dtype=dtype, attn_impl=attn_impl),
                 ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
             ]
         )
@@ -309,6 +315,7 @@ class VAEEncoder(PreTrainedModel):
         scaling_factor: float = 0.18215,
         shift_factor: float = 0,
         use_quant_conv: bool = True,
+        attn_impl:str = "auto"
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
@@ -317,6 +324,7 @@ class VAEEncoder(PreTrainedModel):
                 scaling_factor=scaling_factor,
                 shift_factor=shift_factor,
                 use_quant_conv=use_quant_conv,
+                attn_impl=attn_impl,
                 device=device,
                 dtype=dtype,
             )
@@ -338,6 +346,7 @@ class VAE(PreTrainedModel):
         shift_factor: float = 0,
         use_quant_conv: bool = True,
         use_post_quant_conv: bool = True,
+        attn_impl:str = "auto",
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float32,
     ):
@@ -347,6 +356,7 @@ class VAE(PreTrainedModel):
             scaling_factor=scaling_factor,
             shift_factor=shift_factor,
             use_quant_conv=use_quant_conv,
+            attn_impl=attn_impl,
             device=device,
             dtype=dtype,
         )
@@ -355,6 +365,7 @@ class VAE(PreTrainedModel):
             scaling_factor=scaling_factor,
             shift_factor=shift_factor,
             use_post_quant_conv=use_post_quant_conv,
+            attn_impl=attn_impl,            
             device=device,
             dtype=dtype,
         )
@@ -376,6 +387,7 @@ class VAE(PreTrainedModel):
         shift_factor: float = 0,
         use_quant_conv: bool = True,
         use_post_quant_conv: bool = True,
+        attn_impl:str = "auto"
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
@@ -385,6 +397,7 @@ class VAE(PreTrainedModel):
                 shift_factor=shift_factor,
                 use_quant_conv=use_quant_conv,
                 use_post_quant_conv=use_post_quant_conv,
+                attn_impl=attn_impl,
                 device=device,
                 dtype=dtype,
             )
