@@ -26,9 +26,10 @@ def fetch_model(
     path: Optional[str] = None,
     access_token: Optional[str] = None,
     source: str = "modelscope",
+    fetch_safetensors: bool = True,
 ) -> str:
     if source == "modelscope":
-        return fetch_modelscope_model(model_uri, revision, path, access_token)
+        return fetch_modelscope_model(model_uri, revision, path, access_token, fetch_safetensors)
     if source == "civitai":
         return fetch_civitai_model(model_uri)
     raise ValueError(f'source should be one of {MODEL_SOURCES} but got "{source}"')
@@ -39,6 +40,7 @@ def fetch_modelscope_model(
     revision: Optional[str] = None,
     path: Optional[str] = None,
     access_token: Optional[str] = None,
+    fetch_safetensors: bool = True,
 ) -> str:
     lock_file_name = f"modelscope.{model_id.replace('/', '--')}.{revision if revision else '__version'}.lock"
     lock_file_path = os.path.join(DIFFSYNTH_FILELOCK_DIR, lock_file_name)
@@ -55,7 +57,7 @@ def fetch_modelscope_model(
     else:
         path = dirpath
 
-    if os.path.isdir(path):
+    if os.path.isdir(path) and fetch_safetensors:
         return _fetch_safetensors(path)
     return path
 
