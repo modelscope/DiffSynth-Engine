@@ -58,7 +58,6 @@ def rope_apply(x, freqs):
     return x_out.to(x.dtype).flatten(3)
 
 
-
 class SelfAttention(nn.Module):
     def __init__(
         self,

@@ -426,7 +426,9 @@ class FluxDiT(PreTrainedModel):
                         use_reentrant=False,
                     )
                 else:
-                    hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb, image_emb)
+                    hidden_states, prompt_emb = block(
+                        hidden_states, prompt_emb, conditioning, image_rotary_emb, image_emb
+                    )
                 if controlnet_double_block_output is not None:
                     interval_control = len(self.blocks) / len(controlnet_double_block_output)
                     interval_control = int(np.ceil(interval_control))
@@ -445,7 +447,9 @@ class FluxDiT(PreTrainedModel):
                         use_reentrant=False,
                     )
                 else:
-                    hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb, image_emb)
+                    hidden_states, prompt_emb = block(
+                        hidden_states, prompt_emb, conditioning, image_rotary_emb, image_emb
+                    )
                 if controlnet_single_block_output is not None:
                     interval_control = len(self.single_blocks) / len(controlnet_double_block_output)
                     interval_control = int(np.ceil(interval_control))

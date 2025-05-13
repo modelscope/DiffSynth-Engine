@@ -589,7 +589,7 @@ class FluxImagePipeline(BasePipeline):
     def load_ip_adapter(self, ip_adapter):
         self.ip_adapter = ip_adapter
         self.ip_adapter.inject(self.dit)
-    
+
     def unload_ip_adapter(self):
         if self.ip_adapter is not None:
             self.ip_adapter.remove(self.dit)
@@ -600,10 +600,10 @@ class FluxImagePipeline(BasePipeline):
         self,
         prompt: str,
         negative_prompt: str = "",
-        ref_image: Image.Image | None = None, # use for ip-adapter, instance-id
-        cfg_scale: float = 1.0, # 官方的flux模型不支持cfg调整
+        ref_image: Image.Image | None = None,  # use for ip-adapter, instance-id
+        cfg_scale: float = 1.0,  # 官方的flux模型不支持cfg调整
         clip_skip: int = 2,
-        input_image: Image.Image | None = None, # use for img2img
+        input_image: Image.Image | None = None,  # use for img2img
         denoising_strength: float = 1.0,
         height: int = 1024,
         width: int = 1024,
@@ -640,9 +640,11 @@ class FluxImagePipeline(BasePipeline):
 
         # ControlNet
         controlnet_params = self.prepare_controlnet_params(controlnet_params, h=height, w=width)
-        
+
         # image_emb
-        image_emb = self.ip_adapter.encode_image(ref_image) if self.ip_adapter is not None and ref_image is not None else None
+        image_emb = (
+            self.ip_adapter.encode_image(ref_image) if self.ip_adapter is not None and ref_image is not None else None
+        )
 
         # Denoise
         self.load_models_to_device(["dit"])

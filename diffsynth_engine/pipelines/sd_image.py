@@ -217,8 +217,12 @@ class SDImagePipeline(BasePipeline):
                 clip_state_dict, device=init_device, dtype=model_config.clip_dtype
             )
             unet = SDUNet.from_state_dict(unet_state_dict, device=init_device, dtype=model_config.unet_dtype)
-        vae_decoder = SDVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa")
-        vae_encoder = SDVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa")
+        vae_decoder = SDVAEDecoder.from_state_dict(
+            vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa"
+        )
+        vae_encoder = SDVAEEncoder.from_state_dict(
+            vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa"
+        )
 
         pipe = cls(
             tokenizer=tokenizer,

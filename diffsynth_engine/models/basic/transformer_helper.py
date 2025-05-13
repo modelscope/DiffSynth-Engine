@@ -76,10 +76,10 @@ class RMSNorm(nn.Module):
         super().__init__()
         self.eps = eps
         self.dim = dim
-        self.elementwise_affine = elementwise_affine        
+        self.elementwise_affine = elementwise_affine
         if elementwise_affine:
             self.weight = nn.Parameter(torch.ones(dim, device=device, dtype=dtype))
-        
+
     def norm(self, x):
         return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
 
@@ -88,7 +88,6 @@ class RMSNorm(nn.Module):
         if self.elementwise_affine:
             return norm_result * self.weight
         return norm_result
-        
 
 
 class NewGELUActivation(nn.Module):

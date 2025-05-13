@@ -1,10 +1,9 @@
 import os
 import re
-from torch._tensor import Tensor
 import torch
 import numpy as np
 from einops import repeat
-from typing import Any, Callable, Dict, Optional
+from typing import Callable, Dict, Optional
 from tqdm import tqdm
 from PIL import Image, ImageOps
 from dataclasses import dataclass
@@ -204,8 +203,12 @@ class SDXLImagePipeline(BasePipeline):
                 clip_g_state_dict, device=init_device, dtype=model_config.clip_g_dtype
             )
             unet = SDXLUNet.from_state_dict(unet_state_dict, device=init_device, dtype=model_config.unet_dtype)
-        vae_decoder = SDXLVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa")
-        vae_encoder = SDXLVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa")
+        vae_decoder = SDXLVAEDecoder.from_state_dict(
+            vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa"
+        )
+        vae_encoder = SDXLVAEEncoder.from_state_dict(
+            vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa"
+        )
 
         pipe = cls(
             tokenizer=tokenizer,
