@@ -32,10 +32,10 @@ if XFORMERS_AVAILABLE:
 
     def xformers_attn(q, k, v, attn_mask=None, scale=None):
         if attn_mask is not None:
-            attn_mask = repeat(attn_mask, "S L -> B H S L", B=q.shape[0], H=q.shape[2])
-            attn_mask = memory_align(attn_mask)
+            if attn_mask.ndim == 2:
+                attn_mask = repeat(attn_mask, "S L -> B H S L", B=q.shape[0], H=q.shape[2])
+            attn_mask = memory_align(attn_mask.contiguous())
         return memory_efficient_attention(q, k, v, attn_bias=attn_mask, scale=scale)
-
 
 if SDPA_AVAILABLE:
 

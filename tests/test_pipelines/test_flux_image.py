@@ -1,4 +1,4 @@
-from ..common.test_case import ImageTestCase
+from tests.common.test_case import ImageTestCase
 from diffsynth_engine.pipelines import FluxImagePipeline, FluxModelConfig
 from diffsynth_engine import fetch_model
 
@@ -66,3 +66,7 @@ class TestFLUXGGUF(ImageTestCase):
             seed=42,
         )
         self.assertImageEqualAndSaveFailed(image, "flux/flux_txt2img.png", threshold=0.85)
+
+if __name__ == "__main__":
+    import unittest
+    unittest.main()
