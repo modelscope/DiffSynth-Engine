@@ -1,6 +1,6 @@
 import unittest
 
-from ..common.test_case import ImageTestCase
+from tests.common.test_case import ImageTestCase
 from diffsynth_engine.algorithm.noise_scheduler import (
     ScaledLinearScheduler,
     ExponentialScheduler,

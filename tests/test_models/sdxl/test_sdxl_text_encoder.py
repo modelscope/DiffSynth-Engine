@@ -161,3 +161,6 @@ class TestSDXLTextEncoder(TestCase):
         save_path = self.testdata_dir / "expect/sdxl/sdxl_text_encoder_2.safetensors"
         ensure_directory_exists(save_path)
         save_file(expect, save_path)
+
+if __name__ == "__main__":
+    unittest.main()

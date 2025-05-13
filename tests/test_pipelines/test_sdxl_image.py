@@ -1,4 +1,6 @@
-from ..common.test_case import ImageTestCase
+import unittest
+
+from tests.common.test_case import ImageTestCase
 from diffsynth_engine import fetch_model
 from diffsynth_engine.pipelines.sdxl_image import SDXLImagePipeline
 
@@ -57,3 +59,6 @@ class TestSDXLImage(ImageTestCase):
         )
         self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_lora.png", threshold=0.99)
+
+if __name__ == "__main__":
+    unittest.main()

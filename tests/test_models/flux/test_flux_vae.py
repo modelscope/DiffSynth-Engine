@@ -342,3 +342,6 @@ class TestFluxVAE(ImageTestCase):
         save_path = self.testdata_dir / "expect/flux/flux_vae.safetensors"
         ensure_directory_exists(save_path)
         save_file(expect, save_path)
+
+if __name__ == "__main__":
+    unittest.main()

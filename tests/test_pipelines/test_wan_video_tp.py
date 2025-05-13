@@ -1,4 +1,6 @@
-from ..common.test_case import VideoTestCase
+import unittest
+
+from tests.common.test_case  import VideoTestCase
 from diffsynth_engine.pipelines import WanVideoPipeline, WanModelConfig
 from diffsynth_engine.utils.download import fetch_model
 
@@ -23,3 +25,6 @@ class TestWanVideoTP(VideoTestCase):
         )
         self.save_video(video, "wan_tp_t2v.mp4")
         del self.pipe
+
+if __name__ == "__main__":
+    unittest.main()

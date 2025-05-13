@@ -1,4 +1,6 @@
 import torch
+import unittest
+
 from diffsynth_engine.models.components.siglip import SiglipImageEncoder
 from diffsynth_engine import fetch_model
 from tests.common.test_case import ImageTestCase
@@ -15,3 +17,6 @@ class TestSiglipImageEncoder(ImageTestCase):
         expect = self.get_expect_tensor("test_siglip_image_encoder.safetensors")
         result = self.image_encoder(image)
         self.assertTensorEqual(result.cpu(), expect["output"])
+
+if __name__ == "__main__":
+    unittest.main()

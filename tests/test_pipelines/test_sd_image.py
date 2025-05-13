@@ -1,4 +1,6 @@
-from ..common.test_case import ImageTestCase
+import unittest
+
+from tests.common.test_case import ImageTestCase
 from diffsynth_engine import fetch_model
 from diffsynth_engine.pipelines.sd_image import SDImagePipeline
 
@@ -53,3 +55,6 @@ class TestSDImage(ImageTestCase):
         )
         self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "sd/sd_lora.png", threshold=0.99)
+
+if __name__ == "__main__":
+    unittest.main()

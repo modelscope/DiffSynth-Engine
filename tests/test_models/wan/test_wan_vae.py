@@ -1,5 +1,7 @@
 import torch
+import unittest
 import numpy as np
+
 from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.models.wan.wan_vae import WanVideoVAE
 from diffsynth_engine import fetch_model
@@ -32,3 +34,6 @@ class TestWanVAE(VideoTestCase):
         with torch.no_grad():
             result = self.vae.decode(latent_tensor, device="cuda:0", tiled=True)[0].cpu()
         self.assertTensorEqual(result, expected)
+
+if __name__ == "__main__":
+    unittest.main()

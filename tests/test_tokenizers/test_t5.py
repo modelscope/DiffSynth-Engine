@@ -1,4 +1,5 @@
 import torch
+import unittest
 
 from diffsynth_engine.tokenizers.t5 import T5TokenizerFast
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_2_CONF_PATH
@@ -136,3 +137,6 @@ class TestT5TokenizerFast(TestCase):
             self.assertEqual(shape, result.shape)
             truncated = result[:, : expected.shape[1]]
             self.assertTrue(torch.equal(expected, truncated))
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,4 +1,6 @@
-from ..common.test_case import ImageTestCase
+import unittest
+
+from tests.common.test_case import ImageTestCase
 from diffsynth_engine import fetch_model, FluxInpaintingTool, FluxOutpaintingTool
 
 
@@ -29,3 +31,6 @@ class TestFluxTools(ImageTestCase):
             strength=0.9,
         )
         self.assertImageEqualAndSaveFailed(output_image, "flux/flux_outpainting.png")
+
+if __name__ == "__main__":
+    unittest.main()

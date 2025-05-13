@@ -1,4 +1,6 @@
-from ..common.test_case import ImageTestCase
+import unittest
+
+from tests.common.test_case import ImageTestCase
 from diffsynth_engine import FluxImagePipeline, FluxControlNet, ControlNetParams, fetch_model
 import torch
 
@@ -30,3 +32,6 @@ class TestFluxControlNet(ImageTestCase):
             ),
         )
         self.assertImageEqualAndSaveFailed(output_image, "flux/flux_union_pro_canny.png")
+
+if __name__ == "__main__":
+    unittest.main()

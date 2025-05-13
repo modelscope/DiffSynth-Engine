@@ -1,4 +1,5 @@
 import torch
+import unittest
 
 from diffsynth_engine.models.sdxl.sdxl_unet import SDXLUNet
 from tests.common.test_case import ImageTestCase
@@ -19,3 +20,6 @@ class TestSDXLUNet(ImageTestCase):
         y = t["y"].to(device="cuda:0")
         output = self.unet(x, timestep, context, y).to(device="cpu")
         self.assertTensorEqual(output, t["output"], atol=1e-3, rtol=1e-3)
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,3 +1,4 @@
+import unittest
 import torch
 
 from diffsynth_engine.models.sd.sd_unet import SDUNet
@@ -20,3 +21,6 @@ class TestSDUNet(ImageTestCase):
         context = t["context"].to(device="cuda:0")
         output = self.unet(x, timestep, context).to(device="cpu")
         self.assertTensorEqual(output, t["output"], atol=1e-3, rtol=1e-3)
+
+if __name__ == "__main__":
+    unittest.main()

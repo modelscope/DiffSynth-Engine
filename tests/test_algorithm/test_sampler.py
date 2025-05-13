@@ -1,4 +1,6 @@
-from ..common.test_case import ImageTestCase
+import unittest
+
+from tests.common.test_case import ImageTestCase
 from diffsynth_engine.algorithm.sampler import EulerSampler, FlowMatchEulerSampler
 from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler, RecifitedFlowScheduler
 from diffsynth_engine.pipelines.flux_image import calculate_shift
@@ -40,3 +42,6 @@ class TestSampler(ImageTestCase):
 
         results = sampler.step(origin_sample, model_output, 10)
         self.assertTensorEqual(results, prev_sample)
+
+if __name__ == "__main__":
+    unittest.main()
