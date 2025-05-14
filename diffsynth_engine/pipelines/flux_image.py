@@ -54,8 +54,6 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                 names = key.split(".")
                 if key in dit_rename_dict:
                     rename = dit_rename_dict[key]
-                    if key.startswith("final_layer.adaLN_modulation.1."):
-                        param = torch.concat([param[3072:], param[:3072]], dim=0)
                 elif names[0] == "double_blocks":
                     rename = f"blocks.{names[1]}." + dit_suffix_rename_dict[".".join(names[2:])]
                 elif names[0] == "single_blocks":
@@ -63,13 +61,30 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                         rename = f"single_blocks.{names[1]}." + dit_suffix_rename_dict[".".join(names[2:])]
                     else:
                         raise ValueError(f"Unsupported key: {key}")
-                lora_args = {}
-                lora_args["alpha"] = param
-                lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
-                lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
-                lora_args["rank"] = lora_args["up"].shape[1]
-                rename = rename.replace(".weight", "")
-                dit_dict[rename] = lora_args
+                if "to_qkv_mlp" in rename:
+                    rename = rename.replace(".weight", "")                    
+                    flux_dim = 3072
+                    qkv_lora_args = {}
+                    qkv_lora_args["alpha"] = param
+                    qkv_lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")][: 3 * flux_dim]
+                    qkv_lora_args["rank"] = qkv_lora_args["up"].shape[1]
+                    qkv_lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
+                    dit_dict[rename.replace("to_qkv_mlp", "attn.to_qkv")] = qkv_lora_args
+
+                    mlp_lora_args = {}
+                    mlp_lora_args["alpha"] = param
+                    mlp_lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")][3 * flux_dim: ]
+                    mlp_lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
+                    mlp_lora_args["rank"] = mlp_lora_args["up"].shape[1]
+                    dit_dict[rename.replace("to_qkv_mlp", "mlp.0")] = mlp_lora_args
+                else:
+                    lora_args = {}
+                    lora_args["alpha"] = param
+                    lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
+                    lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
+                    lora_args["rank"] = lora_args["up"].shape[1]
+                    rename = rename.replace(".weight", "")
+                    dit_dict[rename] = lora_args
             elif "lora_te" in key:
                 name = key.replace("lora_te1", "text_encoder")
                 name = name.replace("text_model_encoder_layers", "text_model.encoder.layers")
@@ -206,7 +221,7 @@ class FluxModelConfig:
     dit_dtype: torch.dtype = torch.bfloat16
     clip_dtype: torch.dtype = torch.bfloat16
     t5_dtype: torch.dtype = torch.bfloat16
-    vae_dtype: torch.dtype = torch.float32
+    vae_dtype: torch.dtype = torch.bfloat16
 
     dit_attn_impl: Optional[str] = "auto"
 

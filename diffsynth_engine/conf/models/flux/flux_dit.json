@@ -33,8 +33,8 @@
             "img_mlp.0.weight": "ff_a.0.weight",
             "img_mlp.2.bias": "ff_a.2.bias",
             "img_mlp.2.weight": "ff_a.2.weight",
-            "img_mod.lin.bias": "norm1_a.linear.bias",
-            "img_mod.lin.weight": "norm1_a.linear.weight",
+            "img_mod.lin.bias": "linear_a.bias",
+            "img_mod.lin.weight": "linear_a.weight",
             "txt_attn.norm.key_norm.scale": "attn.norm_k_b.weight",
             "txt_attn.norm.query_norm.scale": "attn.norm_q_b.weight",
             "txt_attn.proj.bias": "attn.b_to_out.bias",
@@ -45,16 +45,16 @@
             "txt_mlp.0.weight": "ff_b.0.weight",
             "txt_mlp.2.bias": "ff_b.2.bias",
             "txt_mlp.2.weight": "ff_b.2.weight",
-            "txt_mod.lin.bias": "norm1_b.linear.bias",
-            "txt_mod.lin.weight": "norm1_b.linear.weight",
+            "txt_mod.lin.bias": "linear_b.bias",
+            "txt_mod.lin.weight": "linear_b.weight",
             "linear1.bias": "to_qkv_mlp.bias",
             "linear1.weight": "to_qkv_mlp.weight",
             "linear2.bias": "proj_out.bias",
             "linear2.weight": "proj_out.weight",
             "modulation.lin.bias": "norm.linear.bias",
             "modulation.lin.weight": "norm.linear.weight",
-            "norm.key_norm.scale": "norm_k_a.weight",
-            "norm.query_norm.scale": "norm_q_a.weight"
+            "norm.key_norm.scale": "attn.norm_k_a.weight",
+            "norm.query_norm.scale": "attn.norm_q_a.weight"
         }
     },
     "diffusers": {
@@ -72,8 +72,8 @@
         },
         "rename_dict": {
             "proj_out": "proj_out",
-            "norm1.linear": "norm1_a.linear",
-            "norm1_context.linear": "norm1_b.linear",
+            "norm1.linear": "linear_a",
+            "norm1_context.linear": "linear_b",
             "attn.to_q": "attn.a_to_q",
             "attn.to_k": "attn.a_to_k",
             "attn.to_v": "attn.a_to_v",
@@ -95,8 +95,8 @@
             "attn.to_q": "a_to_q",
             "attn.to_k": "a_to_k",
             "attn.to_v": "a_to_v",
-            "attn.norm_q": "norm_q_a",
-            "attn.norm_k": "norm_k_a",
+            "attn.norm_q": "attn.norm_q_a",
+            "attn.norm_k": "attn.norm_k_a",
             "norm.linear": "norm.linear",
             "proj_mlp": "proj_in_besides_attn",
             "proj_out": "proj_out"

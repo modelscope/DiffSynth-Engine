@@ -4,7 +4,7 @@ from typing import Optional, Dict
 from einops import rearrange
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.flux.flux_dit import (
-    FluxJointTransformerBlock,
+    FluxDoubleTransformerBlock,
     RoPEEmbedding,
     TimestepEmbeddings,
 )
@@ -94,7 +94,7 @@ class FluxControlNet(PreTrainedModel):
         self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
         self.controlnet_x_embedder = nn.Linear(condition_channels, 3072)
         self.blocks = nn.ModuleList(
-            [FluxJointTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(6)]
+            [FluxDoubleTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(6)]
         )
         # controlnet projection
         self.blocks_proj = nn.ModuleList(

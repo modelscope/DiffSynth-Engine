@@ -5,7 +5,7 @@ import numpy as np
 from typing import Dict, Optional
 from einops import rearrange
 
-from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm, AdaLayerNormSingle, RoPEEmbedding, RMSNorm
+from diffsynth_engine.models.basic.transformer_helper import AdaLayerNormZero, AdaLayerNorm, RoPEEmbedding, RMSNorm, modulate
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
@@ -56,17 +56,16 @@ class FluxDiTStateDictConverter(StateDictConverter):
                     pass
         for name in list(state_dict_.keys()):
             if ".proj_in_besides_attn." in name:
-                name_ = name.replace(".proj_in_besides_attn.", ".to_qkv_mlp.")
                 param = torch.concat(
                     [
                         state_dict_[name.replace(".proj_in_besides_attn.", ".a_to_q.")],
                         state_dict_[name.replace(".proj_in_besides_attn.", ".a_to_k.")],
                         state_dict_[name.replace(".proj_in_besides_attn.", ".a_to_v.")],
-                        state_dict_[name],
                     ],
                     dim=0,
                 )
-                state_dict_[name_] = param
+                state_dict_[name.replace(".proj_in_besides_attn.", ".attn.to_qkv.")] = param
+                state_dict_[name.replace(".proj_in_besides_attn.", ".mlp.0.")] = state_dict_[name_]
                 state_dict_.pop(name.replace(".proj_in_besides_attn.", ".a_to_q."))
                 state_dict_.pop(name.replace(".proj_in_besides_attn.", ".a_to_k."))
                 state_dict_.pop(name.replace(".proj_in_besides_attn.", ".a_to_v."))
@@ -90,6 +89,7 @@ class FluxDiTStateDictConverter(StateDictConverter):
         return state_dict_
 
     def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        dim = 3072
         rename_dict = config["civitai"]["rename_dict"]
         suffix_rename_dict = config["civitai"]["suffix_rename_dict"]
         state_dict_ = {}
@@ -97,16 +97,19 @@ class FluxDiTStateDictConverter(StateDictConverter):
             name = name.replace("model.diffusion_model.", "")
             names = name.split(".")
             if name in rename_dict:
-                if name.startswith("final_layer.adaLN_modulation.1."):
-                    param = torch.concat([param[3072:], param[:3072]], dim=0)
                 state_dict_[rename_dict[name]] = param
             elif names[0] == "double_blocks":
                 name_ = f"blocks.{names[1]}." + suffix_rename_dict[".".join(names[2:])]
                 state_dict_[name_] = param
             elif names[0] == "single_blocks":
                 if ".".join(names[2:]) in suffix_rename_dict:
-                    name_ = f"single_blocks.{names[1]}." + suffix_rename_dict[".".join(names[2:])]
-                    state_dict_[name_] = param
+                    name_ = f"single_blocks.{names[1]}." + suffix_rename_dict[".".join(names[2:])]                    
+                    if "to_qkv_mlp" in name_:
+                        attn_param, mlp_param = param[:3 * dim], param[3 * dim:]
+                        state_dict_[name_.replace("to_qkv_mlp", "attn.to_qkv")] = attn_param
+                        state_dict_[name_.replace("to_qkv_mlp", "mlp.0")] = mlp_param
+                    else:
+                        state_dict_[name_] = param
             else:
                 pass
         return state_dict_
@@ -122,15 +125,23 @@ class FluxDiTStateDictConverter(StateDictConverter):
             logger.info("user diffsynth format state dict")
         return state_dict
 
+def apply_rope(xq, xk, freqs_cis):
+    xq_ = rearrange(xq, "b s h (d p q) -> b h s d p q", p=1, q=2)
+    xk_ = rearrange(xk, "b s h (d p q) -> b h s d p q", p=1, q=2)
+    xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
+    xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]    
+    xq_out = rearrange(xq_out, "b h s d q -> b s h (d q)", q=2)
+    xk_out = rearrange(xk_out, "b h s d q -> b s h (d q)", q=2)
+    return xq_out.to(xq.dtype), xk_out.to(xk.dtype)
 
-class FluxJointAttention(nn.Module):
+
+class FluxDoubleAttention(nn.Module):
     def __init__(
         self,
         dim_a,
         dim_b,
         num_heads,
         head_dim,
-        only_out_a=False,
         attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
@@ -138,7 +149,6 @@ class FluxJointAttention(nn.Module):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
-        self.only_out_a = only_out_a
 
         self.a_to_qkv = nn.Linear(dim_a, dim_a * 3, device=device, dtype=dtype)
         self.b_to_qkv = nn.Linear(dim_b, dim_b * 3, device=device, dtype=dtype)
@@ -149,178 +159,134 @@ class FluxJointAttention(nn.Module):
         self.norm_k_b = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
 
         self.a_to_out = nn.Linear(dim_a, dim_a, device=device, dtype=dtype)
-        if not only_out_a:
-            self.b_to_out = nn.Linear(dim_b, dim_b, device=device, dtype=dtype)
+        self.b_to_out = nn.Linear(dim_b, dim_b, device=device, dtype=dtype)
         self.attn_impl = attn_impl
+    
+    def attention_callback(self,
+        attn_out_a,
+        attn_out_b,
+        x_a, x_b,
+        q_a, q_b,
+        k_a, k_b,
+        v_a, v_b,
+        rope_emb,
+        image_emb
+    ):
+        return attn_out_a, attn_out_b
+        
 
-    def apply_rope(self, xq, xk, freqs_cis):
-        xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
-        xk_ = xk.float().reshape(*xk.shape[:-1], -1, 1, 2)
-        xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
-        xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]
-        return xq_out.reshape(*xq.shape).type_as(xq), xk_out.reshape(*xk.shape).type_as(xk)
-
-    def forward(self, hidden_states_a, hidden_states_b, image_rotary_emb):
-        batch_size = hidden_states_a.shape[0]
-
-        # Part A
-        qkv_a = self.a_to_qkv(hidden_states_a)
-        qkv_a = qkv_a.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
-        q_a, k_a, v_a = qkv_a.chunk(3, dim=1)
-        q_a, k_a = self.norm_q_a(q_a), self.norm_k_a(k_a)
-
-        # Part B
-        qkv_b = self.b_to_qkv(hidden_states_b)
-        qkv_b = qkv_b.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
-        q_b, k_b, v_b = qkv_b.chunk(3, dim=1)
-        q_b, k_b = self.norm_q_b(q_b), self.norm_k_b(k_b)
-
-        q = torch.concat([q_b, q_a], dim=2)
-        k = torch.concat([k_b, k_a], dim=2)
-        v = torch.concat([v_b, v_a], dim=2)
-
-        q, k = self.apply_rope(q, k, image_rotary_emb)
-        q = q.transpose(1, 2)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-        hidden_states = attention(q, k, v, attn_impl=self.attn_impl)
-        hidden_states = hidden_states.reshape(batch_size, -1, self.num_heads * self.head_dim)
-        hidden_states = hidden_states.to(q.dtype)
-        hidden_states_b, hidden_states_a = (
-            hidden_states[:, : hidden_states_b.shape[1]],
-            hidden_states[:, hidden_states_b.shape[1] :],
-        )
-        hidden_states_a = self.a_to_out(hidden_states_a)
-        if self.only_out_a:
-            return hidden_states_a
-        else:
-            hidden_states_b = self.b_to_out(hidden_states_b)
-            return hidden_states_a, hidden_states_b
+    def forward(self, image, text, rope_emb, image_emb):        
+        q_a, k_a, v_a = rearrange(self.a_to_qkv(image), "b s (h d) -> b s h d", h=(3 * self.num_heads)).chunk(3, dim=2)
+        q_b, k_b, v_b = rearrange(self.b_to_qkv(text), "b s (h d) -> b s h d", h=(3 * self.num_heads)).chunk(3, dim=2)
+        q = torch.cat([self.norm_q_b(q_b), self.norm_q_a(q_a)], dim=1)
+        k = torch.cat([self.norm_k_b(k_b), self.norm_k_a(k_a)], dim=1)
+        v = torch.cat([v_b, v_a], dim=1)
+        q, k = apply_rope(q, k, rope_emb)
+        attn_out = attention(q, k, v, attn_impl=self.attn_impl)
+        attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
+        text_out, image_out = attn_out[:, :text.shape[1]], attn_out[:, text.shape[1]:]        
+        image_out, text_out = self.attention_callback(image_out, text_out, image, text, q_a, q_b, k_a, k_b, v_a, v_b, rope_emb, image_emb)
+        return self.a_to_out(image_out), self.b_to_out(text_out)
 
 
-class FluxJointTransformerBlock(nn.Module):
+class FluxDoubleTransformerBlock(nn.Module):
     def __init__(
         self,
         dim,
-        num_attention_heads,
+        num_heads,
         attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
-        self.norm1_a = AdaLayerNorm(dim, device=device, dtype=dtype)
-        self.norm1_b = AdaLayerNorm(dim, device=device, dtype=dtype)
-
-        self.attn = FluxJointAttention(
-            dim, dim, num_attention_heads, dim // num_attention_heads, attn_impl=attn_impl, device=device, dtype=dtype
+        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
+        self.silu = nn.SiLU()
+        self.linear_a = nn.Linear(dim, dim * 6, device=device, dtype=dtype)
+        self.linear_b = nn.Linear(dim, dim * 6, device=device, dtype=dtype)        
+        self.attn = FluxDoubleAttention(
+            dim, dim, num_heads, dim // num_heads, attn_impl=attn_impl, device=device, dtype=dtype
         )
-
-        self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_a = nn.Sequential(
-            nn.Linear(dim, dim * 4), nn.GELU(approximate="tanh"), nn.Linear(dim * 4, dim, device=device, dtype=dtype)
+            nn.Linear(dim, dim * 4), 
+            nn.GELU(approximate="tanh"), 
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
         )
-
-        self.norm2_b = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_b = nn.Sequential(
             nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
             nn.Linear(dim * 4, dim, device=device, dtype=dtype),
         )
 
-    def forward(self, hidden_states_a, hidden_states_b, temb, image_rotary_emb, image_emb):
-        norm_hidden_states_a, gate_msa_a, shift_mlp_a, scale_mlp_a, gate_mlp_a = self.norm1_a(hidden_states_a, emb=temb)
-        norm_hidden_states_b, gate_msa_b, shift_mlp_b, scale_mlp_b, gate_mlp_b = self.norm1_b(hidden_states_b, emb=temb)
+    def forward(self, image, text, t_emb, rope_emb, image_emb):
+        shift_msa_a, scale_msa_a, gate_msa_a, shift_mlp_a, scale_mlp_a, gate_mlp_a = self.linear_a(self.silu(t_emb)).chunk(6, dim=1)
+        shift_msa_b, scale_msa_b, gate_msa_b, shift_mlp_b, scale_mlp_b, gate_mlp_b = self.linear_b(self.silu(t_emb)).chunk(6, dim=1)
 
-        # Attention
-        attn_output_a, attn_output_b = self.attn(norm_hidden_states_a, norm_hidden_states_b, image_rotary_emb)
+        # AdaLayerNorm-Zero for Image-Text Joint Attention
+        image_in = modulate(self.norm(image), shift_msa_a, scale=scale_msa_a)
+        text_in = modulate(self.norm(text), shift_msa_b, scale_msa_b)
+        image_out, text_out = self.attn(image_in, text_in, rope_emb, image_emb)
+        image = image + gate_msa_a * image_out
+        text = text + gate_msa_b * text_out        
+        
+        # AdaLayerNorm-Zero for Image FFN
+        image_in = modulate(self.norm(image), shift_mlp_a, scale_mlp_a)
+        image = image + gate_mlp_a * self.ff_a(image_in)
 
-        # Part A
-        hidden_states_a = hidden_states_a + gate_msa_a * attn_output_a
-        norm_hidden_states_a = self.norm2_a(hidden_states_a) * (1 + scale_mlp_a) + shift_mlp_a
-        hidden_states_a = hidden_states_a + gate_mlp_a * self.ff_a(norm_hidden_states_a)
+        # AdaLayerNorm-Zero for Text FFN
+        text_in  = modulate(self.norm(text), shift_mlp_b, scale_mlp_b)
+        text = text + gate_mlp_b * self.ff_b(text_in)
+        return image, text
 
-        # Part B
-        hidden_states_b = hidden_states_b + gate_msa_b * attn_output_b
-        norm_hidden_states_b = self.norm2_b(hidden_states_b) * (1 + scale_mlp_b) + shift_mlp_b
-        hidden_states_b = hidden_states_b + gate_mlp_b * self.ff_b(norm_hidden_states_b)
-
-        return hidden_states_a, hidden_states_b
-
-
-class FluxSingleTransformerBlock(nn.Module):
+class FluxSingleAttention(nn.Module):
     def __init__(
         self,
         dim,
-        num_attention_heads,
+        num_heads,
         attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
-        self.num_heads = num_attention_heads
-        self.head_dim = dim // num_attention_heads
-        self.dim = dim
-
-        self.norm = AdaLayerNormSingle(dim, device=device, dtype=dtype)
-        self.to_qkv_mlp = nn.Linear(dim, dim * (3 + 4), device=device, dtype=dtype)
-        self.norm_q_a = RMSNorm(self.head_dim, eps=1e-6, device=device, dtype=dtype)
-        self.norm_k_a = RMSNorm(self.head_dim, eps=1e-6, device=device, dtype=dtype)
-
-        self.proj_out = nn.Linear(dim * 5, dim)
+        self.num_heads = num_heads
+        self.to_qkv = nn.Linear(dim, dim * 3, device=device, dtype=dtype)
+        self.norm_q_a = RMSNorm(dim // num_heads, eps=1e-6, device=device, dtype=dtype)
+        self.norm_k_a = RMSNorm(dim // num_heads, eps=1e-6, device=device, dtype=dtype)
         self.attn_impl = attn_impl
 
-    def apply_rope(self, xq, xk, freqs_cis):
-        xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
-        xk_ = xk.float().reshape(*xk.shape[:-1], -1, 1, 2)
-        xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
-        xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]
-        return xq_out.reshape(*xq.shape).type_as(xq), xk_out.reshape(*xk.shape).type_as(xk)
+    def attention_callback(self, attn_out, x, q, k, v, rope_emb, image_emb):
+        return attn_out
+    
+    def forward(self, x, rope_emb, image_emb):
+        q, k, v = rearrange(self.to_qkv(x), "b s (h d) -> b s h d", h=(3 * self.num_heads)).chunk(3, dim=2)
+        q, k = apply_rope(self.norm_q_a(q), self.norm_k_a(k), rope_emb)
+        attn_out = attention(q, k, v, attn_impl=self.attn_impl)
+        attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
+        return self.attention_callback(attn_out, x, q, k, v, rope_emb, image_emb)
 
-    def process_attention(self, hidden_states, image_rotary_emb):
-        batch_size = hidden_states.shape[0]
-
-        qkv = hidden_states.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
-        q, k, v = qkv.chunk(3, dim=1)
-        q, k = self.norm_q_a(q), self.norm_k_a(k)
-
-        q, k = self.apply_rope(q, k, image_rotary_emb)
-        q = q.transpose(1, 2)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-
-        hidden_states = attention(q, k, v, attn_impl=self.attn_impl)
-        hidden_states = hidden_states.reshape(batch_size, -1, self.num_heads * self.head_dim)
-        hidden_states = hidden_states.to(q.dtype)
-        return hidden_states
-
-    def forward(self, hidden_states_a, hidden_states_b, temb, image_rotary_emb, image_emb):
-        residual = hidden_states_a
-        norm_hidden_states, gate = self.norm(hidden_states_a, emb=temb)
-        hidden_states_a = self.to_qkv_mlp(norm_hidden_states)
-        attn_output, mlp_hidden_states = hidden_states_a[:, :, : self.dim * 3], hidden_states_a[:, :, self.dim * 3 :]
-
-        attn_output = self.process_attention(attn_output, image_rotary_emb)
-        mlp_hidden_states = nn.functional.gelu(mlp_hidden_states, approximate="tanh")
-
-        hidden_states_a = torch.cat([attn_output, mlp_hidden_states], dim=2)
-        hidden_states_a = gate.unsqueeze(1) * self.proj_out(hidden_states_a)
-        hidden_states_a = residual + hidden_states_a
-
-        return hidden_states_a, hidden_states_b
-
-
-class AdaLayerNormContinuous(nn.Module):
-    def __init__(self, dim, device: str, dtype: torch.dtype):
+class FluxSingleTransformerBlock(nn.Module):
+    def __init__(
+        self,
+        dim,
+        num_heads,
+        attn_impl: Optional[str] = None,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
-        self.silu = nn.SiLU()
-        self.linear = nn.Linear(dim, dim * 2, bias=True, device=device, dtype=dtype)
-        self.norm = nn.LayerNorm(dim, eps=1e-6, elementwise_affine=False, device=device, dtype=dtype)
-
-    def forward(self, x, conditioning):
-        emb = self.linear(self.silu(conditioning))
-        scale, shift = torch.chunk(emb, 2, dim=1)
-        x = self.norm(x) * (1 + scale)[:, None] + shift[:, None]
-        return x
+        self.dim = dim
+        self.norm = AdaLayerNormZero(dim, device=device, dtype=dtype)
+        self.attn = FluxSingleAttention(dim, num_heads, attn_impl=attn_impl, device=device, dtype=dtype)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, dim * 4), 
+            nn.GELU(approximate="tanh"), 
+        )
+        self.proj_out = nn.Linear(dim * 5, dim)
+        
+    def forward(self, x, t_emb, rope_emb, image_emb):
+        h, gate = self.norm(x, emb=t_emb)
+        attn_output = self.attn(h, rope_emb, image_emb)
+        mlp_output = self.mlp(h)
+        return x + gate * self.proj_out(torch.cat([attn_output, mlp_output], dim=2))
 
 
 class FluxDiT(PreTrainedModel):
@@ -345,13 +311,12 @@ class FluxDiT(PreTrainedModel):
         self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
 
         self.blocks = nn.ModuleList(
-            [FluxJointTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(19)]
+            [FluxDoubleTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(19)]
         )
         self.single_blocks = nn.ModuleList(
             [FluxSingleTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(38)]
         )
-
-        self.final_norm_out = AdaLayerNormContinuous(3072, device=device, dtype=dtype)
+        self.final_norm_out = AdaLayerNorm(3072, device=device, dtype=dtype)
         self.final_proj_out = nn.Linear(3072, 64, device=device, dtype=dtype)
 
     def patchify(self, hidden_states):
@@ -390,11 +355,11 @@ class FluxDiT(PreTrainedModel):
         guidance,
         text_ids,
         image_ids=None,
-        use_gradient_checkpointing=False,
         controlnet_double_block_output=None,
         controlnet_single_block_output=None,
         **kwargs,
     ):
+        height, width = hidden_states.shape[-2: ]   
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         with fp8_inference(fp8_linear_enabled), gguf_inference():
             if image_ids is None:
@@ -408,48 +373,22 @@ class FluxDiT(PreTrainedModel):
                 conditioning += self.guidance_embedder(guidance, hidden_states.dtype)
             conditioning += self.pooled_text_embedder(pooled_prompt_emb)
             prompt_emb = self.context_embedder(prompt_emb)
-            image_rotary_emb = self.pos_embedder(torch.cat((text_ids, image_ids), dim=1))
-
-            height, width = hidden_states.shape[-2:]
+            rope_emb = self.pos_embedder(torch.cat((text_ids, image_ids), dim=1))
             hidden_states = self.patchify(hidden_states)
             hidden_states = self.x_embedder(hidden_states)
-
             for i, block in enumerate(self.blocks):
-                if self.training and use_gradient_checkpointing:
-                    hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
-                        block,
-                        hidden_states,
-                        prompt_emb,
-                        conditioning,
-                        image_rotary_emb,
-                        image_emb,
-                        use_reentrant=False,
-                    )
-                else:
-                    hidden_states, prompt_emb = block(
-                        hidden_states, prompt_emb, conditioning, image_rotary_emb, image_emb
-                    )
+                hidden_states, prompt_emb = block(
+                    hidden_states, prompt_emb, conditioning, rope_emb, image_emb
+                )
                 if controlnet_double_block_output is not None:
                     interval_control = len(self.blocks) / len(controlnet_double_block_output)
                     interval_control = int(np.ceil(interval_control))
                     hidden_states = hidden_states + controlnet_double_block_output[i // interval_control]
-
             hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
-            for block in self.single_blocks:
-                if self.training and use_gradient_checkpointing:
-                    hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
-                        block,
-                        hidden_states,
-                        prompt_emb,
-                        conditioning,
-                        image_rotary_emb,
-                        image_emb,
-                        use_reentrant=False,
-                    )
-                else:
-                    hidden_states, prompt_emb = block(
-                        hidden_states, prompt_emb, conditioning, image_rotary_emb, image_emb
-                    )
+            for block in self.single_blocks:            
+                hidden_states = block(
+                    hidden_states, conditioning, rope_emb, image_emb
+                )
                 if controlnet_single_block_output is not None:
                     interval_control = len(self.single_blocks) / len(controlnet_double_block_output)
                     interval_control = int(np.ceil(interval_control))

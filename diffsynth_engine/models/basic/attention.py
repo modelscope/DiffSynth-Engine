@@ -110,12 +110,12 @@ def attention(
     if attn_impl is None or attn_impl == "auto":
         if FLASH_ATTN_3_AVAILABLE:
             return flash_attn3(q, k, v, softmax_scale=scale)
-        elif FLASH_ATTN_2_AVAILABLE:
-            return flash_attn2(q, k, v, softmax_scale=scale)
         elif XFORMERS_AVAILABLE:
             return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         elif SDPA_AVAILABLE:
             return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
+        elif FLASH_ATTN_2_AVAILABLE:
+            return flash_attn2(q, k, v, softmax_scale=scale)
         else:
             return eager_attn(q, k, v, attn_mask=attn_mask, scale=scale)
     else:

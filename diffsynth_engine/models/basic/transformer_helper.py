@@ -2,38 +2,32 @@ import torch
 import torch.nn as nn
 import math
 
+def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
+    return x * (1 + scale) + shift
+
 
 class AdaLayerNorm(nn.Module):
-    def __init__(self, dim, single=False, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
+    def __init__(self, dim:int, eps:float = 1e-6, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__()
-        self.single = single
-        self.linear = nn.Linear(dim, dim * (2 if single else 6), device=device, dtype=dtype)
+        self.linear = nn.Linear(dim, dim * 2, device=device, dtype=dtype)
         self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
+        self.silu = nn.SiLU()
 
     def forward(self, x, emb):
-        emb = self.linear(nn.functional.silu(emb))
-        if self.single:
-            scale, shift = emb.unsqueeze(1).chunk(2, dim=2)
-            x = self.norm(x) * (1 + scale) + shift
-            return x
-        else:
-            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = emb.unsqueeze(1).chunk(6, dim=2)
-            x = self.norm(x) * (1 + scale_msa) + shift_msa
-            return x, gate_msa, shift_mlp, scale_mlp, gate_mlp
+        shift, scale = self.linear(self.silu(emb)).chunk(2, dim=1)
+        return modulate(self.norm(x), shift, scale)
 
 
-class AdaLayerNormSingle(nn.Module):
+class AdaLayerNormZero(nn.Module):
     def __init__(self, dim, device: str, dtype: torch.dtype):
         super().__init__()
         self.silu = nn.SiLU()
-        self.linear = nn.Linear(dim, 3 * dim, bias=True, device=device, dtype=dtype)
+        self.linear = nn.Linear(dim,  dim * 3, bias=True, device=device, dtype=dtype)
         self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
 
     def forward(self, x, emb):
-        emb = self.linear(self.silu(emb))
-        shift_msa, scale_msa, gate_msa = emb.chunk(3, dim=1)
-        x = self.norm(x) * (1 + scale_msa[:, None]) + shift_msa[:, None]
-        return x, gate_msa
+        shift, scale, gate = self.linear(self.silu(emb)).chunk(3, dim=1)        
+        return modulate(self.norm(x), shift, scale), gate
 
 
 class RoPEEmbedding(nn.Module):
