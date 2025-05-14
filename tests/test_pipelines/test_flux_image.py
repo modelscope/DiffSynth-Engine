@@ -31,7 +31,7 @@ class TestFLUXImage(ImageTestCase):
             num_inference_steps=50,
             seed=42,
         )
-        self.pipe.unload_loras()        
+        self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.99)
 
     def test_unfused_lora(self):
@@ -68,6 +68,7 @@ class TestFLUXGGUF(ImageTestCase):
             seed=42,
         )
         self.assertImageEqualAndSaveFailed(image, "flux/flux_txt2img.png", threshold=0.85)
+
 
 if __name__ == "__main__":
     unittest.main()

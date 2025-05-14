@@ -43,5 +43,6 @@ class TestSampler(ImageTestCase):
         results = sampler.step(origin_sample, model_output, 10)
         self.assertTensorEqual(results, prev_sample)
 
+
 if __name__ == "__main__":
     unittest.main()

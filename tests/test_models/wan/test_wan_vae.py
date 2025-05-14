@@ -35,5 +35,6 @@ class TestWanVAE(VideoTestCase):
             result = self.vae.decode(latent_tensor, device="cuda:0", tiled=True)[0].cpu()
         self.assertTensorEqual(result, expected)
 
+
 if __name__ == "__main__":
     unittest.main()

@@ -207,5 +207,6 @@ class TestFluxDiT(TestCase):
         ensure_directory_exists(save_path)
         save_file(expect, save_path)
 
+
 if __name__ == "__main__":
     unittest.main()

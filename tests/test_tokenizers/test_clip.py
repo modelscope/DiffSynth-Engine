@@ -135,5 +135,6 @@ class TestCLIPTokenizer(TestCase):
             truncated = result[:, : expected.shape[1]]
             self.assertTrue(torch.equal(expected, truncated))
 
+
 if __name__ == "__main__":
     unittest.main()

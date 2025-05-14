@@ -162,7 +162,7 @@ class JointTransformerBlock(nn.Module):
         self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.silu = nn.SiLU()
         self.linear_a = nn.Linear(dim, dim * 6, device=device, dtype=dtype)
-        self.linear_b = nn.Linear(dim, dim * 6, device=device, dtype=dtype)        
+        self.linear_b = nn.Linear(dim, dim * 6, device=device, dtype=dtype)
 
         self.attn = JointAttention(
             dim, dim, num_attention_heads, dim // num_attention_heads, device=device, dtype=dtype
@@ -181,33 +181,36 @@ class JointTransformerBlock(nn.Module):
         )
 
     def forward(self, image, text, t_emb, rope_emb):
-        shift_msa_a, scale_msa_a, gate_msa_a, shift_mlp_a, scale_mlp_a, gate_mlp_a = self.linear_a(self.silu(t_emb)).chunk(6, dim=1)
-        shift_msa_b, scale_msa_b, gate_msa_b, shift_mlp_b, scale_mlp_b, gate_mlp_b = self.linear_b(self.silu(t_emb)).chunk(6, dim=1)
+        shift_msa_a, scale_msa_a, gate_msa_a, shift_mlp_a, scale_mlp_a, gate_mlp_a = self.linear_a(
+            self.silu(t_emb)
+        ).chunk(6, dim=1)
+        shift_msa_b, scale_msa_b, gate_msa_b, shift_mlp_b, scale_mlp_b, gate_mlp_b = self.linear_b(
+            self.silu(t_emb)
+        ).chunk(6, dim=1)
 
         # AdaLayerNorm-Zero for Image-Text Joint Attention
         image_in = modulate(self.norm(image), shift_msa_a, scale=scale_msa_a)
         text_in = modulate(self.norm(text), shift_msa_b, scale_msa_b)
         image_out, text_out = self.attn(image_in, text_in, rope_emb)
         image = image + gate_msa_a * image_out
-        text = text + gate_msa_b * text_out        
-        
+        text = text + gate_msa_b * text_out
+
         # AdaLayerNorm-Zero for Image FFN
         image_in = modulate(self.norm(image), shift_mlp_a, scale_mlp_a)
         image = image + gate_mlp_a * self.ff_a(image_in)
 
         # AdaLayerNorm-Zero for Text FFN
-        text_in  = modulate(self.norm(text), shift_mlp_b, scale_mlp_b)
+        text_in = modulate(self.norm(text), shift_mlp_b, scale_mlp_b)
         text = text + gate_mlp_b * self.ff_b(text_in)
         return image, text
-
 
 
 class JointTransformerFinalBlock(nn.Module):
     def __init__(self, dim, num_attention_heads, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__()
-        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)        
+        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.linear_a = nn.Linear(dim, dim * 6, device=device, dtype=dtype)
-        self.norm1_b = AdaLayerNorm(dim,  device=device, dtype=dtype)
+        self.norm1_b = AdaLayerNorm(dim, device=device, dtype=dtype)
 
         self.attn = JointAttention(
             dim, dim, num_attention_heads, dim // num_attention_heads, only_out_a=True, device=device, dtype=dtype
@@ -220,10 +223,12 @@ class JointTransformerFinalBlock(nn.Module):
             nn.Linear(dim * 4, dim, device=device, dtype=dtype),
         )
 
-    def forward(self, hidden_states_a, hidden_states_b, temb):
-        shift_msa_a, scale_msa_a, gate_msa_a, shift_mlp_a, scale_mlp_a, gate_mlp_a = self.linear_a(self.silu(t_emb)).chunk(6, dim=1)
+    def forward(self, hidden_states_a, hidden_states_b, t_emb):
+        shift_msa_a, scale_msa_a, gate_msa_a, shift_mlp_a, scale_mlp_a, gate_mlp_a = self.linear_a(
+            self.silu(t_emb)
+        ).chunk(6, dim=1)
         norm_hidden_states_a = modulate(self.norm(hidden_states_a), shift_msa_a, scale=scale_msa_a)
-        norm_hidden_states_b = self.norm1_b(hidden_states_b, emb=temb)
+        norm_hidden_states_b = self.norm1_b(hidden_states_b, emb=t_emb)
 
         # Attention
         attn_output_a = self.attn(norm_hidden_states_a, norm_hidden_states_b)

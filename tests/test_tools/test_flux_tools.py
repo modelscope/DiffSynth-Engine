@@ -32,5 +32,6 @@ class TestFluxTools(ImageTestCase):
         )
         self.assertImageEqualAndSaveFailed(output_image, "flux/flux_outpainting.png")
 
+
 if __name__ == "__main__":
     unittest.main()

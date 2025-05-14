@@ -22,5 +22,6 @@ class TestSDUNet(ImageTestCase):
         output = self.unet(x, timestep, context).to(device="cpu")
         self.assertTensorEqual(output, t["output"], atol=1e-3, rtol=1e-3)
 
+
 if __name__ == "__main__":
     unittest.main()

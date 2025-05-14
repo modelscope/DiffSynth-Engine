@@ -33,5 +33,6 @@ class TestFluxControlNet(ImageTestCase):
         )
         self.assertImageEqualAndSaveFailed(output_image, "flux/flux_union_pro_canny.png")
 
+
 if __name__ == "__main__":
     unittest.main()

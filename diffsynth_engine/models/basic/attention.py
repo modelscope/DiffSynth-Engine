@@ -37,6 +37,7 @@ if XFORMERS_AVAILABLE:
             attn_mask = memory_align(attn_mask.contiguous())
         return memory_efficient_attention(q, k, v, attn_bias=attn_mask, scale=scale)
 
+
 if SDPA_AVAILABLE:
 
     def sdpa_attn(q, k, v, attn_mask=None, scale=None):

@@ -1,6 +1,6 @@
 import unittest
 
-from tests.common.test_case  import VideoTestCase
+from tests.common.test_case import VideoTestCase
 from diffsynth_engine.pipelines import WanVideoPipeline, WanModelConfig
 from diffsynth_engine.utils.download import fetch_model
 
@@ -24,6 +24,7 @@ class TestWanVideoGGUF(VideoTestCase):
             height=480,
         )
         self.save_video(video, "wan_t2v.mp4")
+
 
 if __name__ == "__main__":
     unittest.main()

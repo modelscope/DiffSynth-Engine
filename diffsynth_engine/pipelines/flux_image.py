@@ -62,18 +62,22 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                     else:
                         raise ValueError(f"Unsupported key: {key}")
                 if "to_qkv_mlp" in rename:
-                    rename = rename.replace(".weight", "")                    
+                    rename = rename.replace(".weight", "")
                     flux_dim = 3072
                     qkv_lora_args = {}
                     qkv_lora_args["alpha"] = param
-                    qkv_lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")][: 3 * flux_dim]
+                    qkv_lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")][
+                        : 3 * flux_dim
+                    ]
                     qkv_lora_args["rank"] = qkv_lora_args["up"].shape[1]
                     qkv_lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
                     dit_dict[rename.replace("to_qkv_mlp", "attn.to_qkv")] = qkv_lora_args
 
                     mlp_lora_args = {}
                     mlp_lora_args["alpha"] = param
-                    mlp_lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")][3 * flux_dim: ]
+                    mlp_lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")][
+                        3 * flux_dim :
+                    ]
                     mlp_lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
                     mlp_lora_args["rank"] = mlp_lora_args["up"].shape[1]
                     dit_dict[rename.replace("to_qkv_mlp", "mlp.0")] = mlp_lora_args

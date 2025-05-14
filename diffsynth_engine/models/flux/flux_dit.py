@@ -5,7 +5,13 @@ import numpy as np
 from typing import Dict, Optional
 from einops import rearrange
 
-from diffsynth_engine.models.basic.transformer_helper import AdaLayerNormZero, AdaLayerNorm, RoPEEmbedding, RMSNorm, modulate
+from diffsynth_engine.models.basic.transformer_helper import (
+    AdaLayerNormZero,
+    AdaLayerNorm,
+    RoPEEmbedding,
+    RMSNorm,
+    modulate,
+)
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
@@ -103,9 +109,9 @@ class FluxDiTStateDictConverter(StateDictConverter):
                 state_dict_[name_] = param
             elif names[0] == "single_blocks":
                 if ".".join(names[2:]) in suffix_rename_dict:
-                    name_ = f"single_blocks.{names[1]}." + suffix_rename_dict[".".join(names[2:])]                    
+                    name_ = f"single_blocks.{names[1]}." + suffix_rename_dict[".".join(names[2:])]
                     if "to_qkv_mlp" in name_:
-                        attn_param, mlp_param = param[:3 * dim], param[3 * dim:]
+                        attn_param, mlp_param = param[: 3 * dim], param[3 * dim :]
                         state_dict_[name_.replace("to_qkv_mlp", "attn.to_qkv")] = attn_param
                         state_dict_[name_.replace("to_qkv_mlp", "mlp.0")] = mlp_param
                     else:
@@ -125,11 +131,12 @@ class FluxDiTStateDictConverter(StateDictConverter):
             logger.info("user diffsynth format state dict")
         return state_dict
 
+
 def apply_rope(xq, xk, freqs_cis):
     xq_ = rearrange(xq, "b s h (d p q) -> b h s d p q", p=1, q=2)
     xk_ = rearrange(xk, "b s h (d p q) -> b h s d p q", p=1, q=2)
     xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
-    xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]    
+    xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]
     xq_out = rearrange(xq_out, "b h s d q -> b s h (d q)", q=2)
     xk_out = rearrange(xk_out, "b h s d q -> b s h (d q)", q=2)
     return xq_out.to(xq.dtype), xk_out.to(xk.dtype)
@@ -161,21 +168,11 @@ class FluxDoubleAttention(nn.Module):
         self.a_to_out = nn.Linear(dim_a, dim_a, device=device, dtype=dtype)
         self.b_to_out = nn.Linear(dim_b, dim_b, device=device, dtype=dtype)
         self.attn_impl = attn_impl
-    
-    def attention_callback(self,
-        attn_out_a,
-        attn_out_b,
-        x_a, x_b,
-        q_a, q_b,
-        k_a, k_b,
-        v_a, v_b,
-        rope_emb,
-        image_emb
-    ):
-        return attn_out_a, attn_out_b
-        
 
-    def forward(self, image, text, rope_emb, image_emb):        
+    def attention_callback(self, attn_out_a, attn_out_b, x_a, x_b, q_a, q_b, k_a, k_b, v_a, v_b, rope_emb, image_emb):
+        return attn_out_a, attn_out_b
+
+    def forward(self, image, text, rope_emb, image_emb):
         q_a, k_a, v_a = rearrange(self.a_to_qkv(image), "b s (h d) -> b s h d", h=(3 * self.num_heads)).chunk(3, dim=2)
         q_b, k_b, v_b = rearrange(self.b_to_qkv(text), "b s (h d) -> b s h d", h=(3 * self.num_heads)).chunk(3, dim=2)
         q = torch.cat([self.norm_q_b(q_b), self.norm_q_a(q_a)], dim=1)
@@ -184,8 +181,10 @@ class FluxDoubleAttention(nn.Module):
         q, k = apply_rope(q, k, rope_emb)
         attn_out = attention(q, k, v, attn_impl=self.attn_impl)
         attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
-        text_out, image_out = attn_out[:, :text.shape[1]], attn_out[:, text.shape[1]:]        
-        image_out, text_out = self.attention_callback(image_out, text_out, image, text, q_a, q_b, k_a, k_b, v_a, v_b, rope_emb, image_emb)
+        text_out, image_out = attn_out[:, : text.shape[1]], attn_out[:, text.shape[1] :]
+        image_out, text_out = self.attention_callback(
+            image_out, text_out, image, text, q_a, q_b, k_a, k_b, v_a, v_b, rope_emb, image_emb
+        )
         return self.a_to_out(image_out), self.b_to_out(text_out)
 
 
@@ -202,14 +201,12 @@ class FluxDoubleTransformerBlock(nn.Module):
         self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.silu = nn.SiLU()
         self.linear_a = nn.Linear(dim, dim * 6, device=device, dtype=dtype)
-        self.linear_b = nn.Linear(dim, dim * 6, device=device, dtype=dtype)        
+        self.linear_b = nn.Linear(dim, dim * 6, device=device, dtype=dtype)
         self.attn = FluxDoubleAttention(
             dim, dim, num_heads, dim // num_heads, attn_impl=attn_impl, device=device, dtype=dtype
         )
         self.ff_a = nn.Sequential(
-            nn.Linear(dim, dim * 4), 
-            nn.GELU(approximate="tanh"), 
-            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
+            nn.Linear(dim, dim * 4), nn.GELU(approximate="tanh"), nn.Linear(dim * 4, dim, device=device, dtype=dtype)
         )
         self.ff_b = nn.Sequential(
             nn.Linear(dim, dim * 4, device=device, dtype=dtype),
@@ -218,24 +215,29 @@ class FluxDoubleTransformerBlock(nn.Module):
         )
 
     def forward(self, image, text, t_emb, rope_emb, image_emb):
-        shift_msa_a, scale_msa_a, gate_msa_a, shift_mlp_a, scale_mlp_a, gate_mlp_a = self.linear_a(self.silu(t_emb)).chunk(6, dim=1)
-        shift_msa_b, scale_msa_b, gate_msa_b, shift_mlp_b, scale_mlp_b, gate_mlp_b = self.linear_b(self.silu(t_emb)).chunk(6, dim=1)
+        shift_msa_a, scale_msa_a, gate_msa_a, shift_mlp_a, scale_mlp_a, gate_mlp_a = self.linear_a(
+            self.silu(t_emb)
+        ).chunk(6, dim=1)
+        shift_msa_b, scale_msa_b, gate_msa_b, shift_mlp_b, scale_mlp_b, gate_mlp_b = self.linear_b(
+            self.silu(t_emb)
+        ).chunk(6, dim=1)
 
         # AdaLayerNorm-Zero for Image-Text Joint Attention
         image_in = modulate(self.norm(image), shift_msa_a, scale=scale_msa_a)
         text_in = modulate(self.norm(text), shift_msa_b, scale_msa_b)
         image_out, text_out = self.attn(image_in, text_in, rope_emb, image_emb)
         image = image + gate_msa_a * image_out
-        text = text + gate_msa_b * text_out        
-        
+        text = text + gate_msa_b * text_out
+
         # AdaLayerNorm-Zero for Image FFN
         image_in = modulate(self.norm(image), shift_mlp_a, scale_mlp_a)
         image = image + gate_mlp_a * self.ff_a(image_in)
 
         # AdaLayerNorm-Zero for Text FFN
-        text_in  = modulate(self.norm(text), shift_mlp_b, scale_mlp_b)
+        text_in = modulate(self.norm(text), shift_mlp_b, scale_mlp_b)
         text = text + gate_mlp_b * self.ff_b(text_in)
         return image, text
+
 
 class FluxSingleAttention(nn.Module):
     def __init__(
@@ -255,13 +257,14 @@ class FluxSingleAttention(nn.Module):
 
     def attention_callback(self, attn_out, x, q, k, v, rope_emb, image_emb):
         return attn_out
-    
+
     def forward(self, x, rope_emb, image_emb):
         q, k, v = rearrange(self.to_qkv(x), "b s (h d) -> b s h d", h=(3 * self.num_heads)).chunk(3, dim=2)
         q, k = apply_rope(self.norm_q_a(q), self.norm_k_a(k), rope_emb)
         attn_out = attention(q, k, v, attn_impl=self.attn_impl)
         attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
         return self.attention_callback(attn_out, x, q, k, v, rope_emb, image_emb)
+
 
 class FluxSingleTransformerBlock(nn.Module):
     def __init__(
@@ -277,11 +280,11 @@ class FluxSingleTransformerBlock(nn.Module):
         self.norm = AdaLayerNormZero(dim, device=device, dtype=dtype)
         self.attn = FluxSingleAttention(dim, num_heads, attn_impl=attn_impl, device=device, dtype=dtype)
         self.mlp = nn.Sequential(
-            nn.Linear(dim, dim * 4), 
-            nn.GELU(approximate="tanh"), 
+            nn.Linear(dim, dim * 4),
+            nn.GELU(approximate="tanh"),
         )
         self.proj_out = nn.Linear(dim * 5, dim)
-        
+
     def forward(self, x, t_emb, rope_emb, image_emb):
         h, gate = self.norm(x, emb=t_emb)
         attn_output = self.attn(h, rope_emb, image_emb)
@@ -359,7 +362,7 @@ class FluxDiT(PreTrainedModel):
         controlnet_single_block_output=None,
         **kwargs,
     ):
-        height, width = hidden_states.shape[-2: ]   
+        height, width = hidden_states.shape[-2:]
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         with fp8_inference(fp8_linear_enabled), gguf_inference():
             if image_ids is None:
@@ -377,18 +380,14 @@ class FluxDiT(PreTrainedModel):
             hidden_states = self.patchify(hidden_states)
             hidden_states = self.x_embedder(hidden_states)
             for i, block in enumerate(self.blocks):
-                hidden_states, prompt_emb = block(
-                    hidden_states, prompt_emb, conditioning, rope_emb, image_emb
-                )
+                hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, rope_emb, image_emb)
                 if controlnet_double_block_output is not None:
                     interval_control = len(self.blocks) / len(controlnet_double_block_output)
                     interval_control = int(np.ceil(interval_control))
                     hidden_states = hidden_states + controlnet_double_block_output[i // interval_control]
             hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
-            for block in self.single_blocks:            
-                hidden_states = block(
-                    hidden_states, conditioning, rope_emb, image_emb
-                )
+            for block in self.single_blocks:
+                hidden_states = block(hidden_states, conditioning, rope_emb, image_emb)
                 if controlnet_single_block_output is not None:
                     interval_control = len(self.single_blocks) / len(controlnet_double_block_output)
                     interval_control = int(np.ceil(interval_control))

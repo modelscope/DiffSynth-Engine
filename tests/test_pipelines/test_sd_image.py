@@ -56,5 +56,6 @@ class TestSDImage(ImageTestCase):
         self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "sd/sd_lora.png", threshold=0.99)
 
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,12 +2,13 @@ import torch
 import torch.nn as nn
 import math
 
+
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
     return x * (1 + scale) + shift
 
 
 class AdaLayerNorm(nn.Module):
-    def __init__(self, dim:int, eps:float = 1e-6, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
+    def __init__(self, dim: int, eps: float = 1e-6, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__()
         self.linear = nn.Linear(dim, dim * 2, device=device, dtype=dtype)
         self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
@@ -22,11 +23,11 @@ class AdaLayerNormZero(nn.Module):
     def __init__(self, dim, device: str, dtype: torch.dtype):
         super().__init__()
         self.silu = nn.SiLU()
-        self.linear = nn.Linear(dim,  dim * 3, bias=True, device=device, dtype=dtype)
+        self.linear = nn.Linear(dim, dim * 3, bias=True, device=device, dtype=dtype)
         self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
 
     def forward(self, x, emb):
-        shift, scale, gate = self.linear(self.silu(emb)).chunk(3, dim=1)        
+        shift, scale, gate = self.linear(self.silu(emb)).chunk(3, dim=1)
         return modulate(self.norm(x), shift, scale), gate
 
 

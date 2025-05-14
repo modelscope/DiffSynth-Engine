@@ -18,5 +18,6 @@ class TestSiglipImageEncoder(ImageTestCase):
         result = self.image_encoder(image)
         self.assertTensorEqual(result.cpu(), expect["output"])
 
+
 if __name__ == "__main__":
     unittest.main()
