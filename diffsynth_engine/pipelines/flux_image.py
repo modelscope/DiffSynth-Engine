@@ -663,7 +663,7 @@ class FluxImagePipeline(BasePipeline):
 
         # image_emb
         image_emb = (
-            self.ip_adapter.encode_image(ref_image) if self.ip_adapter is not None and ref_image is not None else None
+            self.ip_adapter.image_encode(ref_image) if self.ip_adapter is not None and ref_image is not None else None
         )
 
         # Denoise

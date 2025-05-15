@@ -269,7 +269,6 @@ class SD3DiT(PreTrainedModel):
         timestep,
         prompt_emb,
         pooled_prompt_emb,
-        use_gradient_checkpointing=False,
     ):
         conditioning = self.time_embedder(timestep, hidden_states.dtype) + self.pooled_text_embedder(pooled_prompt_emb)
         prompt_emb = self.context_embedder(prompt_emb)
@@ -278,16 +277,7 @@ class SD3DiT(PreTrainedModel):
         hidden_states = self.pos_embedder(hidden_states)
 
         for block in self.blocks:
-            if self.training and use_gradient_checkpointing:
-                hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
-                    block,
-                    hidden_states,
-                    prompt_emb,
-                    conditioning,
-                    use_reentrant=False,
-                )
-            else:
-                hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning)
+            hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning)
 
         hidden_states = self.norm_out(hidden_states, conditioning)
         hidden_states = self.proj_out(hidden_states)

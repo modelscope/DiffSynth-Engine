@@ -166,10 +166,8 @@ class SDXLUNet(PreTrainedModel):
         is_kolors: bool = False,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float16,
-        use_gradient_checkpointing: bool = False,
     ):
         super().__init__()
-        self.use_gradient_checkpointing = use_gradient_checkpointing
         self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280, device=device, dtype=dtype)
         self.add_time_embedding = nn.Sequential(
             nn.Linear(5632 if is_kolors else 2816, 1280, device=device, dtype=dtype),
@@ -261,26 +259,12 @@ class SDXLUNet(PreTrainedModel):
 
         # 3. blocks
         for i, block in enumerate(self.blocks):
-            if (
-                self.training
-                and self.use_gradient_checkpointing
-                and not (isinstance(block, PushBlock) or isinstance(block, PopBlock))
-            ):
-                hidden_states, time_emb, text_emb, res_stack = torch.utils.checkpoint.checkpoint(
-                    block,
-                    hidden_states,
-                    time_emb,
-                    text_emb,
-                    res_stack,
-                    use_reentrant=False,
-                )
-            else:
-                hidden_states, time_emb, text_emb, res_stack = block(
-                    hidden_states,
-                    time_emb,
-                    text_emb,
-                    res_stack,
-                )
+            hidden_states, time_emb, text_emb, res_stack = block(
+                hidden_states,
+                time_emb,
+                text_emb,
+                res_stack,
+            )
 
         # 4. output
         hidden_states = self.conv_norm_out(hidden_states)

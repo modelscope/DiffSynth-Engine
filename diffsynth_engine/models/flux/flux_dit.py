@@ -183,7 +183,12 @@ class FluxDoubleAttention(nn.Module):
         attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
         text_out, image_out = attn_out[:, : text.shape[1]], attn_out[:, text.shape[1] :]
         image_out, text_out = self.attention_callback(
-            image_out, text_out, image, text, q_a, q_b, k_a, k_b, v_a, v_b, rope_emb, image_emb
+            attn_out_a=image_out, attn_out_b=text_out, 
+            x_a=image, x_b=text, 
+            q_a=q_a, q_b=q_b, 
+            k_a=k_a, k_b=k_b, 
+            v_a=v_a, v_b=v_b, 
+            rope_emb=rope_emb, image_emb=image_emb
         )
         return self.a_to_out(image_out), self.b_to_out(text_out)
 
@@ -263,7 +268,11 @@ class FluxSingleAttention(nn.Module):
         q, k = apply_rope(self.norm_q_a(q), self.norm_k_a(k), rope_emb)
         attn_out = attention(q, k, v, attn_impl=self.attn_impl)
         attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
-        return self.attention_callback(attn_out, x, q, k, v, rope_emb, image_emb)
+        return self.attention_callback(
+            attn_out=attn_out, 
+            x=x, q=q, k=k, v=v, 
+            rope_emb=rope_emb, image_emb=image_emb
+        )
 
 
 class FluxSingleTransformerBlock(nn.Module):
