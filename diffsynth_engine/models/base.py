@@ -20,7 +20,13 @@ class PreTrainedModel(nn.Module):
         super().load_state_dict(state_dict, strict=strict, assign=assign)
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike], device: str='cuda:0', dtype: torch.dtype = torch.bfloat16, **kwargs):
+    def from_pretrained(
+        cls,
+        pretrained_model_path: Union[str, os.PathLike],
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+        **kwargs,
+    ):
         state_dict = load_file(pretrained_model_path)
         return cls.from_state_dict(state_dict, device=device, dtype=dtype, **kwargs)
 

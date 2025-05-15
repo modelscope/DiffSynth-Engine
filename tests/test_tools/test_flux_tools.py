@@ -31,7 +31,7 @@ class TestFluxTools(ImageTestCase):
             strength=0.9,
         )
         self.assertImageEqualAndSaveFailed(output_image, "flux/flux_outpainting.png")
-    
+
     def test_reference(self):
         reference_tool = FluxReferenceTool(
             fetch_model("muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors")

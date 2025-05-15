@@ -212,10 +212,10 @@ def long_context_attention(
     if attn_impl is None or attn_impl == "auto":
         if FLASH_ATTN_3_AVAILABLE:
             attn_func = LongContextAttention(attn_type=AttnType.FA3)
-        elif FLASH_ATTN_2_AVAILABLE:
-            attn_func = LongContextAttention(attn_type=AttnType.FA)
         elif SDPA_AVAILABLE:
             attn_func = LongContextAttention(attn_type=AttnType.TORCH)
+        elif FLASH_ATTN_2_AVAILABLE:
+            attn_func = LongContextAttention(attn_type=AttnType.FA)
         else:
             raise ValueError("No available long context attention implementation")
     else:

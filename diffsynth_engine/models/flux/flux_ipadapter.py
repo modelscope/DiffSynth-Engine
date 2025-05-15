@@ -96,15 +96,17 @@ class FluxIPAdapter(PreTrainedModel):
         self.image_proj = image_proj
         self.attentions = attentions
 
-    def set_scale(self, scale:float):
+    def set_scale(self, scale: float):
         for attn in self.attentions:
             attn.scale = scale
 
     def inject(self, dit):
-        def double_attention_callback(self, attn_out_a, attn_out_b, x_a, x_b, q_a, q_b, k_a, k_b, v_a, v_b, rope_emb, image_emb):
+        def double_attention_callback(
+            self, attn_out_a, attn_out_b, x_a, x_b, q_a, q_b, k_a, k_b, v_a, v_b, rope_emb, image_emb
+        ):
             attn_out_a = attn_out_a + self.ip_attn(q_a, image_emb)
             return attn_out_a, attn_out_b
-            
+
         for i in range(19):
             dit.blocks[i].attn.ip_attn = self.attentions[i]
             dit.blocks[i].attn.attention_callback = partial(double_attention_callback, self=dit.blocks[i].attn)
@@ -115,29 +117,35 @@ class FluxIPAdapter(PreTrainedModel):
 
         for i in range(38):
             dit.single_blocks[i].attn.ip_attn = self.attentions[i + 19]
-            dit.single_blocks[i].attn.attention_callback = partial(single_attention_callback, self=dit.single_blocks[i].attn)
+            dit.single_blocks[i].attn.attention_callback = partial(
+                single_attention_callback, self=dit.single_blocks[i].attn
+            )
 
     def remove(self, dit):
-        def double_attention_callback(self, attn_out_a, attn_out_b, x_a, x_b, q_a, q_b, k_a, k_b, v_a, v_b, rope_emb, image_emb):
+        def double_attention_callback(
+            self, attn_out_a, attn_out_b, x_a, x_b, q_a, q_b, k_a, k_b, v_a, v_b, rope_emb, image_emb
+        ):
             return attn_out_a, attn_out_b
 
         for i in range(19):
             dit.blocks[i].attn.ip_attn = None
             dit.blocks[i].attn.attention_callback = double_attention_callback
-        
+
         def single_attention_callback(self, attn_out, x, q, k, v, rope_emb, image_emb):
             return attn_out
-        
+
         for i in range(38):
             dit.single_blocks[i].attn.ip_attn = None
             dit.single_blocks[i].attn.attention_callback = single_attention_callback
-        
+
     def image_encode(self, image: Image.Image) -> torch.Tensor:
         image_emb = self.image_encoder(image)
         return self.image_proj(image_emb)
 
     @classmethod
-    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str='cuda:0', dtype: torch.dtype=torch.bfloat16, **kwargs):
+    def from_state_dict(
+        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16, **kwargs
+    ):
         model_path = fetch_model("muse/google-siglip-so400m-patch14-384", path="model.safetensors")
         image_encoder = SiglipImageEncoder.from_pretrained(model_path, device=device, dtype=dtype)
 

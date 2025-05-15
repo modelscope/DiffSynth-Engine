@@ -31,6 +31,7 @@ logger = logging.get_logger(__name__)
 
 class FluxLoRAConverter(LoRAStateDictConverter):
     def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
+        flux_dim = 3072
         dit_rename_dict = flux_dit_config["civitai"]["rename_dict"]
         dit_suffix_rename_dict = flux_dit_config["civitai"]["suffix_rename_dict"]
         clip_rename_dict = flux_text_encoder_config["diffusers"]["rename_dict"]
@@ -63,7 +64,6 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                         raise ValueError(f"Unsupported key: {key}")
                 if "to_qkv_mlp" in rename:
                     rename = rename.replace(".weight", "")
-                    flux_dim = 3072
                     qkv_lora_args = {}
                     qkv_lora_args["alpha"] = param
                     qkv_lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")][
@@ -81,6 +81,44 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                     mlp_lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
                     mlp_lora_args["rank"] = mlp_lora_args["up"].shape[1]
                     dit_dict[rename.replace("to_qkv_mlp", "mlp.0")] = mlp_lora_args
+                elif "linear_a" in rename:
+                    rename = rename.replace(".weight", "")
+                    attn_lora_args: dict = {}
+                    attn_lora_args["alpha"] = param
+                    attn_lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")][
+                        : 3 * flux_dim
+                    ]
+                    attn_lora_args["rank"] = attn_lora_args["up"].shape[1]
+                    attn_lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
+                    dit_dict[rename.replace("linear_a", "norm_msa_a.linear")] = attn_lora_args
+
+                    mlp_lora_args = {}
+                    mlp_lora_args["alpha"] = param
+                    mlp_lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")][
+                        3 * flux_dim :
+                    ]
+                    mlp_lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
+                    mlp_lora_args["rank"] = mlp_lora_args["up"].shape[1]
+                    dit_dict[rename.replace("linear_a", "norm_mlp_a.linear")] = mlp_lora_args
+                elif "linear_b" in rename:
+                    rename = rename.replace(".weight", "")
+                    attn_lora_args: dict = {}
+                    attn_lora_args["alpha"] = param
+                    attn_lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")][
+                        : 3 * flux_dim
+                    ]
+                    attn_lora_args["rank"] = attn_lora_args["up"].shape[1]
+                    attn_lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
+                    dit_dict[rename.replace("linear_b", "norm_msa_b.linear")] = attn_lora_args
+
+                    mlp_lora_args = {}
+                    mlp_lora_args["alpha"] = param
+                    mlp_lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")][
+                        3 * flux_dim :
+                    ]
+                    mlp_lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
+                    mlp_lora_args["rank"] = mlp_lora_args["up"].shape[1]
+                    dit_dict[rename.replace("linear_b", "norm_mlp_b.linear")] = mlp_lora_args
                 else:
                     lora_args = {}
                     lora_args["alpha"] = param
