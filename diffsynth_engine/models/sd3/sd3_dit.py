@@ -169,10 +169,6 @@ class JointAttention(nn.Module):
 class JointTransformerBlock(nn.Module):
     def __init__(self, dim, num_attention_heads, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__()
-
-        self.linear_a = nn.Linear(dim, dim * 6, device=device, dtype=dtype)
-        self.linear_b = nn.Linear(dim, dim * 6, device=device, dtype=dtype)
-
         self.attn = JointAttention(
             dim, dim, num_attention_heads, dim // num_attention_heads, device=device, dtype=dtype
         )
