@@ -464,11 +464,10 @@ class WanVideoPipeline(BasePipeline):
         model_type = None
         if "img_emb.emb_pos" in dit_state_dict:
             model_type = "14b-flf2v"
+        elif "img_emb.proj.0.weight" in dit_state_dict:
+            model_type = "14b-i2v"
         elif "blocks.39.self_attn.norm_q.weight" in dit_state_dict:
-            if image_encoder is not None:
-                model_type = "14b-i2v"
-            else:
-                model_type = "14b-t2v"
+            model_type = "14b-t2v"
         else:
             model_type = "1.3b-t2v"
 
