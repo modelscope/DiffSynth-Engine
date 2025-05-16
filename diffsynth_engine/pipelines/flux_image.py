@@ -280,6 +280,7 @@ class FluxImagePipeline(BasePipeline):
         dit: FluxDiT,
         vae_decoder: FluxVAEDecoder,
         vae_encoder: FluxVAEEncoder,
+        load_text_encoder: bool = True,
         use_cfg: bool = False,
         batch_cfg: bool = False,
         vae_tiled: bool = False,
@@ -305,6 +306,7 @@ class FluxImagePipeline(BasePipeline):
         self.dit = dit
         self.vae_decoder = vae_decoder
         self.vae_encoder = vae_encoder
+        self.load_text_encoder = load_text_encoder
         self.use_cfg = use_cfg
         self.batch_cfg = batch_cfg
         self.ip_adapter = None
@@ -323,6 +325,7 @@ class FluxImagePipeline(BasePipeline):
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         offload_mode: str | None = None,
+        load_text_encoder: bool = True,
     ) -> "FluxImagePipeline":
         cls.validate_offload_mode(offload_mode)
 
@@ -331,51 +334,56 @@ class FluxImagePipeline(BasePipeline):
             if isinstance(model_path_or_config, FluxModelConfig)
             else FluxModelConfig(dit_path=model_path_or_config, dit_dtype=dtype, t5_dtype=dtype, clip_dtype=dtype)
         )
-
-        if model_config.clip_path is None:
-            model_config.clip_path = fetch_model(
-                "muse/flux_clip_l", revision="20241209", path="clip_l_bf16.safetensors"
-            )
-        if model_config.t5_path is None:
-            model_config.t5_path = fetch_model(
-                "muse/google_t5_v1_1_xxl", revision="20241024105236", path="t5xxl_v1_1_bf16.safetensors"
-            )
         if model_config.vae_path is None:
             model_config.vae_path = fetch_model("muse/flux_vae", revision="20241015120836", path="ae.safetensors")
 
+        if model_config.clip_path is None and load_text_encoder:
+            model_config.clip_path = fetch_model(
+                "muse/flux_clip_l", revision="20241209", path="clip_l_bf16.safetensors"
+            )
+        if model_config.t5_path is None and load_text_encoder:
+            model_config.t5_path = fetch_model(
+                "muse/google_t5_v1_1_xxl", revision="20241024105236", path="t5xxl_v1_1_bf16.safetensors"
+            )
+
         logger.info(f"loading state dict from {model_config.dit_path} ...")
         dit_state_dict = cls.load_model_checkpoint(model_config.dit_path, device="cpu", dtype=dtype)
-        logger.info(f"loading state dict from {model_config.clip_path} ...")
-        clip_state_dict = cls.load_model_checkpoint(model_config.clip_path, device="cpu", dtype=dtype)
-        logger.info(f"loading state dict from {model_config.t5_path} ...")
-        t5_state_dict = cls.load_model_checkpoint(model_config.t5_path, device="cpu", dtype=dtype)
         logger.info(f"loading state dict from {model_config.vae_path} ...")
         vae_state_dict = cls.load_model_checkpoint(model_config.vae_path, device="cpu", dtype=dtype)
+        if load_text_encoder:
+            logger.info(f"loading state dict from {model_config.clip_path} ...")
+            clip_state_dict = cls.load_model_checkpoint(model_config.clip_path, device="cpu", dtype=dtype)
+            logger.info(f"loading state dict from {model_config.t5_path} ...")
+            t5_state_dict = cls.load_model_checkpoint(model_config.t5_path, device="cpu", dtype=dtype)
 
         init_device = "cpu" if offload_mode else device
-        tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
-        tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
+        if load_text_encoder:
+            tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
+            tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
             dit = FluxDiT.from_state_dict(
                 dit_state_dict, device=init_device, dtype=model_config.dit_dtype, attn_impl=model_config.dit_attn_impl
             )
-            text_encoder_1 = FluxTextEncoder1.from_state_dict(
-                clip_state_dict, device=init_device, dtype=model_config.clip_dtype
+            if load_text_encoder:
+                text_encoder_1 = FluxTextEncoder1.from_state_dict(
+                    clip_state_dict, device=init_device, dtype=model_config.clip_dtype
+                )
+        if load_text_encoder:
+            text_encoder_2 = FluxTextEncoder2.from_state_dict(
+                t5_state_dict, device=init_device, dtype=model_config.t5_dtype
             )
-        text_encoder_2 = FluxTextEncoder2.from_state_dict(
-            t5_state_dict, device=init_device, dtype=model_config.t5_dtype
-        )
         vae_decoder = FluxVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
         vae_encoder = FluxVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
 
         pipe = cls(
-            tokenizer=tokenizer,
-            tokenizer_2=tokenizer_2,
-            text_encoder_1=text_encoder_1,
-            text_encoder_2=text_encoder_2,
+            tokenizer=tokenizer if load_text_encoder else None,
+            tokenizer_2=tokenizer_2 if load_text_encoder else None,
+            text_encoder_1=text_encoder_1 if load_text_encoder else None,
+            text_encoder_2=text_encoder_2 if load_text_encoder else None,
             dit=dit,
             vae_decoder=vae_decoder,
             vae_encoder=vae_encoder,
+            load_text_encoder=load_text_encoder,
             device=device,
             dtype=dtype,
         )
@@ -400,6 +408,16 @@ class FluxImagePipeline(BasePipeline):
         return self.dit
 
     def encode_prompt(self, prompt, clip_skip: int = 2):
+        if (
+            self.tokenizer is None
+            or self.tokenizer_2 is None
+            or self.text_encoder_1 is None
+            or self.text_encoder_2 is None
+        ):
+            return torch.zeros((1, 512, 4096), device=self.device, dtype=self.dtype), torch.zeros(
+                (1, 768), device=self.device, dtype=self.dtype
+            )
+
         input_ids = self.tokenizer(prompt, max_length=77)["input_ids"].to(device=self.device)
         _, add_text_embeds = self.text_encoder_1(input_ids, clip_skip=clip_skip)
 
@@ -653,13 +671,19 @@ class FluxImagePipeline(BasePipeline):
             self.ip_adapter.remove(self.dit)
             self.ip_adapter = None
 
+    def load_redux(self, redux):
+        self.redux = redux
+
+    def unload_redux(self):
+        self.redux = None
+
     @torch.no_grad()
     def __call__(
         self,
         prompt: str,
         negative_prompt: str = "",
-        ref_image: Image.Image | None = None,  # use for ip-adapter, instance-id
-        cfg_scale: float = 1.0,  # 官方的flux模型不支持cfg调整
+        ref_image: Image.Image | None = None,  # use for redux, ip-adapter, instance-id
+        cfg_scale: float = 1.0,  # true cfg
         clip_skip: int = 2,
         input_image: Image.Image | None = None,  # use for img2img
         denoising_strength: float = 1.0,
@@ -667,6 +691,7 @@ class FluxImagePipeline(BasePipeline):
         width: int = 1024,
         num_inference_steps: int = 30,
         seed: int | None = None,
+        flux_guidance_scale=3.5,  # use for flux guidance, not true cfg
         controlnet_params: List[ControlNetParams] | ControlNetParams = [],
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
@@ -691,17 +716,27 @@ class FluxImagePipeline(BasePipeline):
         # Encode prompts
         self.load_models_to_device(["text_encoder_1", "text_encoder_2"])
         positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)
-        negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
-
-        # Extra input
-        image_ids, text_ids, guidance = self.prepare_extra_input(latents, positive_prompt_emb, guidance=3.5)
+        if self.use_cfg and cfg_scale > 1:
+            negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
+        else:
+            negative_prompt_emb, negative_add_text_embeds = None, None
 
         # ControlNet
         controlnet_params = self.prepare_controlnet_params(controlnet_params, h=height, w=width)
 
         # image_emb
-        image_emb = (
-            self.ip_adapter.image_encode(ref_image) if self.ip_adapter is not None and ref_image is not None else None
+        image_emb = None
+        if self.ip_adapter is not None and self.redux is not None:
+            raise Exception("ip-adapter and flux redux cannot be used at the same time")
+        elif self.ip_adapter is not None:
+            image_emb = self.ip_adapter(ref_image)
+        elif self.redux is not None:
+            image_prompt_embeds = self.redux(ref_image)
+            positive_prompt_emb = torch.cat([positive_prompt_emb, image_prompt_embeds], dim=1)
+
+        # Extra input
+        image_ids, text_ids, guidance = self.prepare_extra_input(
+            latents, positive_prompt_emb, guidance=flux_guidance_scale
         )
 
         # Denoise

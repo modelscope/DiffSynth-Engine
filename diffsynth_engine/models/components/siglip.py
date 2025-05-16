@@ -106,6 +106,7 @@ class SiglipVisionTransformer(nn.Module):
         inner_dim: int = 4304,
         num_heads: int = 16,
         eps: float = 1e-06,
+        use_head: bool = True,
         device: str = "cpu",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -125,13 +126,15 @@ class SiglipVisionTransformer(nn.Module):
         self.head = SiglipMultiheadAttentionPoolingHead(
             hidden_size, inner_dim=inner_dim, num_heads=num_heads, eps=eps, device=device, dtype=dtype
         )
+        self.use_head = use_head
 
     def forward(self, x):
         x = self.embeddings(x)
         for layer in self.layers:
             x = layer(x)
         x = self.post_layernorm(x)
-        x = self.head(x)
+        if self.use_head:
+            x = self.head(x)
         return x
 
 
@@ -143,9 +146,9 @@ class SiglipImageEncoderConverter(StateDictConverter):
 class SiglipImageEncoder(PreTrainedModel):
     converter = SiglipImageEncoderConverter()
 
-    def __init__(self, device: str, dtype: torch.dtype) -> None:
+    def __init__(self, use_head: bool = True, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16) -> None:
         super().__init__()
-        self.image_encoder = SiglipVisionTransformer(device=device, dtype=dtype)
+        self.image_encoder = SiglipVisionTransformer(device=device, dtype=dtype, use_head=use_head)
 
     def image_preprocess(self, images: List[Image.Image]):
         images = [image.resize(size=(384, 384), resample=3) for image in images]
@@ -161,7 +164,8 @@ class SiglipImageEncoder(PreTrainedModel):
         if isinstance(images, Image.Image):
             images = [images]
         image_input = self.image_preprocess(images)
-        return self.image_encoder(image_input)
+        result = self.image_encoder(image_input)
+        return result
 
     @classmethod
     def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike], device: str, dtype: torch.dtype, **kwargs):

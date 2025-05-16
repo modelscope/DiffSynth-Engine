@@ -17,8 +17,9 @@ from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
-from diffsynth_engine.utils import logging
 from diffsynth_engine.models.basic.attention import attention
+from diffsynth_engine.utils import logging
+
 
 logger = logging.get_logger(__name__)
 

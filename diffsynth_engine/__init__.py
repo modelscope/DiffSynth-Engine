@@ -9,15 +9,16 @@ from .pipelines import (
     WanModelConfig,
     ControlNetParams,
 )
-from .models.flux import FluxControlNet, FluxIPAdapter
+from .models.flux import FluxControlNet, FluxIPAdapter, FluxRedux
 from .utils.download import fetch_model, fetch_modelscope_model, fetch_civitai_model
 from .utils.video import load_video, save_video
-from .tools import FluxInpaintingTool, FluxOutpaintingTool, FluxReferenceTool
+from .tools import FluxInpaintingTool, FluxOutpaintingTool, FluxIPAdapterRefTool, FluxReduxRefTool
 
 __all__ = [
     "FluxImagePipeline",
     "FluxControlNet",
     "FluxIPAdapter",
+    "FluxRedux",
     "SDXLImagePipeline",
     "SDImagePipeline",
     "WanVideoPipeline",
@@ -27,7 +28,8 @@ __all__ = [
     "WanModelConfig",
     "FluxInpaintingTool",
     "FluxOutpaintingTool",
-    "FluxReferenceTool",
+    "FluxIPAdapterRefTool",
+    "FluxReduxRefTool",
     "ControlNetParams",
     "fetch_model",
     "fetch_modelscope_model",

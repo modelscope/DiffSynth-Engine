@@ -95,6 +95,8 @@ class FluxIPAdapter(PreTrainedModel):
         self.image_encoder = image_encoder
         self.image_proj = image_proj
         self.attentions = attentions
+        self.double_block_num = 19
+        self.single_block_num = 38
 
     def set_scale(self, scale: float):
         for attn in self.attentions:
@@ -107,7 +109,7 @@ class FluxIPAdapter(PreTrainedModel):
             attn_out_a = attn_out_a + self.ip_attn(q_a, image_emb)
             return attn_out_a, attn_out_b
 
-        for i in range(19):
+        for i in range(self.double_block_num):
             dit.blocks[i].attn.ip_attn = self.attentions[i]
             dit.blocks[i].attn.attention_callback = partial(double_attention_callback, self=dit.blocks[i].attn)
 
@@ -115,8 +117,8 @@ class FluxIPAdapter(PreTrainedModel):
             attn_out = attn_out + self.ip_attn(q, image_emb)
             return attn_out
 
-        for i in range(38):
-            dit.single_blocks[i].attn.ip_attn = self.attentions[i + 19]
+        for i in range(self.single_block_num):
+            dit.single_blocks[i].attn.ip_attn = self.attentions[i + self.double_block_num]
             dit.single_blocks[i].attn.attention_callback = partial(
                 single_attention_callback, self=dit.single_blocks[i].attn
             )
@@ -127,16 +129,18 @@ class FluxIPAdapter(PreTrainedModel):
         ):
             return attn_out_a, attn_out_b
 
-        for i in range(19):
+        for i in range(self.double_block_num):
             dit.blocks[i].attn.ip_attn = None
-            dit.blocks[i].attn.attention_callback = double_attention_callback
+            dit.blocks[i].attn.attention_callback = partial(double_attention_callback, self=dit.blocks[i].attn)
 
         def single_attention_callback(self, attn_out, x, q, k, v, rope_emb, image_emb):
             return attn_out
 
-        for i in range(38):
+        for i in range(self.single_block_num):
             dit.single_blocks[i].attn.ip_attn = None
-            dit.single_blocks[i].attn.attention_callback = single_attention_callback
+            dit.single_blocks[i].attn.attention_callback = partial(
+                single_attention_callback, self=dit.single_blocks[i].attn
+            )
 
     def image_encode(self, image: Image.Image) -> torch.Tensor:
         image_emb = self.image_encoder(image)
@@ -144,7 +148,13 @@ class FluxIPAdapter(PreTrainedModel):
 
     @classmethod
     def from_state_dict(
-        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16, **kwargs
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        double_block_num=19,
+        single_block_num=38,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+        **kwargs,
     ):
         model_path = fetch_model("muse/google-siglip-so400m-patch14-384", path="model.safetensors")
         image_encoder = SiglipImageEncoder.from_pretrained(model_path, device=device, dtype=dtype)
@@ -156,7 +166,7 @@ class FluxIPAdapter(PreTrainedModel):
         image_proj = FluxIPAdapterMLP.from_state_dict(image_proj_state_dict, device=device, dtype=dtype)
 
         attentions = []
-        for i in range(38 + 19):
+        for i in range(double_block_num + single_block_num):
             attn_state_dict = {
                 "to_k_ip.weight": state_dict[f"attentions.{i}.to_k_ip.weight"],
                 "to_v_ip.weight": state_dict[f"attentions.{i}.to_v_ip.weight"],
