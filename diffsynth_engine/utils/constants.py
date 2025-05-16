@@ -26,6 +26,7 @@ SDXL_UNET_CONFIG_FILE = os.path.join(CONF_PATH, "models", "sdxl", "sdxl_unet.jso
 WAN_DIT_1_3B_T2V_CONFIG_FILE = os.path.join(CONF_PATH, "models", "wan", "dit", "1.3b-t2v.json")
 WAN_DIT_14B_I2V_CONFIG_FILE = os.path.join(CONF_PATH, "models", "wan", "dit", "14b-i2v.json")
 WAN_DIT_14B_T2V_CONFIG_FILE = os.path.join(CONF_PATH, "models", "wan", "dit", "14b-t2v.json")
+WAN_DIT_14B_FLF2V_CONFIG_FILE = os.path.join(CONF_PATH, "models", "wan", "dit", "14b-flf2v.json")
 
 # data size
 KB = 1024

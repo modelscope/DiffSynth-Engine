@@ -116,6 +116,14 @@ class WanLoRAConverter(LoRAStateDictConverter):
         return state_dict
 
 
+SHIFT_FACTORS = {
+    "1.3b-t2v": 5.0,
+    "14b-t2v": 5.0,
+    "14b-i2v": 5.0,
+    "14b-flf2v": 16.0,
+}
+
+
 class WanVideoPipeline(BasePipeline):
     lora_converter = WanLoRAConverter()
 
@@ -127,6 +135,7 @@ class WanVideoPipeline(BasePipeline):
         dit: WanDiT,
         vae: WanVideoVAE,
         image_encoder: WanImageEncoder,
+        shift: float = 5.0,
         batch_cfg: bool = False,
         vae_tiled: bool = True,
         vae_tile_size: Tuple[int, int] = (34, 34),
@@ -141,7 +150,7 @@ class WanVideoPipeline(BasePipeline):
             device=device,
             dtype=dtype,
         )
-        self.noise_scheduler = RecifitedFlowScheduler(shift=5.0, sigma_min=0.001, sigma_max=0.999)
+        self.noise_scheduler = RecifitedFlowScheduler(shift=shift, sigma_min=0.001, sigma_max=0.999)
         self.sampler = FlowMatchEulerSampler()
         self.tokenizer = tokenizer
         self.text_encoder = text_encoder
@@ -178,32 +187,31 @@ class WanVideoPipeline(BasePipeline):
         prompt_emb = prompt_emb.masked_fill(mask.unsqueeze(-1).expand_as(prompt_emb) == 0, 0)
         return prompt_emb
 
-    def encode_image(self, image, num_frames, height, width):
-        image = self.preprocess_image(image.resize((width, height), Image.Resampling.LANCZOS)).to(
-            self.device, self.config.image_encoder_dtype
-        )
-        clip_context = self.image_encoder.encode_image([image])
-        msk = torch.ones(
-            1, num_frames, height // 8, width // 8, device=self.device, dtype=self.config.image_encoder_dtype
-        )
-        msk[:, 1:] = 0
+    def encode_image(self, images: Image.Image | List[Image.Image], num_frames, height, width):
+        if isinstance(images, Image.Image):
+            images = [images]
+        images = [
+            self.preprocess_image(image.resize((width, height), Image.Resampling.LANCZOS)).to(
+                device=self.device, dtype=self.config.image_encoder_dtype
+            )
+            for image in images
+        ]
+        clip_context = self.image_encoder.encode_image(images).to(self.dtype)
+
+        indices = torch.linspace(0, num_frames - 1, len(images), dtype=torch.long)
+        msk = torch.zeros(1, num_frames, height // 8, width // 8, device=self.device, dtype=self.config.vae_dtype)
+        msk[:, indices] = 1
         msk = torch.concat([torch.repeat_interleave(msk[:, 0:1], repeats=4, dim=1), msk[:, 1:]], dim=1)
         msk = msk.view(1, msk.shape[1] // 4, 4, height // 8, width // 8)
-        msk = msk.transpose(1, 2)[0]
-        y = self.vae.encode(
-            [
-                torch.concat(
-                    [
-                        image.transpose(0, 1),
-                        torch.zeros(3, num_frames - 1, height, width).to(image.device, self.config.vae_dtype),
-                    ],
-                    dim=1,
-                )
-            ],
-            device=self.device,
-        )[0]
+        msk = msk.transpose(1, 2).squeeze(0)
+
+        video = torch.zeros(3, num_frames, height, width).to(device=self.device, dtype=self.config.vae_dtype)
+        video[:, indices] = torch.concat([image.transpose(0, 1) for image in images], dim=1).to(
+            dtype=self.config.vae_dtype
+        )
+        y = self.vae.encode([video], device=self.device)[0]
         y = torch.concat([msk, y]).to(dtype=self.dtype)
-        return clip_context, torch.unsqueeze(y, 0)
+        return clip_context, y.unsqueeze(0)
 
     def tensor2video(self, frames):
         frames = rearrange(frames, "C T H W -> T H W C")
@@ -335,7 +343,7 @@ class WanVideoPipeline(BasePipeline):
         self,
         prompt,
         negative_prompt="",
-        input_image: Image.Image | None = None,
+        input_image: Image.Image | List[Image.Image] | None = None,
         input_video: List[Image.Image] | None = None,
         denoising_strength=1.0,
         seed=None,
@@ -454,13 +462,18 @@ class WanVideoPipeline(BasePipeline):
 
         # determine wan video model type by dit params
         model_type = None
-        if "blocks.39.self_attn.norm_q.weight" in dit_state_dict:
+        if "img_emb.emb_pos" in dit_state_dict:
+            model_type = "14b-flf2v"
+        elif "blocks.39.self_attn.norm_q.weight" in dit_state_dict:
             if image_encoder is not None:
                 model_type = "14b-i2v"
             else:
                 model_type = "14b-t2v"
         else:
             model_type = "1.3b-t2v"
+
+        # shift for different model_type
+        shift = SHIFT_FACTORS[model_type]
 
         if parallelism > 1:
             assert parallelism in (2, 4, 8), "parallelism must be 2, 4 or 8"
@@ -533,6 +546,7 @@ class WanVideoPipeline(BasePipeline):
             dit=dit,
             vae=vae,
             image_encoder=image_encoder,
+            shift=shift,
             batch_cfg=batch_cfg,
             device=device,
             dtype=dtype,

@@ -14,6 +14,7 @@ from diffsynth_engine.utils.constants import (
     WAN_DIT_1_3B_T2V_CONFIG_FILE,
     WAN_DIT_14B_I2V_CONFIG_FILE,
     WAN_DIT_14B_T2V_CONFIG_FILE,
+    WAN_DIT_14B_FLF2V_CONFIG_FILE,
 )
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.parallel import (
@@ -21,6 +22,9 @@ from diffsynth_engine.utils.parallel import (
     get_sp_world_size,
     get_sp_rank,
 )
+
+T5_TOKEN_NUM = 512
+FLF_TOKEN_NUM = 257 * 2
 
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
@@ -46,14 +50,15 @@ def precompute_freqs_cis_3d(dim: int, end: int = 1024, theta: float = 10000.0):
 
 def precompute_freqs_cis(dim: int, end: int = 1024, theta: float = 10000.0):
     # 1d rope precompute
-    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].double() / dim))
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2).double() / dim))
     freqs = torch.outer(torch.arange(end, device=freqs.device), freqs)
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
     return freqs_cis
 
 
 def rope_apply(x, freqs):
-    x_out = torch.view_as_complex(x.to(torch.float64).reshape(x.shape[0], x.shape[1], x.shape[2], -1, 2))
+    b, s, n, d = x.shape
+    x_out = torch.view_as_complex(x.to(torch.float64).reshape(b, s, n, d // 2, 2))
     x_out = torch.view_as_real(x_out * freqs)
     return x_out.to(x.dtype).flatten(3)
 
@@ -133,8 +138,8 @@ class CrossAttention(nn.Module):
 
     def forward(self, x: torch.Tensor, y: torch.Tensor):
         if self.has_image_input:
-            img = y[:, :257]
-            ctx = y[:, 257:]
+            img = y[:, :-T5_TOKEN_NUM]
+            ctx = y[:, -T5_TOKEN_NUM:]
         else:
             ctx = y
         q, k, v = self.norm_q(self.q(x)), self.norm_k(self.k(ctx)), self.v(ctx)
@@ -199,6 +204,7 @@ class MLP(torch.nn.Module):
         self,
         in_dim,
         out_dim,
+        flf_pos_emb: bool = False,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -210,8 +216,14 @@ class MLP(torch.nn.Module):
             nn.Linear(in_dim, out_dim, device=device, dtype=dtype),
             nn.LayerNorm(out_dim, device=device, dtype=dtype),
         )
+        if flf_pos_emb:
+            self.emb_pos = nn.Parameter((torch.zeros(1, FLF_TOKEN_NUM, in_dim)))
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
+        if hasattr(self, "emb_pos"):
+            b, s, d = x.shape
+            x = x.view(-1, 2 * s, d)
+            x = x + self.emb_pos
         return self.proj(x)
 
 
@@ -259,6 +271,7 @@ class WanDiT(PreTrainedModel):
         num_heads: int,
         num_layers: int,
         has_image_input: bool,
+        flf_pos_emb: bool = False,
         attn_impl: Optional[str] = None,
         use_usp: bool = False,
         device: str = "cpu",
@@ -301,7 +314,7 @@ class WanDiT(PreTrainedModel):
         self.freqs = precompute_freqs_cis_3d(head_dim)
 
         if has_image_input:
-            self.img_emb = MLP(1280, dim, device=device, dtype=dtype)  # clip_feature_dim = 1280
+            self.img_emb = MLP(1280, dim, flf_pos_emb, device=device, dtype=dtype)  # clip_feature_dim = 1280
 
         if use_usp:
             setattr(self, "use_usp", True)
@@ -390,6 +403,8 @@ class WanDiT(PreTrainedModel):
             config = json.load(open(WAN_DIT_14B_T2V_CONFIG_FILE, "r"))
         elif model_type == "14b-i2v":
             config = json.load(open(WAN_DIT_14B_I2V_CONFIG_FILE, "r"))
+        elif model_type == "14b-flf2v":
+            config = json.load(open(WAN_DIT_14B_FLF2V_CONFIG_FILE, "r"))
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
         with no_init_weights():

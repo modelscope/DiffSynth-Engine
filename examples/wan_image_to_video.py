@@ -20,7 +20,7 @@ if __name__ == "__main__":
     )
     pipe = WanVideoPipeline.from_pretrained(config, parallelism=4, use_cfg_parallel=True, offload_mode="cpu_offload")
 
-    image = Image.open("i2v_input.jpg").convert("RGB")
+    image = Image.open("wan_i2v_input.jpg").convert("RGB")
     video = pipe(
         prompt="Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
         negative_prompt="",

@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as T
+from typing import List
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
@@ -171,7 +172,7 @@ class AttentionPool(nn.Module):
         k, v = self.to_kv(x).view(b, s, 2, n, d).unbind(2)
 
         # compute attention
-        x = attention(q, k, v, fa_version=2)
+        x = attention(q, k, v)
         x = x.reshape(b, 1, c)
 
         # output
@@ -465,10 +466,10 @@ class WanImageEncoder(PreTrainedModel):
         # init model
         self.model, self.transforms = clip_xlm_roberta_vit_h_14(dtype=torch.float32, device="cpu")
 
-    def encode_image(self, videos):
+    def encode_image(self, images: List[torch.Tensor]):
         # preprocess
         size = (self.model.image_size,) * 2
-        videos = torch.cat(
+        images = torch.cat(
             [
                 F.interpolate(
                     u,
@@ -476,13 +477,13 @@ class WanImageEncoder(PreTrainedModel):
                     mode="bicubic",
                     align_corners=False,
                 )
-                for u in videos
+                for u in images
             ]
         )
-        videos = self.transforms.transforms[-1](videos.mul_(0.5).add_(0.5))
+        images = self.transforms.transforms[-1](images.mul_(0.5).add_(0.5))
 
         # forward
-        out = self.model.visual(videos, use_31_block=True)
+        out = self.model.visual(images, use_31_block=True)
         return out
 
     @classmethod
