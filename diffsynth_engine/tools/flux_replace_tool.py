@@ -9,6 +9,7 @@ class FluxReplaceByControlTool:
     FluxReplaceTool is a tool that can replace the content of an image with another image.
     It is based on Redux and InpaintingControlNet.
     """
+
     def __init__(
         self,
         flux_model_path: str,
@@ -60,17 +61,12 @@ class FluxReplaceByControlTool:
             height=image.height,
             num_inference_steps=num_inference_steps,
             seed=seed,
-            ref_image=ref_image,            
+            ref_image=ref_image,
             controlnet_params=ControlNetParams(
                 model=self.controlnet,
                 image=image,
                 mask=mask,
                 scale=inpainting_scale,
-            )
+            ),
         )
         return result.resize((width, height))
-
-
-
-
-

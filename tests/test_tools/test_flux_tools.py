@@ -7,7 +7,7 @@ from diffsynth_engine import (
     FluxOutpaintingTool,
     FluxReduxRefTool,
     FluxIPAdapterRefTool,
-    FluxReplaceByControlTool
+    FluxReplaceByControlTool,
 )
 
 
@@ -54,7 +54,7 @@ class TestFluxTools(ImageTestCase):
     def test_redux_ref(self):
         reference_tool = FluxReduxRefTool(
             fetch_model("muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors"),
-            load_text_encoder=False
+            load_text_encoder=False,
         )
         input_image = self.get_input_image("robot.png")
         output_image = reference_tool(ref_image=input_image, ref_scale=1.0, num_inference_steps=50, seed=0)
@@ -64,7 +64,7 @@ class TestFluxTools(ImageTestCase):
         # 模特换衣服
         replace_tool = FluxReplaceByControlTool(
             fetch_model("muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors"),
-            load_text_encoder=False
+            load_text_encoder=False,
         )
         input_image = self.get_input_image("man.jpeg")
         mask_image = self.get_input_image("clothes_mask.png")
@@ -91,6 +91,7 @@ class TestFluxTools(ImageTestCase):
             num_inference_steps=50,
         )
         self.assertImageEqualAndSaveFailed(output_image, "flux/flux_replace_controlnet_goods.png")
+
 
 if __name__ == "__main__":
     unittest.main()

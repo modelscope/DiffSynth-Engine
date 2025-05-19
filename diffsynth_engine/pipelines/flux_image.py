@@ -310,6 +310,7 @@ class FluxImagePipeline(BasePipeline):
         self.use_cfg = use_cfg
         self.batch_cfg = batch_cfg
         self.ip_adapter = None
+        self.redux = None
         self.model_names = [
             "text_encoder_1",
             "text_encoder_2",
