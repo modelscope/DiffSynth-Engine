@@ -16,6 +16,7 @@ class FluxControlNetStateDictConverter(StateDictConverter):
         super().__init__()
 
     def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        dim = 3072
         new_state_dict = {}
         for key, value in state_dict.items():
             new_key = key
@@ -64,7 +65,16 @@ class FluxControlNetStateDictConverter(StateDictConverter):
                 new_key = new_key.replace("ff.net", "ff_a")
                 new_key = new_key.replace("ff_context.net", "ff_b")
                 new_key = new_key.replace("0.proj", "0")
-                new_state_dict[new_key] = value
+                if "norm1_a" in new_key:
+                    attn_param, mlp_param = value[: 3 * dim], value[3 * dim :]
+                    new_state_dict[new_key.replace("norm1_a", "norm_msa_a")] = attn_param
+                    new_state_dict[new_key.replace("norm1_a", "norm_mlp_a")] = mlp_param
+                elif "norm1_b" in new_key:
+                    attn_param, mlp_param = value[: 3 * dim], value[3 * dim :]
+                    new_state_dict[new_key.replace("norm1_b", "norm_msa_b")] = attn_param
+                    new_state_dict[new_key.replace("norm1_b", "norm_mlp_b")] = mlp_param
+                else:
+                    new_state_dict[new_key] = value
         return new_state_dict
 
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:

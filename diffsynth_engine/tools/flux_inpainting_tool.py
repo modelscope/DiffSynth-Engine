@@ -29,7 +29,7 @@ class FluxInpaintingTool:
         mask: Image.Image,
         prompt: str,
         negative_prompt: str = "",
-        strength: float = 0.9,
+        inpainting_scale: float = 0.9,
         seed: int = 42,
         num_inference_steps: int = 20,
     ):
@@ -45,6 +45,6 @@ class FluxInpaintingTool:
                 model=self.controlnet,
                 image=image,
                 mask=mask,
-                scale=strength,
+                scale=inpainting_scale,
             ),
         )

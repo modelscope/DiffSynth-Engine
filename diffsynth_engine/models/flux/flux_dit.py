@@ -246,7 +246,7 @@ class FluxDoubleTransformerBlock(nn.Module):
             nn.Linear(dim * 4, dim, device=device, dtype=dtype),
         )
 
-    def forward(self, image, text, t_emb, rope_emb, image_emb):
+    def forward(self, image, text, t_emb, rope_emb, image_emb=None):
         # AdaLayerNorm-Zero for Image and Text MSA
         image_in, gate_a = self.norm_msa_a(image, t_emb)
         text_in, gate_b = self.norm_msa_b(text, t_emb)
@@ -310,7 +310,7 @@ class FluxSingleTransformerBlock(nn.Module):
         )
         self.proj_out = nn.Linear(dim * 5, dim)
 
-    def forward(self, x, t_emb, rope_emb, image_emb):
+    def forward(self, x, t_emb, rope_emb, image_emb=None):
         h, gate = self.norm(x, emb=t_emb)
         attn_output = self.attn(h, rope_emb, image_emb)
         mlp_output = self.mlp(h)

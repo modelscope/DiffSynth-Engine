@@ -26,16 +26,16 @@ class FluxOutpaintingTool:
     def __call__(
         self,
         image: Image.Image,
-        scale: float,
         prompt: str,
         negative_prompt: str = "",
-        strength: float = 0.9,
+        scaling_factor: float = 2.0,
+        inpainting_scale: float = 0.9,
         seed: int = 42,
         num_inference_steps: int = 20,
     ):
-        assert scale >= 1.0, "scale must be >= 1.0"
+        assert scaling_factor >= 1.0, "scale must be >= 1.0"
         width, height = image.width, image.height
-        scaled_width, scaled_height = int(width // scale), int(height // scale)
+        scaled_width, scaled_height = int(width // scaling_factor), int(height // scaling_factor)
         inner_image = image.resize((scaled_width, scaled_height))
         image = Image.new("RGB", (width, height), color=255)
         image.paste(inner_image, (scaled_width // 2, scaled_height // 2))
@@ -53,6 +53,6 @@ class FluxOutpaintingTool:
                 model=self.controlnet,
                 image=image,
                 mask=mask,
-                scale=strength,
+                scale=inpainting_scale,
             ),
         )
