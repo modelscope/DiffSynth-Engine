@@ -411,7 +411,7 @@ class FluxDiT(PreTrainedModel):
                     interval_control = int(np.ceil(interval_control))
                     hidden_states = hidden_states + controlnet_double_block_output[i // interval_control]
             hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
-            for block in self.single_blocks:
+            for i, block in enumerate(self.single_blocks):
                 hidden_states = block(hidden_states, conditioning, rope_emb, image_emb)
                 if controlnet_single_block_output is not None:
                     interval_control = len(self.single_blocks) / len(controlnet_double_block_output)

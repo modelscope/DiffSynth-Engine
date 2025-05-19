@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from typing import Dict
 
-from diffsynth_engine.models.components.clip import CLIPEncoderLayer
+from diffsynth_engine.models.text_encoder.clip import CLIPEncoderLayer
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import SD_TEXT_ENCODER_CONFIG_FILE

@@ -5,7 +5,7 @@ from typing import Dict
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.models.base import PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
-from diffsynth_engine.models.components.siglip import SiglipImageEncoder
+from diffsynth_engine.models.text_encoder.siglip import SiglipImageEncoder
 
 
 class FluxReduxImageEmbedder(nn.Module):

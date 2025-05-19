@@ -1,7 +1,7 @@
 import torch
 from typing import Dict
 
-from diffsynth_engine.models.components.vae import VAEDecoder, VAEEncoder
+from diffsynth_engine.models.vae import VAEDecoder, VAEEncoder
 from diffsynth_engine.models.utils import no_init_weights
 
 

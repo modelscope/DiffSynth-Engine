@@ -2,7 +2,7 @@ import json
 import torch
 from typing import Dict
 
-from diffsynth_engine.models.components.t5 import T5EncoderModel
+from diffsynth_engine.models.text_encoder.t5 import T5EncoderModel
 from diffsynth_engine.models.base import StateDictConverter
 from diffsynth_engine.models.sd import SDTextEncoder
 from diffsynth_engine.models.sdxl import SDXLTextEncoder2

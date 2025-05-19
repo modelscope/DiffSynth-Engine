@@ -5,7 +5,7 @@ from PIL import Image
 from typing import Dict, List
 from functools import partial
 from diffsynth_engine.models.utils import no_init_weights
-from diffsynth_engine.models.components.siglip import SiglipImageEncoder
+from diffsynth_engine.models.text_encoder.siglip import SiglipImageEncoder
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
 from diffsynth_engine.models.basic.attention import attention
 from diffsynth_engine.models.base import PreTrainedModel

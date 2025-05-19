@@ -1,7 +1,7 @@
 import torch
 import unittest
 
-from diffsynth_engine.models.components.siglip import SiglipImageEncoder
+from diffsynth_engine.models.text_encoder.siglip import SiglipImageEncoder
 from diffsynth_engine import fetch_model
 from tests.common.test_case import ImageTestCase
 

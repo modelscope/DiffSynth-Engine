@@ -2,7 +2,7 @@ import json
 import torch
 from typing import Dict
 
-from diffsynth_engine.models.components.vae import VAEDecoder, VAEEncoder, VAEStateDictConverter
+from diffsynth_engine.models.vae import VAEDecoder, VAEEncoder, VAEStateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import FLUX_VAE_CONFIG_FILE
 from diffsynth_engine.utils import logging
