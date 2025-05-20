@@ -1,6 +1,3 @@
-from .vae import VAEDecoder, VAEEncoder, VAE
-__all__ = [
-    'VAEDecoder',
-    'VAEEncoder',
-    'VAE'
-]
+from .vae import VAEStateDictConverter, VAEDecoder, VAEEncoder, VAE
+
+__all__ = ["VAEStateDictConverter", "VAEDecoder", "VAEEncoder", "VAE"]
