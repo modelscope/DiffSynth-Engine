@@ -313,6 +313,7 @@ def _worker_loop(
 
         traceback.print_exc()
         logger.error(f"Error in worker loop (rank {rank}): {e}")
+        queue_out.put(e)  # any exception caught in the worker will be raised to the main process
     finally:
         del module
         torch.cuda.synchronize()
@@ -365,29 +366,44 @@ class ParallelModel(nn.Module):
             }
         )
         try:
-            _ = self.queue_out.get(timeout=PARALLEL_LORA_TIMEOUT_SEC)
+            res = self.queue_out.get(timeout=PARALLEL_LORA_TIMEOUT_SEC)
+            if isinstance(res, Exception):
+                raise res
         except Empty:
-            logger.error("Parallel model load LoRA timeout")
-            raise RuntimeError("Parallel model load LoRA timeout")
-        logger.info("Parallel model load LoRA done")
+            logger.error("ParallelModel load LoRA timeout")
+            raise RuntimeError("ParallelModel load LoRA timeout")
+        except Exception as e:
+            logger.error(f"ParallelModel load LoRA error: {e}")
+            raise RuntimeError(f"ParallelModel load LoRA error: {e}")
+        logger.info("ParallelModel load LoRA done")
 
     def unload_loras(self):
         self.queue_in.put({"method": "unload_loras"})
         try:
-            _ = self.queue_out.get(timeout=PARALLEL_LORA_TIMEOUT_SEC)
+            res = self.queue_out.get(timeout=PARALLEL_LORA_TIMEOUT_SEC)
+            if isinstance(res, Exception):
+                raise res
         except Empty:
-            logger.error("Parallel model unload LoRA timeout")
-            raise RuntimeError("Parallel model unload LoRA timeout")
-        logger.info("Parallel model unload LoRA done")
+            logger.error("ParallelModel unload LoRA timeout")
+            raise RuntimeError("ParallelModel unload LoRA timeout")
+        except Exception as e:
+            logger.error(f"ParallelModel unload LoRA error: {e}")
+            raise RuntimeError(f"ParallelModel unload LoRA error: {e}")
+        logger.info("ParallelModel unload LoRA done")
 
     def forward(self, **kwargs):
         self.queue_in.put(kwargs)
         try:
-            y = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
+            res = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
+            if isinstance(res, Exception):
+                raise res
         except Empty:
-            logger.error("Parallel model forward timeout")
-            raise RuntimeError("Parallel model forward timeout")
-        return y
+            logger.error("ParallelModel forward timeout")
+            raise RuntimeError("ParallelModel forward timeout")
+        except Exception as e:
+            logger.error(f"ParallelModel forward error: {e}")
+            raise RuntimeError(f"ParallelModel forward error: {e}")
+        return res
 
     def __del__(self):
         # Send terminate signal to all workers
