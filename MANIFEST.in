@@ -1,0 +1,10 @@
+# MANIFEST.in
+graft diffsynth_engine
+include pyproject.toml
+include LICENSE
+prune tests
+prune examples
+prune .github
+global-exclude *.py[cod]
+global-exclude __pycache__
+global-exclude .DS_Store
