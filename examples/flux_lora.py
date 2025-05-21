@@ -2,7 +2,7 @@ from diffsynth_engine import fetch_model, FluxImagePipeline
 
 
 if __name__ == "__main__":
-    model_path = fetch_model("muse/flux-with-vae", path="flux_with_vae.safetensors")
+    model_path = fetch_model("muse/flux-with-vae", path="flux1-dev-with-vae.safetensors")
     lora_path = fetch_model("DonRat/MAJICFLUS_SuperChinesestyleheongsam", path="麦橘超国风旗袍.safetensors")
 
     pipe = FluxImagePipeline.from_pretrained(model_path, device="cuda:0", offload_mode="cpu_offload")

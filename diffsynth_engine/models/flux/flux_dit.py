@@ -1,6 +1,7 @@
 import json
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 import numpy as np
 from typing import Dict, Optional
 from einops import rearrange
@@ -17,7 +18,12 @@ from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
-from diffsynth_engine.models.basic.attention import attention
+from diffsynth_engine.models.basic.attention import attention, long_context_attention
+from diffsynth_engine.utils.parallel import (
+    get_sp_group,
+    get_sp_world_size,
+    get_sp_rank,
+)
 from diffsynth_engine.utils import logging
 
 
@@ -198,7 +204,10 @@ class FluxDoubleAttention(nn.Module):
         k = torch.cat([self.norm_k_b(k_b), self.norm_k_a(k_a)], dim=1)
         v = torch.cat([v_b, v_a], dim=1)
         q, k = apply_rope(q, k, rope_emb)
-        attn_out = attention(q, k, v, attn_impl=self.attn_impl)
+        if getattr(self, "use_usp", False):
+            attn_out = long_context_attention(q, k, v, attn_impl=self.attn_impl)
+        else:
+            attn_out = attention(q, k, v, attn_impl=self.attn_impl)
         attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
         text_out, image_out = attn_out[:, : text.shape[1]], attn_out[:, text.shape[1] :]
         image_out, text_out = self.attention_callback(
@@ -286,7 +295,10 @@ class FluxSingleAttention(nn.Module):
     def forward(self, x, rope_emb, image_emb):
         q, k, v = rearrange(self.to_qkv(x), "b s (h d) -> b s h d", h=(3 * self.num_heads)).chunk(3, dim=2)
         q, k = apply_rope(self.norm_q_a(q), self.norm_k_a(k), rope_emb)
-        attn_out = attention(q, k, v, attn_impl=self.attn_impl)
+        if getattr(self, "use_usp", False):
+            attn_out = long_context_attention(q, k, v, attn_impl=self.attn_impl)
+        else:
+            attn_out = attention(q, k, v, attn_impl=self.attn_impl)
         attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
         return self.attention_callback(attn_out=attn_out, x=x, q=q, k=k, v=v, rope_emb=rope_emb, image_emb=image_emb)
 
@@ -324,6 +336,7 @@ class FluxDiT(PreTrainedModel):
         self,
         in_channel: int = 64,
         attn_impl: Optional[str] = None,
+        use_usp: bool = False,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -349,6 +362,13 @@ class FluxDiT(PreTrainedModel):
         self.final_norm_out = AdaLayerNorm(3072, device=device, dtype=dtype)
         self.final_proj_out = nn.Linear(3072, 64, device=device, dtype=dtype)
 
+        if use_usp:
+            setattr(self, "use_usp", True)
+            for block in self.blocks:
+                setattr(block.attn, "use_usp", True)
+            for block in self.single_blocks:
+                setattr(block.attn, "use_usp", True)
+
     def patchify(self, hidden_states):
         hidden_states = rearrange(hidden_states, "B C (H P) (W Q) -> B (H W) (C P Q)", P=2, Q=2)
         return hidden_states
@@ -359,7 +379,8 @@ class FluxDiT(PreTrainedModel):
         )
         return hidden_states
 
-    def prepare_image_ids(self, latents):
+    @staticmethod
+    def prepare_image_ids(latents: torch.Tensor):
         batch_size, _, height, width = latents.shape
         latent_image_ids = torch.zeros(height // 2, width // 2, 3)
         latent_image_ids[..., 1] = latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
@@ -389,6 +410,21 @@ class FluxDiT(PreTrainedModel):
         controlnet_single_block_output=None,
         **kwargs,
     ):
+        if getattr(self, "use_usp", False):
+            return self.usp_forward(
+                hidden_states,
+                timestep,
+                prompt_emb,
+                pooled_prompt_emb,
+                image_emb,
+                guidance,
+                text_ids,
+                image_ids,
+                controlnet_double_block_output,
+                controlnet_single_block_output,
+                **kwargs,
+            )
+
         height, width = hidden_states.shape[-2:]
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         with fp8_inference(fp8_linear_enabled), gguf_inference():
@@ -426,6 +462,79 @@ class FluxDiT(PreTrainedModel):
             hidden_states = self.unpatchify(hidden_states, height, width)
             return hidden_states
 
+    def usp_forward(
+        self,
+        hidden_states,
+        timestep,
+        prompt_emb,
+        pooled_prompt_emb,
+        image_emb,
+        guidance,
+        text_ids,
+        image_ids=None,
+        controlnet_double_block_output=None,
+        controlnet_single_block_output=None,
+        **kwargs,
+    ):
+        height, width = hidden_states.shape[-2:]
+        fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
+        with fp8_inference(fp8_linear_enabled), gguf_inference():
+            if image_ids is None:
+                image_ids = self.prepare_image_ids(hidden_states)
+
+            # warning: keep the order of time_embedding + guidance_embedding + pooled_text_embedding
+            # addition of floating point numbers does not meet commutative law
+            conditioning = self.time_embedder(timestep, hidden_states.dtype)
+            if self.guidance_embedder is not None:
+                guidance = guidance * 1000
+                conditioning += self.guidance_embedder(guidance, hidden_states.dtype)
+            conditioning += self.pooled_text_embedder(pooled_prompt_emb)
+            prompt_emb = self.context_embedder(prompt_emb)
+            rope_emb = self.pos_embedder(torch.cat((text_ids, image_ids), dim=1))
+            hidden_states = self.patchify(hidden_states)
+
+            s1, s2, p = (
+                text_ids.size(1),
+                image_ids.size(1),
+                get_sp_world_size(),
+            )  # (text_seq_len, image_seq_len, parallelism)
+            split_size = [s1 // p + 1 if i < s1 % p else s1 // p for i in range(p)]
+            prompt_emb = torch.split(prompt_emb, split_size, dim=1)[get_sp_rank()]
+            text_rope_emb = torch.split(rope_emb[:, :, :s1], split_size, dim=2)[get_sp_rank()]
+            split_size = [s2 // p + 1 if i < s2 % p else s2 // p for i in range(p)]
+            hidden_states = torch.split(hidden_states, split_size, dim=1)[get_sp_rank()]
+            image_rope_emb = torch.split(rope_emb[:, :, s1:], split_size, dim=2)[get_sp_rank()]
+            rope_emb = torch.cat((text_rope_emb, image_rope_emb), dim=2)
+
+            hidden_states = self.x_embedder(hidden_states)
+            for i, block in enumerate(self.blocks):
+                hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, rope_emb, image_emb)
+                if controlnet_double_block_output is not None:
+                    interval_control = len(self.blocks) / len(controlnet_double_block_output)
+                    interval_control = int(np.ceil(interval_control))
+                    hidden_states = hidden_states + controlnet_double_block_output[i // interval_control]
+            hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
+            for i, block in enumerate(self.single_blocks):
+                hidden_states = block(hidden_states, conditioning, rope_emb, image_emb)
+                if controlnet_single_block_output is not None:
+                    interval_control = len(self.single_blocks) / len(controlnet_double_block_output)
+                    interval_control = int(np.ceil(interval_control))
+                    hidden_states = hidden_states + controlnet_single_block_output[i // interval_control]
+
+            hidden_states = hidden_states[:, prompt_emb.shape[1] :]
+            hidden_states = self.final_norm_out(hidden_states, conditioning)
+            hidden_states = self.final_proj_out(hidden_states)
+
+            b, d = hidden_states.size(0), hidden_states.size(2)  # (batch_size, out_dim)
+            all_hidden_states = [
+                torch.zeros((b, s, d), dtype=hidden_states.dtype, device=hidden_states.device) for s in split_size
+            ]
+            dist.all_gather(all_hidden_states, hidden_states, group=get_sp_group())
+            hidden_states = torch.concat(all_hidden_states, dim=1)
+
+            hidden_states = self.unpatchify(hidden_states, height, width)
+            return hidden_states
+
     @classmethod
     def from_state_dict(
         cls,
@@ -434,6 +543,7 @@ class FluxDiT(PreTrainedModel):
         dtype: torch.dtype,
         in_channel: int = 64,
         attn_impl: Optional[str] = None,
+        use_usp: bool = False,
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
@@ -442,6 +552,7 @@ class FluxDiT(PreTrainedModel):
                 dtype=dtype,
                 in_channel=in_channel,
                 attn_impl=attn_impl,
+                use_usp=use_usp,
             )
             model = model.requires_grad_(False)  # for loading gguf
         model.load_state_dict(state_dict, assign=True)

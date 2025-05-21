@@ -26,14 +26,21 @@ class LoRAStateDictConverter:
 class BasePipeline:
     lora_converter = LoRAStateDictConverter()
 
-    def __init__(self, vae_tiled, vae_tile_size, vae_tile_stride, device="cuda:0", dtype=torch.float16):
+    def __init__(
+        self,
+        vae_tiled: bool = False,
+        vae_tile_size: int = -1,
+        vae_tile_stride: int = -1,
+        device="cuda:0",
+        dtype=torch.float16,
+    ):
         super().__init__()
-        self.device = device
-        self.dtype = dtype
-        self.offload_mode = None
         self.vae_tiled = vae_tiled
         self.vae_tile_size = vae_tile_size
         self.vae_tile_stride = vae_tile_stride
+        self.device = device
+        self.dtype = dtype
+        self.offload_mode = None
         self.model_names = []
 
     @classmethod
@@ -199,8 +206,53 @@ class BasePipeline:
                 model.eval()
         return self
 
-    def enable_fp8_linear(self):
-        raise NotImplementedError()
+    @staticmethod
+    def init_parallel_config(
+        parallelism: int,
+        use_cfg_parallel: bool,
+        model_config: ModelConfig,
+    ):
+        assert parallelism in (2, 4, 8), "parallelism must be 2, 4 or 8"
+        cfg_degree = 2 if use_cfg_parallel else 1
+        sp_ulysses_degree = getattr(model_config, "sp_ulysses_degree", None)
+        sp_ring_degree = getattr(model_config, "sp_ring_degree", None)
+        tp_degree = getattr(model_config, "tp_degree", None)
+        use_fsdp = getattr(model_config, "use_fsdp", False)
+
+        if tp_degree is not None:
+            assert sp_ulysses_degree is None and sp_ring_degree is None, (
+                "not allowed to enable sequence parallel and tensor parallel together; "
+                "either set sp_ulysses_degree=None, sp_ring_degree=None or set tp_degree=None during pipeline initialization"
+            )
+            assert use_fsdp is False, (
+                "not allowed to enable fully sharded data parallel and tensor parallel together; "
+                "either set use_fsdp=False or set tp_degree=None during pipeline initialization"
+            )
+            assert parallelism == cfg_degree * tp_degree, (
+                f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * tp_degree ({tp_degree})"
+            )
+            sp_ulysses_degree = 1
+            sp_ring_degree = 1
+        elif sp_ulysses_degree is None and sp_ring_degree is None:
+            # use ulysses if not specified
+            sp_ulysses_degree = parallelism // cfg_degree
+            sp_ring_degree = 1
+            tp_degree = 1
+        elif sp_ulysses_degree is not None and sp_ring_degree is not None:
+            assert parallelism == cfg_degree * sp_ulysses_degree * sp_ring_degree, (
+                f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * "
+                f"sp_ulysses_degree ({sp_ulysses_degree}) * sp_ring_degree ({sp_ring_degree})"
+            )
+            tp_degree = 1
+        else:
+            raise ValueError("sp_ulysses_degree and sp_ring_degree must be specified together")
+        return {
+            "cfg_degree": cfg_degree,
+            "sp_ulysses_degree": sp_ulysses_degree,
+            "sp_ring_degree": sp_ring_degree,
+            "tp_degree": tp_degree,
+            "use_fsdp": use_fsdp,
+        }
 
     @staticmethod
     def validate_offload_mode(offload_mode: str | None):

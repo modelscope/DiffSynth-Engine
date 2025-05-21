@@ -1,10 +1,11 @@
-from enum import Enum
 import re
 import os
 import torch
 import torch.nn as nn
 import math
-from typing import Callable, Dict, List, Optional, Union
+from enum import Enum
+from functools import partial
+from typing import Callable, Dict, List, Tuple, Optional, Union
 from tqdm import tqdm
 from PIL import Image
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
+from diffsynth_engine.utils.parallel import ParallelModel, shard_model
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.download import fetch_model
@@ -284,6 +286,12 @@ class FluxModelConfig:
     vae_dtype: torch.dtype = torch.bfloat16
 
     dit_attn_impl: Optional[str] = "auto"
+    use_fp8_linear: bool = False
+
+    sp_ulysses_degree: Optional[int] = None
+    sp_ring_degree: Optional[int] = None
+    tp_degree: Optional[int] = None
+    use_fsdp: bool = False
 
 
 class FluxImagePipeline(BasePipeline):
@@ -291,6 +299,7 @@ class FluxImagePipeline(BasePipeline):
 
     def __init__(
         self,
+        config: FluxModelConfig,
         tokenizer: CLIPTokenizer,
         tokenizer_2: T5TokenizerFast,
         text_encoder_1: FluxTextEncoder1,
@@ -315,6 +324,7 @@ class FluxImagePipeline(BasePipeline):
             device=device,
             dtype=dtype,
         )
+        self.config = config
         self.noise_scheduler = RecifitedFlowScheduler(shift=3.0, use_dynamic_shifting=True)
         self.sampler = FlowMatchEulerSampler()
         # models
@@ -348,6 +358,8 @@ class FluxImagePipeline(BasePipeline):
         dtype: torch.dtype = torch.bfloat16,
         offload_mode: str | None = None,
         load_text_encoder: bool = True,
+        parallelism: int = 1,
+        use_cfg_parallel: bool = False,
     ) -> "FluxImagePipeline":
         cls.validate_offload_mode(offload_mode)
 
@@ -382,26 +394,60 @@ class FluxImagePipeline(BasePipeline):
         if load_text_encoder:
             tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
             tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
-        with LoRAContext():
-            dit = FluxDiT.from_state_dict(
-                dit_state_dict,
-                device=init_device,
-                dtype=model_config.dit_dtype,
-                in_channel=control_type.get_in_channel(),
-                attn_impl=model_config.dit_attn_impl,
-            )
-            if load_text_encoder:
+
+        if parallelism > 1:
+            parallel_config = cls.init_parallel_config(parallelism, use_cfg_parallel, model_config)
+            cfg_degree = parallel_config["cfg_degree"]
+            sp_ulysses_degree = parallel_config["sp_ulysses_degree"]
+            sp_ring_degree = parallel_config["sp_ring_degree"]
+            tp_degree = parallel_config["tp_degree"]
+            use_fsdp = parallel_config["use_fsdp"]
+            with LoRAContext():
+                dit = FluxDiT.from_state_dict(
+                    dit_state_dict,
+                    device=init_device,
+                    dtype=model_config.dit_dtype,
+                    in_channel=control_type.get_in_channel(),
+                    attn_impl=model_config.dit_attn_impl,
+                    use_usp=(sp_ulysses_degree * sp_ring_degree > 1),
+                )
+                if model_config.use_fp8_linear:
+                    enable_fp8_linear(dit)
+                dit = ParallelModel(
+                    dit,
+                    cfg_degree=cfg_degree,
+                    sp_ulysses_degree=sp_ulysses_degree,
+                    sp_ring_degree=sp_ring_degree,
+                    tp_degree=tp_degree,
+                    shard_fn=partial(shard_model, wrap_module_names=["blocks", "single_blocks"]) if use_fsdp else None,
+                    device="cuda",
+                )
+        else:
+            with LoRAContext():
+                dit = FluxDiT.from_state_dict(
+                    dit_state_dict,
+                    device=init_device,
+                    dtype=model_config.dit_dtype,
+                    in_channel=control_type.get_in_channel(),
+                    attn_impl=model_config.dit_attn_impl,
+                )
+                if model_config.use_fp8_linear:
+                    enable_fp8_linear(dit)
+
+        if load_text_encoder:
+            with LoRAContext():
                 text_encoder_1 = FluxTextEncoder1.from_state_dict(
                     clip_state_dict, device=init_device, dtype=model_config.clip_dtype
                 )
-        if load_text_encoder:
             text_encoder_2 = FluxTextEncoder2.from_state_dict(
                 t5_state_dict, device=init_device, dtype=model_config.t5_dtype
             )
+
         vae_decoder = FluxVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
         vae_encoder = FluxVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
 
         pipe = cls(
+            config=model_config,
             tokenizer=tokenizer if load_text_encoder else None,
             tokenizer_2=tokenizer_2 if load_text_encoder else None,
             text_encoder_1=text_encoder_1 if load_text_encoder else None,
@@ -419,6 +465,17 @@ class FluxImagePipeline(BasePipeline):
         elif offload_mode == "sequential_cpu_offload":
             pipe.enable_sequential_cpu_offload()
         return pipe
+
+    def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
+        assert self.config.tp_degree is None, (
+            "load LoRA is not allowed when tensor parallel is enabled; "
+            "set tp_degree=None during pipeline initialization"
+        )
+        assert not (self.config.use_fsdp and fused), (
+            "load fused LoRA is not allowed when fully sharded data parallel is enabled; "
+            "either load LoRA with fused=False or set use_fsdp=False during pipeline initialization"
+        )
+        super().load_loras(lora_list, fused, save_original_weight)
 
     def unload_loras(self):
         self.dit.unload_loras()
@@ -454,7 +511,7 @@ class FluxImagePipeline(BasePipeline):
         return prompt_emb, add_text_embeds
 
     def prepare_extra_input(self, latents, positive_prompt_emb, guidance=1.0):
-        image_ids = self.dit.prepare_image_ids(latents)
+        image_ids = FluxDiT.prepare_image_ids(latents)
         guidance = torch.tensor([guidance] * latents.shape[0], device=latents.device, dtype=latents.dtype)
         text_ids = torch.zeros(positive_prompt_emb.shape[0], positive_prompt_emb.shape[1], 3).to(
             device=self.device, dtype=positive_prompt_emb.dtype
@@ -578,9 +635,9 @@ class FluxImagePipeline(BasePipeline):
             current_step=current_step,
             total_step=total_step,
         )
-        
+
         self.load_models_to_device(["dit"])
-        
+
         noise_pred = self.dit(
             hidden_states=latents,
             timestep=timestep,
@@ -714,9 +771,6 @@ class FluxImagePipeline(BasePipeline):
             double_block_output_results = accumulate(double_block_output_results, double_block_output)
             single_block_output_results = accumulate(single_block_output_results, single_block_output)
         return double_block_output_results, single_block_output_results
-
-    def enable_fp8_linear(self):
-        enable_fp8_linear(self.dit)
 
     def load_ip_adapter(self, ip_adapter):
         self.ip_adapter = ip_adapter

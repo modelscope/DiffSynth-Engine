@@ -38,11 +38,11 @@ class WanModelConfig:
     image_encoder_dtype: torch.dtype = torch.bfloat16
 
     dit_attn_impl: Optional[str] = "auto"
-    dit_fsdp: bool = False
 
     sp_ulysses_degree: Optional[int] = None
     sp_ring_degree: Optional[int] = None
     tp_degree: Optional[int] = None
+    use_fsdp: bool = False
 
 
 class WanLoRAConverter(LoRAStateDictConverter):
@@ -150,6 +150,7 @@ class WanVideoPipeline(BasePipeline):
             device=device,
             dtype=dtype,
         )
+        self.config = config
         self.noise_scheduler = RecifitedFlowScheduler(shift=shift, sigma_min=0.001, sigma_max=0.999)
         self.sampler = FlowMatchEulerSampler()
         self.tokenizer = tokenizer
@@ -158,7 +159,6 @@ class WanVideoPipeline(BasePipeline):
         self.vae = vae
         self.image_encoder = image_encoder
         self.batch_cfg = batch_cfg
-        self.config = config
         self.model_names = ["text_encoder", "dit", "vae"]
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
@@ -166,9 +166,9 @@ class WanVideoPipeline(BasePipeline):
             "load LoRA is not allowed when tensor parallel is enabled; "
             "set tp_degree=None during pipeline initialization"
         )
-        assert not (self.config.dit_fsdp and fused), (
+        assert not (self.config.use_fsdp and fused), (
             "load fused LoRA is not allowed when fully sharded data parallel is enabled; "
-            "either load LoRA with fused=False or set dit_fsdp=False during pipeline initialization"
+            "either load LoRA with fused=False or set use_fsdp=False during pipeline initialization"
         )
         super().load_loras(lora_list, fused, save_original_weight)
 
@@ -475,41 +475,13 @@ class WanVideoPipeline(BasePipeline):
         shift = SHIFT_FACTORS[model_type]
 
         if parallelism > 1:
-            assert parallelism in (2, 4, 8), "parallelism must be 2, 4 or 8"
+            parallel_config = cls.init_parallel_config(parallelism, use_cfg_parallel, model_config)
+            cfg_degree = parallel_config["cfg_degree"]
+            sp_ulysses_degree = parallel_config["sp_ulysses_degree"]
+            sp_ring_degree = parallel_config["sp_ring_degree"]
+            tp_degree = parallel_config["tp_degree"]
+            use_fsdp = parallel_config["use_fsdp"]
             batch_cfg = True if use_cfg_parallel else batch_cfg
-            cfg_degree = 2 if use_cfg_parallel else 1
-            sp_ulysses_degree = model_config.sp_ulysses_degree
-            sp_ring_degree = model_config.sp_ring_degree
-            tp_degree = model_config.tp_degree
-
-            if tp_degree is not None:
-                assert sp_ulysses_degree is None and sp_ring_degree is None, (
-                    "not allowed to enable sequence parallel and tensor parallel together; "
-                    "either set sp_ulysses_degree=None, sp_ring_degree=None or set tp_degree=None during pipeline initialization"
-                )
-                assert model_config.dit_fsdp is False, (
-                    "not allowed to enable fully sharded data parallel and tensor parallel together; "
-                    "either set dit_fsdp=False or set tp_degree=None during pipeline initialization"
-                )
-                assert parallelism == cfg_degree * tp_degree, (
-                    f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * tp_degree ({tp_degree})"
-                )
-                sp_ulysses_degree = 1
-                sp_ring_degree = 1
-            elif sp_ulysses_degree is None and sp_ring_degree is None:
-                # use ulysses if not specified
-                sp_ulysses_degree = parallelism // cfg_degree
-                sp_ring_degree = 1
-                tp_degree = 1
-            elif sp_ulysses_degree is not None and sp_ring_degree is not None:
-                assert parallelism == cfg_degree * sp_ulysses_degree * sp_ring_degree, (
-                    f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * "
-                    f"sp_ulysses_degree ({sp_ulysses_degree}) * sp_ring_degree ({sp_ring_degree})"
-                )
-                tp_degree = 1
-            else:
-                raise ValueError("sp_ulysses_degree and sp_ring_degree must be specified together")
-
             with LoRAContext():
                 dit = WanDiT.from_state_dict(
                     dit_state_dict,
@@ -525,7 +497,7 @@ class WanVideoPipeline(BasePipeline):
                     sp_ulysses_degree=sp_ulysses_degree,
                     sp_ring_degree=sp_ring_degree,
                     tp_degree=tp_degree,
-                    shard_fn=partial(shard_model, wrap_module_names=["blocks"]) if model_config.dit_fsdp else None,
+                    shard_fn=partial(shard_model, wrap_module_names=["blocks"]) if use_fsdp else None,
                     device="cuda",
                 )
         else:

@@ -116,6 +116,7 @@ class SDXLImagePipeline(BasePipeline):
 
     def __init__(
         self,
+        config: SDXLModelConfig,
         tokenizer: CLIPTokenizer,
         tokenizer_2: CLIPTokenizer,
         text_encoder: SDXLTextEncoder,
@@ -137,6 +138,7 @@ class SDXLImagePipeline(BasePipeline):
             device=device,
             dtype=dtype,
         )
+        self.config = config
         self.noise_scheduler = ScaledLinearScheduler()
         self.sampler = EulerSampler()
         # models
@@ -211,6 +213,7 @@ class SDXLImagePipeline(BasePipeline):
         )
 
         pipe = cls(
+            config=model_config,
             tokenizer=tokenizer,
             tokenizer_2=tokenizer_2,
             text_encoder=text_encoder,

@@ -16,12 +16,12 @@ if __name__ == "__main__":
             "muse/open-clip-xlm-roberta-large-vit-huge-14",
             path="open-clip-xlm-roberta-large-vit-huge-14.safetensors",
         ),
-        dit_fsdp=True,
+        use_fsdp=True,
     )
     pipe = WanVideoPipeline.from_pretrained(config, parallelism=4, use_cfg_parallel=True, offload_mode="cpu_offload")
 
-    fisrt_frame = Image.open("wan_flf2v_input_first_frame.png").convert("RGB")
-    last_frame = Image.open("wan_flf2v_input_last_frame.png").convert("RGB")
+    fisrt_frame = Image.open("input/wan_flf2v_input_first_frame.png").convert("RGB")
+    last_frame = Image.open("input/wan_flf2v_input_last_frame.png").convert("RGB")
     # recommmend using resolution 1280x720, 960x960, 720x1280, 832x480, 480x832 for better quality
     video = pipe(
         prompt="CG动画风格，一只蓝色的小鸟从地面起飞，煽动翅膀。小鸟羽毛细腻，胸前有独特的花纹，背景是蓝天白云，阳光明媚。镜跟随小鸟向上移动，展现出小鸟飞翔的姿态和天空的广阔。近景，仰视视角。",

@@ -149,6 +149,7 @@ class SDImagePipeline(BasePipeline):
 
     def __init__(
         self,
+        config: SDModelConfig,
         tokenizer: CLIPTokenizer,
         text_encoder: SDTextEncoder,
         unet: SDUNet,
@@ -168,6 +169,7 @@ class SDImagePipeline(BasePipeline):
             device=device,
             dtype=dtype,
         )
+        self.config = config
         self.noise_scheduler = ScaledLinearScheduler()
         self.sampler = EulerSampler()
         # models
@@ -225,6 +227,7 @@ class SDImagePipeline(BasePipeline):
         )
 
         pipe = cls(
+            config=model_config,
             tokenizer=tokenizer,
             text_encoder=text_encoder,
             unet=unet,

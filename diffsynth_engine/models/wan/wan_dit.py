@@ -347,6 +347,9 @@ class WanDiT(PreTrainedModel):
         clip_feature: Optional[torch.Tensor] = None,  # clip_vision_encoder(img)
         y: Optional[torch.Tensor] = None,  # vae_encoder(img)
     ):
+        if getattr(self, "use_usp", False):
+            return self.usp_forward(x, context, timestep, clip_feature, y)
+
         with gguf_inference():
             t = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep))
             t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
@@ -368,21 +371,56 @@ class WanDiT(PreTrainedModel):
                 .reshape(f * h * w, 1, -1)
                 .to(x.device)
             )
-            if getattr(self, "use_usp", False):
-                s, p = x.size(1), get_sp_world_size()  # (sequence_length, parallelism)
-                split_size = [s // p + 1 if i < s % p else s // p for i in range(p)]
-                x = torch.split(x, split_size, dim=1)[get_sp_rank()]
-                freqs = torch.split(freqs, split_size, dim=0)[get_sp_rank()]
+
+            for block in self.blocks:
+                x = block(x, context, t_mod, freqs)
+            x = self.head(x, t)
+            x = self.unpatchify(x, (f, h, w))
+            return x
+
+    def usp_forward(
+        self,
+        x: torch.Tensor,
+        context: torch.Tensor,
+        timestep: torch.Tensor,
+        clip_feature: Optional[torch.Tensor] = None,  # clip_vision_encoder(img)
+        y: Optional[torch.Tensor] = None,  # vae_encoder(img)
+    ):
+        with gguf_inference():
+            t = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep))
+            t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
+            context = self.text_embedding(context)
+            if self.has_image_input:
+                x = torch.cat([x, y], dim=1)  # (b, c_x + c_y, f, h, w)
+                clip_embdding = self.img_emb(clip_feature)
+                context = torch.cat([clip_embdding, context], dim=1)  # (b, s1 + s2, d)
+            x, (f, h, w) = self.patchify(x)
+            freqs = (
+                torch.cat(
+                    [
+                        self.freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
+                        self.freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
+                        self.freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1),
+                    ],
+                    dim=-1,
+                )
+                .reshape(f * h * w, 1, -1)
+                .to(x.device)
+            )
+
+            s, p = x.size(1), get_sp_world_size()  # (sequence_length, parallelism)
+            split_size = [s // p + 1 if i < s % p else s // p for i in range(p)]
+            x = torch.split(x, split_size, dim=1)[get_sp_rank()]
+            freqs = torch.split(freqs, split_size, dim=0)[get_sp_rank()]
 
             for block in self.blocks:
                 x = block(x, context, t_mod, freqs)
             x = self.head(x, t)
 
-            if getattr(self, "use_usp", False):
-                b, d = x.size(0), x.size(2)  # (batch_size, out_dim)
-                xs = [torch.zeros((b, s, d), dtype=x.dtype, device=x.device) for s in split_size]
-                dist.all_gather(xs, x, group=get_sp_group())
-                x = torch.concat(xs, dim=1)
+            b, d = x.size(0), x.size(2)  # (batch_size, out_dim)
+            xs = [torch.zeros((b, s, d), dtype=x.dtype, device=x.device) for s in split_size]
+            dist.all_gather(xs, x, group=get_sp_group())
+            x = torch.concat(xs, dim=1)
             x = self.unpatchify(x, (f, h, w))
             return x
 

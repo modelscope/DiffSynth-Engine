@@ -11,7 +11,7 @@ if __name__ == "__main__":
         model_path=fetch_model("muse/wan2.1-t2v-14b-bf16", path="dit.safetensors"),
         t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
         vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
-        dit_fsdp=True,
+        use_fsdp=True,
     )
     pipe = WanVideoPipeline.from_pretrained(config, parallelism=4, use_cfg_parallel=True, offload_mode="cpu_offload")
 
