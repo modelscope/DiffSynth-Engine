@@ -10,12 +10,13 @@ from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor.parallel.style import ParallelStyle
 from torch.distributed.tensor.parallel._utils import _validate_tp_mesh_dim
+from contextlib import contextmanager
 from datetime import timedelta
 from functools import partial
 from typing import Callable, Dict, List, Union, Optional
 from queue import Empty
 
-
+import diffsynth_engine.models.basic.attention as attention_ops
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -414,4 +415,49 @@ class ParallelModel(nn.Module):
         self.queue_out.close()
 
 
-__all__ = ["ParallelModel"]
+_sequence_parallel_enabled = False
+
+
+@contextmanager
+def sequence_parallel(
+    tensors: List[torch.Tensor] | None = None,
+    seq_dims: List[int] | None = None,
+    enabled: bool = False,
+):
+    if not enabled:
+        yield
+        return
+
+    tensors = [] if tensors is None else tensors
+    seq_dims = [] if seq_dims is None else seq_dims
+    assert len(tensors) == len(seq_dims), "tensors and seq_dims must have the same number of elements"
+
+    for tensor, seq_dim in zip(tensors, seq_dims):
+        chunks = torch.chunk(tensor, get_sp_world_size(), dim=seq_dim)
+        chunk = chunks[get_sp_rank()].clone()
+        tensor.resize_(chunk.shape)
+        tensor.copy_(chunk)
+
+    global _sequence_parallel_enabled
+    _sequence_parallel_enabled = True
+    origin_attention = attention_ops.attention
+    attention_ops.attention = attention_ops.long_context_attention
+    yield
+    _sequence_parallel_enabled = False
+    attention_ops.attention = origin_attention
+
+
+def sequence_parallel_unshard(tensors: List[torch.Tensor], seq_dims: List[int]) -> List[torch.Tensor]:
+    if not _sequence_parallel_enabled:
+        return tensors
+
+    assert len(tensors) == len(seq_dims), "tensors and seq_dims must have the same number of elements"
+    unshard_tensors = []
+    for tensor, seq_dim in zip(tensors, seq_dims):
+        unshard = [torch.zeros_like(tensor) for _ in range(get_sp_world_size())]
+        dist.all_gather(unshard, tensor, group=get_sp_group())
+        unshard_tensors.append(torch.cat(unshard, dim=seq_dim))
+    return unshard_tensors
+
+
+__all__ = ["ParallelModel", "sequence_parallel", "sequence_parallel_unshard"]

@@ -201,10 +201,8 @@ def long_context_attention(
     assert attn_impl in [
         None,
         "auto",
-        "eager",
         "flash_attn_2",
         "flash_attn_3",
-        "xformers",
         "sdpa",
         "sage_attn",
         "sparge_attn",
