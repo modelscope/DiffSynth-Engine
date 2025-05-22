@@ -395,6 +395,13 @@ class FluxDiT(PreTrainedModel):
         **kwargs,
     ):
         height, width = hidden_states.shape[-2:]
+        controlnet_double_block_output = (
+            controlnet_double_block_output if controlnet_double_block_output is not None else ()
+        )
+        controlnet_single_block_output = (
+            controlnet_single_block_output if controlnet_single_block_output is not None else ()
+        )
+
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         with fp8_inference(fp8_linear_enabled), gguf_inference():
             if image_ids is None:
@@ -413,8 +420,22 @@ class FluxDiT(PreTrainedModel):
             hidden_states = self.patchify(hidden_states)
 
             with sequence_parallel(
-                (hidden_states, prompt_emb, text_rope_emb, image_rope_emb),
-                seq_dims=(1, 1, 2, 2),
+                (
+                    hidden_states,
+                    prompt_emb,
+                    text_rope_emb,
+                    image_rope_emb,
+                    *controlnet_double_block_output,
+                    *controlnet_single_block_output,
+                ),
+                seq_dims=(
+                    1,
+                    1,
+                    2,
+                    2,
+                    *(1 for _ in controlnet_double_block_output),
+                    *(1 for _ in controlnet_single_block_output),
+                ),
                 enabled=self.use_usp,
             ):
                 hidden_states = self.x_embedder(hidden_states)
@@ -423,14 +444,14 @@ class FluxDiT(PreTrainedModel):
 
                 for i, block in enumerate(self.blocks):
                     hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, rope_emb, image_emb)
-                    if controlnet_double_block_output is not None:
+                    if len(controlnet_double_block_output) > 0:
                         interval_control = len(self.blocks) / len(controlnet_double_block_output)
                         interval_control = int(np.ceil(interval_control))
                         hidden_states = hidden_states + controlnet_double_block_output[i // interval_control]
                 hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
                 for i, block in enumerate(self.single_blocks):
                     hidden_states = block(hidden_states, conditioning, rope_emb, image_emb)
-                    if controlnet_single_block_output is not None:
+                    if len(controlnet_single_block_output) > 0:
                         interval_control = len(self.single_blocks) / len(controlnet_double_block_output)
                         interval_control = int(np.ceil(interval_control))
                         hidden_states = hidden_states + controlnet_single_block_output[i // interval_control]
