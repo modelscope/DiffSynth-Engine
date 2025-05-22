@@ -1,5 +1,6 @@
 import unittest
 import os
+import time
 import numpy as np
 import torch
 from pathlib import Path
@@ -79,8 +80,6 @@ class ImageTestCase(TestCase):
             self.assertImageEqual(input_image, expect_image, threshold=threshold)
         except Exception as e:
             name = expect_image_path.split("/")[-1]
-            import time
-
             input_image.save(f"save_{time.time()}_{name}")
             raise e
 
