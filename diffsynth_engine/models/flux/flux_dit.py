@@ -322,6 +322,7 @@ class FluxDiT(PreTrainedModel):
 
     def __init__(
         self,
+        in_channel: int = 64,
         attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
@@ -336,7 +337,8 @@ class FluxDiT(PreTrainedModel):
             nn.Linear(3072, 3072, device=device, dtype=dtype),
         )
         self.context_embedder = nn.Linear(4096, 3072, device=device, dtype=dtype)
-        self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
+        # normal flux has 64 channels, bfl canny and depth has 128 channels, bfl fill has 384 channels, bfl redux has 64 channels
+        self.x_embedder = nn.Linear(in_channel, 3072, device=device, dtype=dtype)
 
         self.blocks = nn.ModuleList(
             [FluxDoubleTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(19)]
@@ -430,6 +432,7 @@ class FluxDiT(PreTrainedModel):
         state_dict: Dict[str, torch.Tensor],
         device: str,
         dtype: torch.dtype,
+        in_channel: int = 64,
         attn_impl: Optional[str] = None,
     ):
         with no_init_weights():
@@ -437,6 +440,7 @@ class FluxDiT(PreTrainedModel):
                 cls,
                 device=device,
                 dtype=dtype,
+                in_channel=in_channel,
                 attn_impl=attn_impl,
             )
             model = model.requires_grad_(False)  # for loading gguf

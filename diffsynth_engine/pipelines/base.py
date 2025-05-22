@@ -4,10 +4,10 @@ import numpy as np
 from typing import Dict, List, Tuple
 from PIL import Image
 from dataclasses import dataclass
-from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.loader import load_file
 
 logger = logging.get_logger(__name__)
 

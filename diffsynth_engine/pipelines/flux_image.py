@@ -1,9 +1,12 @@
+from enum import Enum
 import re
 import os
 import torch
 import torch.nn as nn
 import math
 from typing import Callable, Dict, List, Optional, Union
+from transformers import SiglipImageProcessor, SiglipVisionModel
+from diffsynth_engine.utils.loader import load_safetensors
 from tqdm import tqdm
 from PIL import Image
 from dataclasses import dataclass
@@ -25,6 +28,8 @@ from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TO
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.download import fetch_model
+
+from einops import rearrange
 
 logger = logging.get_logger(__name__)
 
@@ -219,6 +224,47 @@ class FluxLoRAConverter(LoRAStateDictConverter):
         raise ValueError(f"Unsupported key: {key}")
 
 
+class ReduxImageEncoder(nn.Module):
+    siglip_model_name = "google/siglip-so400m-patch14-384"
+
+    def __init__(
+        self,
+        device,
+        redux_dim: int = 1152,
+        txt_in_features: int = 4096,
+        flux_redux_path: str = None,
+        google_siglip_path: str = None,
+        dtype=torch.bfloat16,
+    ) -> None:
+        super().__init__()
+
+        self.redux_dim = redux_dim
+        self.device = device if isinstance(device, torch.device) else torch.device(device)
+        self.dtype = dtype
+
+        self.redux_up = nn.Linear(redux_dim, txt_in_features * 3, dtype=dtype)
+        self.redux_down = nn.Linear(txt_in_features * 3, txt_in_features, dtype=dtype)
+
+        if flux_redux_path is None:
+            flux_redux_path = fetch_model("muse/flux1-redux-dev", revision="v1", path="flux1-redux-dev.safetensors")
+        state_dict = load_safetensors(flux_redux_path)
+        self.load_state_dict(state_dict, strict=False, assign=True)
+        self.redux_up.to(device=device)
+        self.redux_down.to(device=device)
+
+        if google_siglip_path is None:
+            google_siglip_path = fetch_model("muse/siglip-so400m-patch14-384", revision="v1", path="model.safetensors")
+        self.siglip = SiglipVisionModel.from_pretrained(google_siglip_path).to(dtype=dtype, device=device)
+        self.normalize = SiglipImageProcessor.from_pretrained(google_siglip_path)
+
+    def __call__(self, x: Image.Image) -> torch.Tensor:
+        imgs = self.normalize.preprocess(images=[x], do_resize=True, return_tensors="pt", do_convert_rgb=True)
+        _encoded_x = self.siglip(**imgs.to(device=self.device, dtype=self.dtype)).last_hidden_state
+        projected_x = self.redux_down(nn.functional.silu(self.redux_up(_encoded_x)))
+
+        return projected_x
+
+
 def calculate_shift(
     image_seq_len,
     base_seq_len: int = 256,
@@ -243,12 +289,33 @@ def accumulate(result, new_item):
 ImageType = Union[Image.Image, torch.Tensor, List[Image.Image], List[torch.Tensor]]
 
 
+class ControlType(Enum):
+    bfl_depth = "bfl_depth"
+    bfl_canny = "bfl_canny"
+    bfl_redux = "bfl_redux"
+    bfl_fill = "bfl_fill"
+    normal = "normal"
+
+    def get_in_channel(self):
+        if self == ControlType.normal:
+            return 64
+        elif self == ControlType.bfl_depth:
+            return 128
+        elif self == ControlType.bfl_canny:
+            return 128
+        elif self == ControlType.bfl_redux:
+            return 64
+        elif self == ControlType.bfl_fill:
+            return 384
+
+
 @dataclass
 class ControlNetParams:
     model: nn.Module
     scale: float
     image: ImageType
     mask: Optional[ImageType] = None
+    control_type: ControlType = ControlType.normal
     control_start: float = 0
     control_end: float = 1
 
@@ -286,6 +353,7 @@ class FluxImagePipeline(BasePipeline):
         vae_tiled: bool = False,
         vae_tile_size: int = 256,
         vae_tile_stride: int = 256,
+        control_type: ControlType = ControlType.normal,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -311,6 +379,9 @@ class FluxImagePipeline(BasePipeline):
         self.batch_cfg = batch_cfg
         self.ip_adapter = None
         self.redux = None
+        self.control_type = control_type
+        if self.control_type == ControlType.bfl_redux:
+            self.redux_image = ReduxImageEncoder(device)
         self.model_names = [
             "text_encoder_1",
             "text_encoder_2",
@@ -323,6 +394,7 @@ class FluxImagePipeline(BasePipeline):
     def from_pretrained(
         cls,
         model_path_or_config: str | os.PathLike | FluxModelConfig,
+        control_type: ControlType = ControlType.normal,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         offload_mode: str | None = None,
@@ -363,7 +435,11 @@ class FluxImagePipeline(BasePipeline):
             tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
             dit = FluxDiT.from_state_dict(
-                dit_state_dict, device=init_device, dtype=model_config.dit_dtype, attn_impl=model_config.dit_attn_impl
+                dit_state_dict,
+                device=init_device,
+                dtype=model_config.dit_dtype,
+                in_channel=control_type.get_in_channel(),
+                attn_impl=model_config.dit_attn_impl,
             )
             if load_text_encoder:
                 text_encoder_1 = FluxTextEncoder1.from_state_dict(
@@ -385,6 +461,7 @@ class FluxImagePipeline(BasePipeline):
             vae_decoder=vae_decoder,
             vae_encoder=vae_encoder,
             load_text_encoder=load_text_encoder,
+            control_type=control_type,
             device=device,
             dtype=dtype,
         )
@@ -534,6 +611,21 @@ class FluxImagePipeline(BasePipeline):
         current_step: int,
         total_step: int,
     ):
+        if self.control_type != ControlType.normal:
+            controlnet_param = controlnet_params[0]
+            h, w = latents.shape[-2:]
+            if (
+                controlnet_param.control_type == ControlType.bfl_canny
+                or controlnet_param.control_type == ControlType.bfl_depth
+                or controlnet_param.control_type == ControlType.bfl_fill
+            ):
+                image_cond = controlnet_param.image[0]
+                latents = torch.cat((latents, image_cond * controlnet_param.scale), dim=1)
+                latents = latents.to(self.dtype)
+            else:
+                raise ValueError(f"Unsupported controlnet type: {controlnet_param.control_type}")
+            controlnet_params = []
+
         double_block_output, single_block_output = self.predict_multicontrolnet(
             latents=latents,
             timestep=timestep,
@@ -546,6 +638,7 @@ class FluxImagePipeline(BasePipeline):
             current_step=current_step,
             total_step=total_step,
         )
+
         noise_pred = self.dit(
             hidden_states=latents,
             timestep=timestep,
@@ -612,6 +705,34 @@ class FluxImagePipeline(BasePipeline):
 
     def prepare_controlnet_params(self, controlnet_params: List[ControlNetParams], h, w):
         results = []
+        if self.control_type != ControlType.normal:
+            param = controlnet_params[0]
+            condition_list = []
+            if param.control_type == ControlType.bfl_canny or param.control_type == ControlType.bfl_depth:
+                control_image = param.image[0]
+                control_image = control_image.to(self.device).to(self.dtype)
+                condition = self.encode_image(control_image)
+                condition_list.append(condition)
+            elif param.control_type == ControlType.bfl_fill:
+                img_cond = self.preprocess_image(param.image[0]).to(device=self.device, dtype=self.dtype)
+                mask = self.preprocess_mask(param.mask[0]).to(device=self.device, dtype=self.dtype)
+                img_cond = img_cond * (1 - mask)
+                img_cond = self.encode_image(img_cond)
+                mask = rearrange(mask, "b 1 (h ph) (w pw) -> b (ph pw) h w", ph=8, pw=8)
+                img_cond = torch.cat((img_cond, mask), dim=1)
+                condition_list.append(img_cond)
+            else:
+                raise ValueError(f"Unsupported controlnet type: {param.control_type}")
+            results.append(
+                ControlNetParams(
+                    model=None,
+                    control_type=param.control_type,
+                    scale=param.scale,
+                    image=condition_list,
+                )
+            )
+            controlnet_params = []
+
         for param in controlnet_params:
             condition = self.prepare_masked_latent(param.image, param.mask, h, w)
             results.append(
@@ -696,6 +817,11 @@ class FluxImagePipeline(BasePipeline):
         controlnet_params: List[ControlNetParams] | ControlNetParams = [],
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
+        if self.control_type != ControlType.normal:
+            assert controlnet_params and len(controlnet_params) == 1, "bfl_controlnet must have one controlnet"
+            assert controlnet_params[0].control_type == self.control_type, (
+                "bfl_controlnet pipeline control type must same with param control type"
+            )
         if input_image is not None:
             width, height = input_image.size
         if not isinstance(controlnet_params, list):
