@@ -25,6 +25,7 @@ from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TO
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.download import fetch_model
+from diffsynth_engine.utils.platform import empty_cache
 
 logger = logging.get_logger(__name__)
 
@@ -546,6 +547,7 @@ class FluxImagePipeline(BasePipeline):
             current_step=current_step,
             total_step=total_step,
         )
+        self.load_models_to_device(["dit"])
         noise_pred = self.dit(
             hidden_states=latents,
             timestep=timestep,
@@ -570,6 +572,7 @@ class FluxImagePipeline(BasePipeline):
     ):
         # Prepare scheduler
         if input_image is not None:
+            self.load_models_to_device(["vae_encoder"])
             total_steps = num_inference_steps
             sigmas, timesteps = self.noise_scheduler.schedule(
                 total_steps, mu=mu, sigma_min=1 / total_steps, sigma_max=1.0
@@ -577,8 +580,6 @@ class FluxImagePipeline(BasePipeline):
             t_start = max(total_steps - int(num_inference_steps * denoising_strength), 1)
             sigma_start, sigmas = sigmas[t_start - 1], sigmas[t_start - 1 :]
             timesteps = timesteps[t_start - 1 :]
-
-            self.load_models_to_device(["vae_encoder"])
             noise = latents
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
             latents = self.encode_image(image)
@@ -593,6 +594,7 @@ class FluxImagePipeline(BasePipeline):
         return init_latents, latents, sigmas, timesteps
 
     def prepare_masked_latent(self, image: Image.Image, mask: Image.Image | None, height: int, width: int):
+        self.load_models_to_device(["vae_encoder"])
         if mask is None:
             image = image.resize((width, height))
             image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
@@ -637,6 +639,8 @@ class FluxImagePipeline(BasePipeline):
         total_step: int,
     ):
         double_block_output_results, single_block_output_results = None, None
+        if len(controlnet_params) > 0:
+            self.load_models_to_device([])
         for param in controlnet_params:
             current_scale = param.scale
             if not (
@@ -645,6 +649,9 @@ class FluxImagePipeline(BasePipeline):
                 # if current_step is not in the control range
                 # skip thie controlnet
                 continue
+            if self.offload_mode == "sequential_cpu_offload" or self.offload_mode == "cpu_offload":
+                empty_cache()
+                param.model.to(self.device)
             double_block_output, single_block_output = param.model(
                 latents,
                 param.image,
@@ -656,6 +663,9 @@ class FluxImagePipeline(BasePipeline):
                 image_ids,
                 text_ids,
             )
+            if self.offload_mode == "sequential_cpu_offload" or self.offload_mode == "cpu_offload":
+                empty_cache()
+                param.model.to("cpu")
             double_block_output_results = accumulate(double_block_output_results, double_block_output)
             single_block_output_results = accumulate(single_block_output_results, single_block_output)
         return double_block_output_results, single_block_output_results
@@ -741,7 +751,7 @@ class FluxImagePipeline(BasePipeline):
         )
 
         # Denoise
-        self.load_models_to_device(["dit"])
+        self.load_models_to_device([])
         for i, timestep in enumerate(tqdm(timesteps)):
             timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
             noise_pred = self.predict_noise_with_cfg(

@@ -8,6 +8,7 @@ from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.platform import empty_cache
 
 logger = logging.get_logger(__name__)
 
@@ -144,6 +145,7 @@ class BasePipeline:
         return noise
 
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:
+        image = image.to(self.device, self.vae_encoder.dtype)
         latents = self.vae_encoder(
             image, tiled=self.vae_tiled, tile_size=self.vae_tile_size, tile_stride=self.vae_tile_stride
         )
@@ -151,8 +153,9 @@ class BasePipeline:
 
     def decode_image(self, latent: torch.Tensor) -> torch.Tensor:
         vae_dtype = self.vae_decoder.conv_in.weight.dtype
+        latent = latent.to(self.device, vae_dtype)
         image = self.vae_decoder(
-            latent.to(vae_dtype), tiled=self.vae_tiled, tile_size=self.vae_tile_size, tile_stride=self.vae_tile_stride
+            latent, tiled=self.vae_tiled, tile_size=self.vae_tile_size, tile_stride=self.vae_tile_stride
         )
         return image
 
@@ -233,7 +236,7 @@ class BasePipeline:
             return
         if self.offload_mode == "sequential_cpu_offload":
             # fresh the cuda cache
-            torch.cuda.empty_cache()
+            empty_cache()
             return
 
         # offload unnecessary models to cpu
@@ -248,4 +251,4 @@ class BasePipeline:
             if model is not None and (p := next(model.parameters(), None)) is not None and p.device != self.device:
                 model.to(self.device)
         # fresh the cuda cache
-        torch.cuda.empty_cache()
+        empty_cache()
