@@ -20,7 +20,7 @@ class FluxReplaceByControlTool:
         offload_mode: Optional[str] = None,
     ):
         self.pipe: FluxImagePipeline = FluxImagePipeline.from_pretrained(
-            flux_model_path, load_text_encoder=load_text_encoder, device=device, offload_mode=offload_mode
+            flux_model_path, load_text_encoder=load_text_encoder, device=device, offload_mode=offload_mode, dtype=dtype
         )
         self.pipe.load_loras(lora_list)
         redux_model_path = fetch_model("muse/flux1-redux-dev", path="flux1-redux-dev.safetensors", revision="v1")

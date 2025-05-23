@@ -13,7 +13,9 @@ class FluxInpaintingTool:
         dtype: torch.dtype = torch.bfloat16,
         offload_mode: Optional[str] = None,
     ):
-        self.pipe = FluxImagePipeline.from_pretrained(flux_model_path, device=device, offload_mode=offload_mode)
+        self.pipe = FluxImagePipeline.from_pretrained(
+            flux_model_path, device=device, offload_mode=offload_mode, dtype=dtype
+        )
         self.pipe.load_loras(lora_list)
         self.controlnet = FluxControlNet.from_pretrained(
             fetch_model(
