@@ -266,7 +266,6 @@ class ControlNetParams:
     image: ImageType
     model: Optional[nn.Module] = None
     mask: Optional[ImageType] = None
-    control_type: ControlType = ControlType.normal
     control_start: float = 0
     control_end: float = 1
 
@@ -562,15 +561,8 @@ class FluxImagePipeline(BasePipeline):
     ):
         if self.control_type != ControlType.normal:
             controlnet_param = controlnet_params[0]
-            h, w = latents.shape[-2:]
-            if (
-                controlnet_param.control_type == ControlType.bfl_control
-                or controlnet_param.control_type == ControlType.bfl_fill
-            ):
-                latents = torch.cat((latents, controlnet_param.image * controlnet_param.scale), dim=1)
-                latents = latents.to(self.dtype)
-            else:
-                raise ValueError(f"Unsupported controlnet type: {controlnet_param.control_type}")
+            latents = torch.cat((latents, controlnet_param.image * controlnet_param.scale), dim=1)
+            latents = latents.to(self.dtype)
             controlnet_params = []
 
         double_block_output, single_block_output = self.predict_multicontrolnet(
@@ -650,12 +642,14 @@ class FluxImagePipeline(BasePipeline):
                 mask = 1 - mask
                 latent = torch.cat([latent, mask], dim=1)
             elif self.control_type == ControlType.bfl_fill:
-                img_cond = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
+                image = image.resize((width, height))
+                mask = mask.resize((width, height))
+                image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
                 mask = self.preprocess_mask(mask).to(device=self.device, dtype=self.dtype)
-                img_cond = img_cond * (1 - mask)
-                img_cond = self.encode_image(img_cond)
+                image = image * (1 - mask)
+                image = self.encode_image(image)
                 mask = rearrange(mask, "b 1 (h ph) (w pw) -> b (ph pw) h w", ph=8, pw=8)
-                latent = torch.cat((img_cond, mask), dim=1)
+                latent = torch.cat((image, mask), dim=1)
             else:
                 raise ValueError(f"Unsupported mask latent prepare for controlnet type: {self.control_type}")
         return latent
@@ -669,7 +663,6 @@ class FluxImagePipeline(BasePipeline):
                     model=param.model,
                     scale=param.scale,
                     image=condition,
-                    control_type=param.control_type,
                 )
             )
         return results
@@ -749,9 +742,7 @@ class FluxImagePipeline(BasePipeline):
     ):
         if self.control_type != ControlType.normal:
             assert controlnet_params and len(controlnet_params) == 1, "bfl_controlnet must have one controlnet"
-            assert controlnet_params[0].control_type == self.control_type, (
-                "bfl_controlnet pipeline control type must same with param control type"
-            )
+
         if input_image is not None:
             width, height = input_image.size
         if not isinstance(controlnet_params, list):

@@ -7,7 +7,6 @@ from diffsynth_engine.processor.canny_processor import CannyProcessor
 from diffsynth_engine.processor.depth_processor import DepthProcessor
 
 from diffsynth_engine import fetch_model
-from PIL import Image
 
 
 class TestFLUXBFLCannyImage(ImageTestCase):
@@ -17,7 +16,6 @@ class TestFLUXBFLCannyImage(ImageTestCase):
         cls.canny_model_path = fetch_model(
             "AI-ModelScope/FLUX.1-Canny-dev", revision="master", path="flux1-canny-dev.safetensors"
         )
-
         cls.pipe = FluxImagePipeline.from_pretrained(cls.canny_model_path, control_type=ControlType.bfl_control).eval()
 
     @classmethod
@@ -27,10 +25,9 @@ class TestFLUXBFLCannyImage(ImageTestCase):
 
     def test_canny_txt2img(self) -> None:
         width, height = 1024, 1024
-        image = self.get_input_image("test_image.png").resize((width, height), Image.LANCZOS)
+        image = self.get_input_image("test_image.png")
         control_image = self.canny_processor(image)
         controlnet_params = ControlNetParams(
-            control_type=ControlType.bfl_control,
             scale=1.0,
             image=control_image,
         )
@@ -53,7 +50,6 @@ class TestFLUXBFLDepthImage(ImageTestCase):
         cls.depth_model_path = fetch_model(
             "AI-ModelScope/FLUX.1-Depth-dev", revision="master", path="flux1-depth-dev.safetensors"
         )
-
         cls.pipe = FluxImagePipeline.from_pretrained(cls.depth_model_path, control_type=ControlType.bfl_control).eval()
 
     @classmethod
@@ -63,10 +59,9 @@ class TestFLUXBFLDepthImage(ImageTestCase):
 
     def test_depth_txt2img(self):
         width, height = 1024, 1024
-        image = self.get_input_image("robot.png").resize((width, height), Image.LANCZOS)
+        image = self.get_input_image("robot.png")
         control_image = self.depth_processor(image)
         controlnet_params = ControlNetParams(
-            control_type=ControlType.bfl_control,
             scale=1.0,
             image=control_image,
         )
@@ -97,10 +92,9 @@ class TestFLUXBFLFillImage(ImageTestCase):
 
     def test_fill_txt2img(self):
         width, height = 1232, 1632
-        image = self.get_input_image("cup.png").resize((width, height), Image.LANCZOS)
-        mask = self.get_input_image("cup_mask.png").resize((width, height), Image.LANCZOS)
+        image = self.get_input_image("cup.png")
+        mask = self.get_input_image("cup_mask.png")
         controlnet_params = ControlNetParams(
-            control_type=ControlType.bfl_fill,
             scale=1.0,
             image=image,
             mask=mask,

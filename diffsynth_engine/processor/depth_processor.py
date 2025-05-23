@@ -1,9 +1,8 @@
-import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from torchvision.transforms.functional import to_pil_image
+from torchvision.transforms.functional import to_tensor, normalize, resize, to_pil_image
 
 
 from diffsynth_engine.utils.download import fetch_model
@@ -22,15 +21,11 @@ class DepthProcessor:
         self.model = OnnxModel(model_path, device=self.device)
 
     def _image_preprocess(self, image: Image.Image) -> np.ndarray:
-        image = image.resize((518, 518))
-        image = np.array(image.convert("RGB"), dtype=np.uint8)
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        image = image / 255.0
-        image = (image - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
-        image = np.transpose(image, (2, 0, 1))  # h w c -> c h w
-        image = np.ascontiguousarray(image).astype(np.float32)
-        image = image[None]  # c h w -> b c h w
-        return image
+        image = resize(image, (518, 518))
+        image = to_tensor(image)
+        image = normalize(image, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        image = image.unsqueeze(0).contiguous()
+        return image.numpy()
 
     def __call__(self, img: Image.Image) -> Image.Image:
         image = img
