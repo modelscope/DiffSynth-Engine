@@ -13,11 +13,11 @@ from diffsynth_engine.models.basic.transformer_helper import (
 )
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
+from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
-from diffsynth_engine.models.basic.attention import attention
 from diffsynth_engine.utils.parallel import sequence_parallel, sequence_parallel_unshard
 from diffsynth_engine.utils import logging
 
@@ -199,7 +199,7 @@ class FluxDoubleAttention(nn.Module):
         k = torch.cat([self.norm_k_b(k_b), self.norm_k_a(k_a)], dim=1)
         v = torch.cat([v_b, v_a], dim=1)
         q, k = apply_rope(q, k, rope_emb)
-        attn_out = attention(q, k, v, attn_impl=self.attn_impl)
+        attn_out = attention_ops.attention(q, k, v, attn_impl=self.attn_impl)
         attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
         text_out, image_out = attn_out[:, : text.shape[1]], attn_out[:, text.shape[1] :]
         image_out, text_out = self.attention_callback(
@@ -287,7 +287,7 @@ class FluxSingleAttention(nn.Module):
     def forward(self, x, rope_emb, image_emb):
         q, k, v = rearrange(self.to_qkv(x), "b s (h d) -> b s h d", h=(3 * self.num_heads)).chunk(3, dim=2)
         q, k = apply_rope(self.norm_q_a(q), self.norm_k_a(k), rope_emb)
-        attn_out = attention(q, k, v, attn_impl=self.attn_impl)
+        attn_out = attention_ops.attention(q, k, v, attn_impl=self.attn_impl)
         attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
         return self.attention_callback(attn_out=attn_out, x=x, q=q, k=k, v=v, rope_emb=rope_emb, image_emb=image_emb)
 
@@ -394,7 +394,7 @@ class FluxDiT(PreTrainedModel):
         controlnet_single_block_output=None,
         **kwargs,
     ):
-        height, width = hidden_states.shape[-2:]
+        h, w = hidden_states.shape[-2:]
         controlnet_double_block_output = (
             controlnet_double_block_output if controlnet_double_block_output is not None else ()
         )
@@ -459,9 +459,9 @@ class FluxDiT(PreTrainedModel):
                 hidden_states = hidden_states[:, prompt_emb.shape[1] :]
                 hidden_states = self.final_norm_out(hidden_states, conditioning)
                 hidden_states = self.final_proj_out(hidden_states)
-                (hidden_states,) = sequence_parallel_unshard((hidden_states,), seq_dims=(1,))
+                (hidden_states,) = sequence_parallel_unshard((hidden_states,), seq_dims=(1,), seq_lens=(h * w // 4,))
 
-            hidden_states = self.unpatchify(hidden_states, height, width)
+            hidden_states = self.unpatchify(hidden_states, h, w)
             return hidden_states
 
     @classmethod

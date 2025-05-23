@@ -6,7 +6,7 @@ from typing import Tuple, Optional
 from einops import rearrange
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
-from diffsynth_engine.models.basic.attention import attention
+from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import (
@@ -85,7 +85,7 @@ class SelfAttention(nn.Module):
         q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
-        x = attention(
+        x = attention_ops.attention(
             q=rope_apply(q, freqs),
             k=rope_apply(k, freqs),
             v=v,
@@ -135,12 +135,12 @@ class CrossAttention(nn.Module):
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
 
-        x = attention(q, k, v, attn_impl=self.attn_impl).flatten(2)
+        x = attention_ops.attention(q, k, v, attn_impl=self.attn_impl).flatten(2)
         if self.has_image_input:
             k_img, v_img = self.norm_k_img(self.k_img(img)), self.v_img(img)
             k_img = rearrange(k_img, "b s (n d) -> b s n d", n=num_heads)
             v_img = rearrange(v_img, "b s (n d) -> b s n d", n=num_heads)
-            y = attention(q, k_img, v_img, attn_impl=self.attn_impl).flatten(2)
+            y = attention_ops.attention(q, k_img, v_img, attn_impl=self.attn_impl).flatten(2)
             x = x + y
         return self.o(x)
 
@@ -357,7 +357,7 @@ class WanDiT(PreTrainedModel):
                 for block in self.blocks:
                     x = block(x, context, t_mod, freqs)
                 x = self.head(x, t)
-                (x,) = sequence_parallel_unshard(x, seq_dims=(1,))
+                (x,) = sequence_parallel_unshard(x, seq_dims=(1,), seq_lens=(f * h * w,))
             x = self.unpatchify(x, (f, h, w))
             return x
 
