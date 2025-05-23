@@ -357,7 +357,7 @@ class WanDiT(PreTrainedModel):
                 for block in self.blocks:
                     x = block(x, context, t_mod, freqs)
                 x = self.head(x, t)
-                (x,) = sequence_parallel_unshard(x, seq_dims=(1,), seq_lens=(f * h * w,))
+                (x,) = sequence_parallel_unshard((x,), seq_dims=(1,), seq_lens=(f * h * w,))
             x = self.unpatchify(x, (f, h, w))
             return x
 
