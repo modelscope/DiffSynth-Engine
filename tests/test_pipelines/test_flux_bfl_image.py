@@ -21,7 +21,6 @@ class TestFLUXBFLCannyImage(ImageTestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         del cls.pipe
-        return super().tearDownClass()
 
     def test_canny_txt2img(self) -> None:
         width, height = 1024, 1024
@@ -55,7 +54,6 @@ class TestFLUXBFLDepthImage(ImageTestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         del cls.pipe
-        return super().tearDownClass()
 
     def test_depth_txt2img(self):
         width, height = 1024, 1024
@@ -88,7 +86,6 @@ class TestFLUXBFLFillImage(ImageTestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         del cls.pipe
-        return super().tearDownClass()
 
     def test_fill_txt2img(self):
         width, height = 1232, 1632
