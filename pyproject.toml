@@ -29,7 +29,8 @@ dependencies = [
     "torchsde",
     "pillow",
     "imageio[ffmpeg]",
-    "yunchang ; sys_platform == 'linux'"
+    "yunchang ; sys_platform == 'linux'",
+    "onnxruntime"
 ]
 
 [project.optional-dependencies]
