@@ -159,7 +159,7 @@ class WanVideoPipeline(BasePipeline):
         self.vae = vae
         self.image_encoder = image_encoder
         self.batch_cfg = batch_cfg
-        self.model_names = ["text_encoder", "dit", "vae"]
+        self.model_names = ["text_encoder", "dit", "vae", "image_encoder"]
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.config.tp_degree is None, (

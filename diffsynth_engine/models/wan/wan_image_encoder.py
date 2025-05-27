@@ -349,30 +349,6 @@ class XLMRobertaCLIP(nn.Module):
             embedding_dropout=embedding_dropout,
             norm_eps=norm_eps,
         )
-        self.textual = None
-        self.log_scale = nn.Parameter(math.log(1 / 0.07) * torch.ones([]))
-
-    def forward(self, imgs, txt_ids):
-        """
-        imgs:       [B, 3, H, W] of torch.float32.
-        - mean:     [0.48145466, 0.4578275, 0.40821073]
-        - std:      [0.26862954, 0.26130258, 0.27577711]
-        txt_ids:    [B, L] of torch.long.
-                    Encoded by data.CLIPTokenizer.
-        """
-        xi = self.visual(imgs)
-        xt = self.textual(txt_ids)
-        return xi, xt
-
-    def param_groups(self):
-        groups = [
-            {
-                "params": [p for n, p in self.named_parameters() if "norm" in n or n.endswith("bias")],
-                "weight_decay": 0.0,
-            },
-            {"params": [p for n, p in self.named_parameters() if not ("norm" in n or n.endswith("bias"))]},
-        ]
-        return groups
 
 
 def _clip(
