@@ -420,7 +420,7 @@ class WanImageEncoderStateDictConverter(StateDictConverter):
     def _from_civitai(self, state_dict):
         state_dict_ = {}
         for name, param in state_dict.items():
-            if name.startswith("textual."):
+            if name.startswith(("textual.", "log_scale")):
                 continue
             name = "model." + name
             state_dict_[name] = param
