@@ -164,8 +164,6 @@ class SDXLImagePipeline(BasePipeline):
         offload_mode: str | None = None,
         batch_cfg: bool = True,
     ) -> "SDXLImagePipeline":
-        cls.validate_offload_mode(offload_mode)
-
         if isinstance(model_path_or_config, str):
             model_config = SDXLModelConfig(
                 unet_path=model_path_or_config, unet_dtype=dtype, clip_l_dtype=dtype, clip_g_dtype=dtype
@@ -225,10 +223,8 @@ class SDXLImagePipeline(BasePipeline):
             device=device,
             dtype=dtype,
         )
-        if offload_mode == "cpu_offload":
-            pipe.enable_cpu_offload()
-        elif offload_mode == "sequential_cpu_offload":
-            pipe.enable_sequential_cpu_offload()
+        if offload_mode is not None:
+            pipe.enable_cpu_offload(offload_mode)
         return pipe
 
     @classmethod

@@ -254,16 +254,19 @@ class BasePipeline:
             "use_fsdp": use_fsdp,
         }
 
-    @staticmethod
-    def validate_offload_mode(offload_mode: str | None):
-        valid_offload_mode = (None, "cpu_offload", "sequential_cpu_offload")
+    def enable_cpu_offload(self, offload_mode: str):
+        valid_offload_mode = ("cpu_offload", "sequential_cpu_offload")
         if offload_mode not in valid_offload_mode:
             raise ValueError(f"offload_mode must be one of {valid_offload_mode}, but got {offload_mode}")
-
-    def enable_cpu_offload(self):
         if self.device == "cpu":
             logger.warning("must set an non cpu device for pipeline before calling enable_cpu_offload")
             return
+        if offload_mode == "cpu_offload":
+            self.enable_model_cpu_offload()
+        elif offload_mode == "sequential_cpu_offload":
+            self.enable_sequential_cpu_offload()
+
+    def enable_model_cpu_offload(self):
         for model_name in self.model_names:
             model = getattr(self, model_name)
             if model is not None:
@@ -271,9 +274,6 @@ class BasePipeline:
         self.offload_mode = "cpu_offload"
 
     def enable_sequential_cpu_offload(self):
-        if self.device == "cpu":
-            logger.warning("must set an non cpu device for pipeline before calling enable_sequential_cpu_offload")
-            return
         for model_name in self.model_names:
             model = getattr(self, model_name)
             if model is not None:

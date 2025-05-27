@@ -417,8 +417,6 @@ class WanVideoPipeline(BasePipeline):
         parallelism: int = 1,
         use_cfg_parallel: bool = False,
     ) -> "WanVideoPipeline":
-        cls.validate_offload_mode(offload_mode)
-
         if isinstance(model_path_or_config, str):
             model_config = WanModelConfig(model_path=model_path_or_config)
         else:
@@ -523,10 +521,8 @@ class WanVideoPipeline(BasePipeline):
             dtype=dtype,
         )
         pipe.eval()
-        if offload_mode == "cpu_offload":
-            pipe.enable_cpu_offload()
-        elif offload_mode == "sequential_cpu_offload":
-            pipe.enable_sequential_cpu_offload()
+        if offload_mode is not None:
+            pipe.enable_cpu_offload(offload_mode)
         return pipe
 
     def __del__(self):

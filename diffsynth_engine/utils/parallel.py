@@ -338,7 +338,6 @@ class ParallelModel(nn.Module):
     ):
         super().__init__()
         self.world_size = cfg_degree * sp_ulysses_degree * sp_ring_degree * tp_degree
-        self.device = device
         self.queue_in = mp.Queue()
         self.queue_out = mp.Queue()
         self.ctx = mp.spawn(

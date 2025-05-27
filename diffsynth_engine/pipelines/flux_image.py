@@ -361,8 +361,6 @@ class FluxImagePipeline(BasePipeline):
         parallelism: int = 1,
         use_cfg_parallel: bool = False,
     ) -> "FluxImagePipeline":
-        cls.validate_offload_mode(offload_mode)
-
         model_config = (
             model_path_or_config
             if isinstance(model_path_or_config, FluxModelConfig)
@@ -460,10 +458,8 @@ class FluxImagePipeline(BasePipeline):
             device=device,
             dtype=dtype,
         )
-        if offload_mode == "cpu_offload":
-            pipe.enable_cpu_offload()
-        elif offload_mode == "sequential_cpu_offload":
-            pipe.enable_sequential_cpu_offload()
+        if offload_mode is not None:
+            pipe.enable_cpu_offload(offload_mode)
         return pipe
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
@@ -751,7 +747,7 @@ class FluxImagePipeline(BasePipeline):
                 # if current_step is not in the control range
                 # skip thie controlnet
                 continue
-            if self.offload_mode == "sequential_cpu_offload" or self.offload_mode == "cpu_offload":
+            if self.offload_mode is not None:
                 empty_cache()
                 param.model.to(self.device)
             double_block_output, single_block_output = param.model(
@@ -765,7 +761,7 @@ class FluxImagePipeline(BasePipeline):
                 image_ids,
                 text_ids,
             )
-            if self.offload_mode == "sequential_cpu_offload" or self.offload_mode == "cpu_offload":
+            if self.offload_mode is not None:
                 empty_cache()
                 param.model.to("cpu")
             double_block_output_results = accumulate(double_block_output_results, double_block_output)
