@@ -15,7 +15,7 @@ requires-python = ">=3.10"
 dependencies = [
     "torch >= 2.6",
     "torchvision",
-    "xformers ; sys_platform == 'linux'",
+    "numpy",
     "safetensors",
     "gguf",
     "einops",
