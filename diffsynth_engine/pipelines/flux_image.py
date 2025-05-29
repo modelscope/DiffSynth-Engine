@@ -801,13 +801,13 @@ class FluxImagePipeline(BasePipeline):
         controlnet_params: List[ControlNetParams] | ControlNetParams = [],
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
+        if not isinstance(controlnet_params, list):
+            controlnet_params = [controlnet_params]
         if self.control_type != ControlType.normal:
             assert controlnet_params and len(controlnet_params) == 1, "bfl_controlnet must have one controlnet"
 
         if input_image is not None:
             width, height = input_image.size
-        if not isinstance(controlnet_params, list):
-            controlnet_params = [controlnet_params]
         self.validate_image_size(height, width, minimum=64, multiple_of=16)
 
         noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device="cpu", dtype=self.dtype).to(
