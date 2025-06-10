@@ -291,14 +291,16 @@ def _worker_loop(
             name, args, kwargs = clone(data)
             del data
 
-            y = None
             if not hasattr(module, name):
                 raise AttributeError(f'{module.__class__.__name__} has no attribute "{name}"')
-            args = split_and_get(to_device(args, device), get_cfg_world_size(), 0, get_cfg_rank())
-            kwargs = split_and_get(to_device(kwargs, device), get_cfg_world_size(), 0, get_cfg_rank())
+            if name != "load_loras":
+                args = split_and_get(to_device(args, device), get_cfg_world_size(), 0, get_cfg_rank())
+                kwargs = split_and_get(to_device(kwargs, device), get_cfg_world_size(), 0, get_cfg_rank())
             with torch.no_grad():
                 y = getattr(module, name)(*args, **kwargs)
-            if get_cfg_world_size() > 1 and get_sp_rank() == 0 and get_tp_rank() == 0:
+
+            is_rank_zero_in_cfg_group = get_cfg_world_size() > 1 and get_sp_rank() == 0 and get_tp_rank() == 0
+            if y is not None and is_rank_zero_in_cfg_group:
                 gathered = torch.zeros((get_cfg_world_size(), *y.shape[1:]), dtype=y.dtype, device=y.device)
                 dist.all_gather_into_tensor(gathered, y, group=get_cfg_group())
                 y = gathered
@@ -383,6 +385,7 @@ class ParallelModel(nn.Module):
             except Exception as e:
                 logger.error(f"ParallelModel {name} error: {e}")
                 raise RuntimeError(f"ParallelModel {name} error: {e}")
+            logger.info(f"ParallelModel {name} done")
             return res
 
         return wrapped_func
