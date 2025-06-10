@@ -442,8 +442,6 @@ class WanVideoPipeline(BasePipeline):
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
         text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=model_config.t5_dtype)
 
-        vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
-
         image_encoder = None
         if model_config.image_encoder_path is not None:
             logger.info(f"loading state dict from {model_config.image_encoder_path} ...")
@@ -480,6 +478,20 @@ class WanVideoPipeline(BasePipeline):
             tp_degree = parallel_config["tp_degree"]
             use_fsdp = parallel_config["use_fsdp"]
             batch_cfg = True if use_cfg_parallel else batch_cfg
+
+            vae = WanVideoVAE.from_state_dict(
+                vae_state_dict, parallelism=parallelism, device="cpu", dtype=model_config.vae_dtype
+            )
+            vae = ParallelModel(
+                vae,
+                cfg_degree=1,
+                sp_ulysses_degree=parallelism,  # not real sequence parallel
+                sp_ring_degree=1,
+                tp_degree=1,
+                master_port=29501,
+                device="cuda",
+            )
+
             with LoRAContext():
                 dit = WanDiT.from_state_dict(
                     dit_state_dict,
@@ -499,6 +511,8 @@ class WanVideoPipeline(BasePipeline):
                     device="cuda",
                 )
         else:
+            vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
+
             with LoRAContext():
                 dit = WanDiT.from_state_dict(
                     dit_state_dict,
@@ -526,4 +540,5 @@ class WanVideoPipeline(BasePipeline):
         return pipe
 
     def __del__(self):
+        del self.vae
         del self.dit

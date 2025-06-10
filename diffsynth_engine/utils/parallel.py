@@ -228,7 +228,6 @@ def parallelize_module(
 
 NCCL_TIMEOUT_SEC = int(os.environ.get("NCCL_TIMEOUT_SEC", 600))
 PARALLEL_FWD_TIMEOUT_SEC = int(os.environ.get("PARALLEL_FWD_TIMEOUT_SEC", 300))
-PARALLEL_LORA_TIMEOUT_SEC = int(os.environ.get("PARALLEL_LORA_TIMEOUT_SEC ", 60))
 
 
 def _worker_loop(
@@ -285,28 +284,24 @@ def _worker_loop(
 
         while True:
             if rank == 0:
-                kwargs = queue_in.get()
-                data = [kwargs]
+                data = queue_in.get()
             else:
-                data = [None]
+                data = [None, None, None]
             dist.broadcast_object_list(data, src=0)
-            kwargs = clone(data[0])
+            name, args, kwargs = clone(data)
             del data
 
             y = None
-            if kwargs.get("method", None) == "load_loras":
-                module.load_loras(lora_args=kwargs["lora_args"], fused=kwargs["fused"])
-            elif kwargs.get("method", None) == "unload_loras":
-                module.unload_loras()
-            else:
-                kwargs = to_device(kwargs, device)
-                kwargs = split_and_get(kwargs, get_cfg_world_size(), 0, get_cfg_rank())
-                with torch.no_grad():
-                    y = module(**kwargs)
-                if get_sp_rank() == 0 and get_tp_rank() == 0:
-                    gathered = torch.zeros((get_cfg_world_size(), *y.shape[1:]), dtype=y.dtype, device=y.device)
-                    dist.all_gather_into_tensor(gathered, y, group=get_cfg_group())
-                    y = gathered
+            if not hasattr(module, name):
+                raise AttributeError(f'{module.__class__.__name__} has no attribute "{name}"')
+            args = split_and_get(to_device(args, device), get_cfg_world_size(), 0, get_cfg_rank())
+            kwargs = split_and_get(to_device(kwargs, device), get_cfg_world_size(), 0, get_cfg_rank())
+            with torch.no_grad():
+                y = getattr(module, name)(*args, **kwargs)
+            if get_cfg_world_size() > 1 and get_sp_rank() == 0 and get_tp_rank() == 0:
+                gathered = torch.zeros((get_cfg_world_size(), *y.shape[1:]), dtype=y.dtype, device=y.device)
+                dist.all_gather_into_tensor(gathered, y, group=get_cfg_group())
+                y = gathered
 
             if rank == 0:
                 queue_out.put(y)
@@ -359,42 +354,9 @@ class ParallelModel(nn.Module):
             join=False,
         )
 
-    def load_loras(self, lora_args: List[Dict[str, any]], fused: bool = True):
-        self.queue_in.put(
-            {
-                "method": "load_loras",
-                "lora_args": lora_args,
-                "fused": fused,
-            }
-        )
-        try:
-            res = self.queue_out.get(timeout=PARALLEL_LORA_TIMEOUT_SEC)
-            if isinstance(res, Exception):
-                raise res
-        except Empty:
-            logger.error("ParallelModel load LoRA timeout")
-            raise RuntimeError("ParallelModel load LoRA timeout")
-        except Exception as e:
-            logger.error(f"ParallelModel load LoRA error: {e}")
-            raise RuntimeError(f"ParallelModel load LoRA error: {e}")
-        logger.info("ParallelModel load LoRA done")
-
-    def unload_loras(self):
-        self.queue_in.put({"method": "unload_loras"})
-        try:
-            res = self.queue_out.get(timeout=PARALLEL_LORA_TIMEOUT_SEC)
-            if isinstance(res, Exception):
-                raise res
-        except Empty:
-            logger.error("ParallelModel unload LoRA timeout")
-            raise RuntimeError("ParallelModel unload LoRA timeout")
-        except Exception as e:
-            logger.error(f"ParallelModel unload LoRA error: {e}")
-            raise RuntimeError(f"ParallelModel unload LoRA error: {e}")
-        logger.info("ParallelModel unload LoRA done")
-
-    def forward(self, **kwargs):
-        self.queue_in.put(kwargs)
+    def forward(self, *args, **kwargs):
+        data = ["forward", args, kwargs]
+        self.queue_in.put(data)
         try:
             res = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
             if isinstance(res, Exception):
@@ -406,6 +368,24 @@ class ParallelModel(nn.Module):
             logger.error(f"ParallelModel forward error: {e}")
             raise RuntimeError(f"ParallelModel forward error: {e}")
         return res
+
+    def __getattr__(self, name):
+        def wrapped_func(*args, **kwargs):
+            data = [name, args, kwargs]
+            self.queue_in.put(data)
+            try:
+                res = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
+                if isinstance(res, Exception):
+                    raise res
+            except Empty:
+                logger.error(f"ParallelModel {name} timeout")
+                raise RuntimeError(f"ParallelModel {name} timeout")
+            except Exception as e:
+                logger.error(f"ParallelModel {name} error: {e}")
+                raise RuntimeError(f"ParallelModel {name} error: {e}")
+            return res
+
+        return wrapped_func
 
     def __del__(self):
         # Send terminate signal to all workers

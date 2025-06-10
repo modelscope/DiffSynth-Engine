@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
 from einops import rearrange, repeat
 from tqdm import tqdm
 
@@ -514,7 +515,7 @@ class WanVideoVAEStateDictConverter(StateDictConverter):
 class WanVideoVAE(PreTrainedModel):
     converter = WanVideoVAEStateDictConverter()
 
-    def __init__(self, z_dim=16, device: str = "cuda:0", dtype: torch.dtype = torch.float32):
+    def __init__(self, z_dim=16, parallelism: int = 1, device: str = "cuda:0", dtype: torch.dtype = torch.float32):
         super().__init__()
 
         mean = [
@@ -560,11 +561,12 @@ class WanVideoVAE(PreTrainedModel):
         # init model
         self.model = VideoVAE(z_dim=z_dim).eval().requires_grad_(False)
         self.upsampling_factor = 8
+        self.parallelism = parallelism
 
     @classmethod
-    def from_state_dict(cls, state_dict, device="cuda:0", dtype=torch.float32) -> "WanVideoVAE":
+    def from_state_dict(cls, state_dict, parallelism=1, device="cuda:0", dtype=torch.float32) -> "WanVideoVAE":
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
+            model = torch.nn.utils.skip_init(cls, parallelism=parallelism, device=device, dtype=dtype)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
@@ -605,7 +607,7 @@ class WanVideoVAE(PreTrainedModel):
                 h_, w_ = h + size_h, w + size_w
                 tasks.append((h, h_, w, w_))
 
-        data_device = "cpu"
+        data_device = device if self.parallelism > 1 else "cpu"
         computation_device = device
 
         out_T = T * 4 - 3
@@ -620,7 +622,10 @@ class WanVideoVAE(PreTrainedModel):
             device=data_device,
         )
 
-        for i, (h, h_, w, w_) in enumerate(tqdm(tasks, desc="VAE DECODING")):
+        hide_progress_bar = self.parallelism > 1 and dist.get_rank() != 0
+        for i, (h, h_, w, w_) in enumerate(tqdm(tasks, desc="VAE DECODING", disable=hide_progress_bar)):
+            if self.parallelism > 1 and (i % dist.get_world_size() != dist.get_rank()):
+                continue
             hidden_states_batch = hidden_states[:, :, :, h:h_, w:w_].to(computation_device)
             hidden_states_batch = self.model.decode(hidden_states_batch, self.scale).to(data_device)
 
@@ -649,8 +654,11 @@ class WanVideoVAE(PreTrainedModel):
                 target_h : target_h + hidden_states_batch.shape[3],
                 target_w : target_w + hidden_states_batch.shape[4],
             ] += mask
-            if progress_callback is not None:
+            if progress_callback is not None and not hide_progress_bar:
                 progress_callback(i + 1, len(tasks), "VAE DECODING")
+        if self.parallelism > 1:
+            dist.all_reduce(values)
+            dist.all_reduce(weight)
         values = values / weight
         values = values.float().clamp_(-1, 1)
         return values
@@ -671,7 +679,7 @@ class WanVideoVAE(PreTrainedModel):
                 h_, w_ = h + size_h, w + size_w
                 tasks.append((h, h_, w, w_))
 
-        data_device = "cpu"
+        data_device = device if self.parallelism > 1 else "cpu"
         computation_device = device
 
         out_T = (T + 3) // 4
@@ -686,7 +694,10 @@ class WanVideoVAE(PreTrainedModel):
             device=data_device,
         )
 
-        for i, (h, h_, w, w_) in enumerate(tqdm(tasks, desc="VAE ENCODING")):
+        hide_progress_bar = self.parallelism > 1 and dist.get_rank() != 0
+        for i, (h, h_, w, w_) in enumerate(tqdm(tasks, desc="VAE ENCODING", disable=hide_progress_bar)):
+            if self.parallelism > 1 and (i % dist.get_world_size() != dist.get_rank()):
+                continue
             hidden_states_batch = video[:, :, :, h:h_, w:w_].to(computation_device)
             hidden_states_batch = self.model.encode(hidden_states_batch, self.scale).to(data_device)
 
@@ -715,8 +726,11 @@ class WanVideoVAE(PreTrainedModel):
                 target_h : target_h + hidden_states_batch.shape[3],
                 target_w : target_w + hidden_states_batch.shape[4],
             ] += mask
-            if progress_callback is not None:
+            if progress_callback is not None and not hide_progress_bar:
                 progress_callback(i + 1, len(tasks), "VAE ENCODING")
+        if self.parallelism > 1:
+            dist.all_reduce(values)
+            dist.all_reduce(weight)
         values = values / weight
         values = values.float()
         return values
