@@ -1,3 +1,4 @@
+import torch.multiprocessing as mp
 import unittest
 
 from tests.common.test_case import VideoTestCase
@@ -8,12 +9,17 @@ from diffsynth_engine.utils.download import fetch_model
 class TestWanVideoTP(VideoTestCase):
     @classmethod
     def setUpClass(cls):
+        mp.set_start_method("spawn")
         config = WanModelConfig(
             model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
             t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
             vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
         )
         cls.pipe = WanVideoPipeline.from_pretrained(config, parallelism=4, use_cfg_parallel=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        del cls.pipe
 
     def test_txt2video(self):
         video = self.pipe(
@@ -23,8 +29,7 @@ class TestWanVideoTP(VideoTestCase):
             width=480,
             height=480,
         )
-        self.save_video(video, "wan_tp_t2v.mp4")
-        del self.pipe
+        self.save_video(video, "wan_t2v.mp4")
 
 
 if __name__ == "__main__":
