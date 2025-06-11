@@ -656,6 +656,8 @@ class WanVideoVAE(PreTrainedModel):
             ] += mask
             if progress_callback is not None and not hide_progress_bar:
                 progress_callback(i + 1, len(tasks), "VAE DECODING")
+        if progress_callback is not None and not hide_progress_bar:
+            progress_callback(len(tasks), len(tasks), "VAE DECODING")
         if self.parallelism > 1:
             dist.all_reduce(values)
             dist.all_reduce(weight)
@@ -728,6 +730,8 @@ class WanVideoVAE(PreTrainedModel):
             ] += mask
             if progress_callback is not None and not hide_progress_bar:
                 progress_callback(i + 1, len(tasks), "VAE ENCODING")
+        if progress_callback is not None and not hide_progress_bar:
+            progress_callback(len(tasks), len(tasks), "VAE ENCODING")
         if self.parallelism > 1:
             dist.all_reduce(values)
             dist.all_reduce(weight)
