@@ -1,12 +1,16 @@
 import logging
 from typing import Optional
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-
 
 def get_logger(name: Optional[str] = None) -> logging.Logger:
-    return logging.getLogger(name)
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    handler.setFormatter(formatter)
+    logger = logging.getLogger(name)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger

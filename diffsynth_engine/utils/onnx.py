@@ -1,7 +1,7 @@
 import onnxruntime
-import logging
+import diffsynth_engine.utils.logging as logging
 
-logger = logging.getLogger(__name__)
+logger = logging.get_logger(__name__)
 
 
 def to_numpy(tensor):
