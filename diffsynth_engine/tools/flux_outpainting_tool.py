@@ -1,5 +1,5 @@
 from diffsynth_engine import fetch_model, FluxControlNet, ControlNetParams, FluxImagePipeline
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Callable
 from PIL import Image
 import torch
 
@@ -34,6 +34,7 @@ class FluxOutpaintingTool:
         inpainting_scale: float = 0.9,
         seed: int = 42,
         num_inference_steps: int = 20,
+        progress_callback: Optional[Callable] = None,
     ):
         assert scaling_factor >= 1.0, "scale must be >= 1.0"
         width, height = image.width, image.height
@@ -57,4 +58,5 @@ class FluxOutpaintingTool:
                 mask=mask,
                 scale=inpainting_scale,
             ),
+            progress_callback=progress_callback,
         )

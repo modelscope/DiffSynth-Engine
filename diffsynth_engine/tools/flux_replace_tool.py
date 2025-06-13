@@ -1,5 +1,5 @@
 from diffsynth_engine import ControlNetParams, FluxControlNet, FluxImagePipeline, FluxRedux, fetch_model
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Callable
 from PIL import Image
 import torch
 
@@ -45,6 +45,7 @@ class FluxReplaceByControlTool:
         ref_scale: float = 1.0,
         seed: int = 42,
         num_inference_steps: int = 20,
+        progress_callback: Optional[Callable] = None,
     ):
         assert image.size == mask.size
         self.pipe.redux.set_scale(ref_scale)
@@ -68,5 +69,6 @@ class FluxReplaceByControlTool:
                 mask=mask,
                 scale=inpainting_scale,
             ),
+            progress_callback=progress_callback,
         )
         return result.resize((width, height))
