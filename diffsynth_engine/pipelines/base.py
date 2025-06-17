@@ -258,7 +258,7 @@ class BasePipeline:
         valid_offload_mode = ("cpu_offload", "sequential_cpu_offload")
         if offload_mode not in valid_offload_mode:
             raise ValueError(f"offload_mode must be one of {valid_offload_mode}, but got {offload_mode}")
-        if self.device == "cpu":
+        if self.device == "cpu" or self.device == "mps":
             logger.warning("must set an non cpu device for pipeline before calling enable_cpu_offload")
             return
         if offload_mode == "cpu_offload":
@@ -274,6 +274,9 @@ class BasePipeline:
         self.offload_mode = "cpu_offload"
 
     def enable_sequential_cpu_offload(self):
+        if self.device == "cpu" or self.device == "mps":
+            logger.warning("must set an non cpu device for pipeline before calling enable_sequential_cpu_offload")
+            return
         for model_name in self.model_names:
             model = getattr(self, model_name)
             if model is not None:
