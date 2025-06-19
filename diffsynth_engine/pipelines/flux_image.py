@@ -676,7 +676,8 @@ class FluxImagePipeline(BasePipeline):
                 num_inference_steps, mu=mu, sigma_min=1 / num_inference_steps, sigma_max=1.0
             )
             init_latents = latents.clone()
-        sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
+        sigmas, timesteps = sigmas.to(device=self.device, dtype=self.dtype), timesteps.to(device=self.device, dtype=self.dtype)
+        init_latents, latents = init_latents.to(device=self.device, dtype=self.dtype), latents.to(device=self.device, dtype=self.dtype)
         return init_latents, latents, sigmas, timesteps
 
     def prepare_masked_latent(self, image: Image.Image, mask: Image.Image | None, height: int, width: int):
