@@ -151,11 +151,11 @@ class BasePipeline:
         noise = torch.randn(shape, generator=generator, device=device, dtype=dtype)
         return noise
 
-    def encode_image(self, image: torch.Tensor) -> torch.Tensor:
+    def encode_image(
+        self, image: torch.Tensor, tiled: bool = False, tile_size: int = 64, tile_stride: int = 32
+    ) -> torch.Tensor:
         image = image.to(self.device, self.vae_encoder.dtype)
-        latents = self.vae_encoder(
-            image, tiled=self.vae_tiled, tile_size=self.vae_tile_size, tile_stride=self.vae_tile_stride
-        )
+        latents = self.vae_encoder(image, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         return latents
 
     def decode_image(self, latent: torch.Tensor) -> torch.Tensor:
@@ -187,7 +187,7 @@ class BasePipeline:
             self.load_models_to_device(["vae_encoder"])
             noise = latents
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
-            latents = self.encode_image(image, tiled, tile_size, tile_stride)
+            latents = self.encode_image(image, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
             init_latents = latents.clone()
             latents = self.sampler.add_noise(latents, noise, sigma_start)
         else:
