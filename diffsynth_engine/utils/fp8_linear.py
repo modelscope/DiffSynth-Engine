@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from contextlib import contextmanager
+from diffsynth_engine.utils.constants import DTYPE_FP8
 
 
 def enable_fp8_linear(module: nn.Module):
@@ -12,7 +13,7 @@ def enable_fp8_linear(module: nn.Module):
 def _enable_fp8_linear(module: nn.Module):
     if isinstance(module, nn.Linear) and torch.is_floating_point(module.weight.data):
         # avoid conversion for int weights like GGUF
-        module.weight.data = module.weight.data.to(torch.float8_e4m3fn)
+        module.weight.data = module.weight.data.to(DTYPE_FP8)
     for submodule in module.children():
         _enable_fp8_linear(submodule)
 
@@ -32,8 +33,16 @@ def fp8_inference(enabled=True):
     ) -> torch.Tensor:
         device = input.device
         origin_dtype = input.dtype
-        input = input.to(torch.float8_e4m3fn)
-        weight = weight.to(torch.float8_e4m3fn)
+        scale_a = 1.0
+        # For float8_e4m3fnuz, the maximum representable value is half of that of e4m3fn.
+        # To avoid overflow and ensure numerical compatibility during FP8 computation,
+        # we scale down the input by 2.0 in advance.
+        # This scaling will be compensated later during the final result scaling.
+        if DTYPE_FP8 == torch.float8_e4m3fnuz:
+            scale_a = 2.0
+            input = input / scale_a
+        input = input.to(DTYPE_FP8)
+        weight = weight.to(DTYPE_FP8)
 
         if len(input.shape) > 2:
             origin_shape = input.shape
@@ -41,7 +50,7 @@ def fp8_inference(enabled=True):
             result = torch._scaled_mm(
                 input,
                 weight.T,
-                scale_a=torch.tensor(1.0).to(device=device),
+                scale_a=torch.tensor(scale_a).to(device=device),
                 scale_b=torch.tensor(1.0).to(device=device),
                 bias=bias,
                 out_dtype=origin_dtype,
@@ -52,7 +61,7 @@ def fp8_inference(enabled=True):
             result = torch._scaled_mm(
                 input,
                 weight.T,
-                scale_a=torch.tensor(1.0).to(device=device),
+                scale_a=torch.tensor(scale_a).to(device=device),
                 scale_b=torch.tensor(1.0).to(device=device),
                 bias=bias,
                 out_dtype=origin_dtype,
