@@ -43,6 +43,8 @@ class FluxDiTStateDictConverter(StateDictConverter):
                 suffix = ".weight" if name.endswith(".weight") else ".bias"
                 prefix = name[: -len(suffix)]
                 if prefix in global_rename_dict:
+                    if prefix.startswith("norm_out.linear"):
+                        param = torch.concat([param[dim:], param[:dim]], dim=0)
                     state_dict_[global_rename_dict[prefix] + suffix] = param
                 elif prefix.startswith("transformer_blocks."):
                     names = prefix.split(".")
@@ -82,7 +84,7 @@ class FluxDiTStateDictConverter(StateDictConverter):
                     dim=0,
                 )
                 state_dict_[name.replace(".proj_in_besides_attn.", ".attn.to_qkv.")] = param
-                state_dict_[name.replace(".proj_in_besides_attn.", ".mlp.0.")] = state_dict_[name_]
+                state_dict_[name.replace(".proj_in_besides_attn.", ".mlp.0.")] = state_dict_[name]
                 state_dict_.pop(name.replace(".proj_in_besides_attn.", ".a_to_q."))
                 state_dict_.pop(name.replace(".proj_in_besides_attn.", ".a_to_k."))
                 state_dict_.pop(name.replace(".proj_in_besides_attn.", ".a_to_v."))
