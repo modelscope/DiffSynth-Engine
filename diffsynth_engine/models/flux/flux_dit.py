@@ -43,6 +43,7 @@ class FluxDiTStateDictConverter(StateDictConverter):
                 suffix = ".weight" if name.endswith(".weight") else ".bias"
                 prefix = name[: -len(suffix)]
                 if prefix in global_rename_dict:
+                    # Fix load diffusers format weights [issue](https://github.com/modelscope/DiffSynth-Engine/issues/90).
                     if prefix.startswith("norm_out.linear"):
                         param = torch.concat([param[dim:], param[:dim]], dim=0)
                     state_dict_[global_rename_dict[prefix] + suffix] = param
