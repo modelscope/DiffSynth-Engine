@@ -4,7 +4,7 @@ import math
 
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
-    return x * (1 + scale) + shift
+    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
 
 class AdaLayerNorm(nn.Module):

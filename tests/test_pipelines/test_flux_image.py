@@ -46,7 +46,8 @@ class TestFLUXImage(ImageTestCase):
         )
         self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.98)
-
+    
+    # TODO: Add batch cfg test / Add diffusers format ckpt test
 
 class TestFLUXGGUF(ImageTestCase):
     @classmethod
