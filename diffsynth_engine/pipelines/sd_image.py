@@ -185,10 +185,13 @@ class SDImagePipeline(BasePipeline):
     def from_pretrained(
         cls,
         model_path_or_config: str | os.PathLike | SDModelConfig,
+        batch_cfg: bool = True,
+        vae_tiled: bool = False,
+        vae_tile_size: int = 256,
+        vae_tile_stride: int = 256,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float16,
         offload_mode: str | None = None,
-        batch_cfg: bool = True,
     ) -> "SDImagePipeline":
         if isinstance(model_path_or_config, str):
             model_config = SDModelConfig(unet_path=model_path_or_config)
@@ -232,6 +235,9 @@ class SDImagePipeline(BasePipeline):
             vae_decoder=vae_decoder,
             vae_encoder=vae_encoder,
             batch_cfg=batch_cfg,
+            vae_tiled=vae_tiled,
+            vae_tile_size=vae_tile_size,
+            vae_tile_stride=vae_tile_stride,
             device=device,
             dtype=dtype,
         )
@@ -262,7 +268,7 @@ class SDImagePipeline(BasePipeline):
         cfg_scale: float,
         batch_cfg: bool = True,
     ):
-        if cfg_scale < 1.0:
+        if cfg_scale <= 1.0:
             return self.predict_noise(latents, timestep, positive_prompt_emb)
         if not batch_cfg:
             # cfg by predict noise one by one

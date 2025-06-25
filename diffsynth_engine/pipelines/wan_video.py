@@ -410,9 +410,13 @@ class WanVideoPipeline(BasePipeline):
     def from_pretrained(
         cls,
         model_path_or_config: str | WanModelConfig,
+        shift: float | None = None,
+        batch_cfg: bool = False,
+        vae_tiled: bool = True,
+        vae_tile_size: Tuple[int, int] = (34, 34),
+        vae_tile_stride: Tuple[int, int] = (18, 16),
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
-        batch_cfg: bool = False,
         offload_mode: str | None = None,
         parallelism: int = 1,
         use_cfg_parallel: bool = False,
@@ -468,7 +472,7 @@ class WanVideoPipeline(BasePipeline):
             model_type = "1.3b-t2v"
 
         # shift for different model_type
-        shift = SHIFT_FACTORS[model_type]
+        shift = SHIFT_FACTORS[model_type] if shift is None else shift
 
         if parallelism > 1:
             parallel_config = cls.init_parallel_config(parallelism, use_cfg_parallel, model_config)
@@ -531,6 +535,9 @@ class WanVideoPipeline(BasePipeline):
             image_encoder=image_encoder,
             shift=shift,
             batch_cfg=batch_cfg,
+            vae_tiled=vae_tiled,
+            vae_tile_size=vae_tile_size,
+            vae_tile_stride=vae_tile_stride,
             device=device,
             dtype=dtype,
         )

@@ -15,7 +15,7 @@ class AdaLayerNorm(nn.Module):
         self.silu = nn.SiLU()
 
     def forward(self, x, emb):
-        shift, scale = self.linear(self.silu(emb)).chunk(2, dim=1)
+        shift, scale = self.linear(self.silu(emb)).unsqueeze(1).chunk(2, dim=1)
         return modulate(self.norm(x), shift, scale)
 
 
@@ -27,7 +27,7 @@ class AdaLayerNormZero(nn.Module):
         self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
 
     def forward(self, x, emb):
-        shift, scale, gate = self.linear(self.silu(emb)).chunk(3, dim=1)
+        shift, scale, gate = self.linear(self.silu(emb)).unsqueeze(1).chunk(3, dim=1)
         return modulate(self.norm(x), shift, scale), gate
 
 

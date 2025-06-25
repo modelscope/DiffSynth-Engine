@@ -159,10 +159,13 @@ class SDXLImagePipeline(BasePipeline):
     def from_pretrained(
         cls,
         model_path_or_config: str | os.PathLike | SDXLModelConfig,
+        batch_cfg: bool = True,
+        vae_tiled: bool = False,
+        vae_tile_size: int = 256,
+        vae_tile_stride: int = 256,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float16,
         offload_mode: str | None = None,
-        batch_cfg: bool = True,
     ) -> "SDXLImagePipeline":
         if isinstance(model_path_or_config, str):
             model_config = SDXLModelConfig(
@@ -220,6 +223,9 @@ class SDXLImagePipeline(BasePipeline):
             vae_decoder=vae_decoder,
             vae_encoder=vae_encoder,
             batch_cfg=batch_cfg,
+            vae_tiled=vae_tiled,
+            vae_tile_size=vae_tile_size,
+            vae_tile_stride=vae_tile_stride,
             device=device,
             dtype=dtype,
         )
