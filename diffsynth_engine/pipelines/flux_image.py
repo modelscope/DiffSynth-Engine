@@ -308,7 +308,6 @@ class FluxImagePipeline(BasePipeline):
         vae_decoder: FluxVAEDecoder,
         vae_encoder: FluxVAEEncoder,
         load_text_encoder: bool = True,
-        use_cfg: bool = False,
         batch_cfg: bool = False,
         vae_tiled: bool = False,
         vae_tile_size: int = 256,
@@ -336,7 +335,6 @@ class FluxImagePipeline(BasePipeline):
         self.vae_decoder = vae_decoder
         self.vae_encoder = vae_encoder
         self.load_text_encoder = load_text_encoder
-        self.use_cfg = use_cfg
         self.batch_cfg = batch_cfg
         self.ip_adapter = None
         self.redux = None
@@ -354,7 +352,6 @@ class FluxImagePipeline(BasePipeline):
         cls,
         model_path_or_config: str | os.PathLike | FluxModelConfig,
         load_text_encoder: bool = True,
-        use_cfg: bool = False,
         batch_cfg: bool = False,
         vae_tiled: bool = False,
         vae_tile_size: int = 256,
@@ -459,7 +456,6 @@ class FluxImagePipeline(BasePipeline):
             vae_decoder=vae_decoder,
             vae_encoder=vae_encoder,
             load_text_encoder=load_text_encoder,
-            use_cfg=use_cfg,
             batch_cfg=batch_cfg,
             vae_tiled=vae_tiled,
             vae_tile_size=vae_tile_size,
@@ -540,10 +536,9 @@ class FluxImagePipeline(BasePipeline):
         controlnet_params: List[ControlNetParams],
         current_step: int,
         total_step: int,
-        use_cfg: bool = False,
         batch_cfg: bool = False,
     ):
-        if cfg_scale <= 1.0 or not use_cfg:
+        if cfg_scale <= 1.0:
             return self.predict_noise(
                 latents,
                 timestep,
@@ -846,7 +841,7 @@ class FluxImagePipeline(BasePipeline):
         # Encode prompts
         self.load_models_to_device(["text_encoder_1", "text_encoder_2"])
         positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)
-        if self.use_cfg and cfg_scale > 1:
+        if cfg_scale > 1:
             negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
         else:
             negative_prompt_emb, negative_add_text_embeds = None, None
@@ -888,7 +883,6 @@ class FluxImagePipeline(BasePipeline):
                 controlnet_params=controlnet_params,
                 current_step=i,
                 total_step=len(timesteps),
-                use_cfg=self.use_cfg,
                 batch_cfg=self.batch_cfg,
             )
             # Denoise
