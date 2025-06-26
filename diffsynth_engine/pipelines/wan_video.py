@@ -1,8 +1,8 @@
 import torch
+import torch.distributed as dist
 import numpy as np
 from einops import rearrange
 from dataclasses import dataclass
-from functools import partial
 from typing import Callable, List, Tuple, Optional
 from tqdm import tqdm
 from PIL import Image
@@ -18,7 +18,7 @@ from diffsynth_engine.tokenizers import WanT5Tokenizer
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_model
-from diffsynth_engine.utils.parallel import ParallelModel, shard_model
+from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
 
 
@@ -358,6 +358,8 @@ class WanVideoPipeline(BasePipeline):
         assert (num_frames - 1) % 4 == 0, "num_frames must be 4X+1"
 
         # Initialize noise
+        if dist.is_initialized() and seed is None:
+            raise ValueError("must provide a seed when parallelism is enabled")
         noise = self.generate_noise(
             (1, 16, (num_frames - 1) // 4 + 1, height // 8, width // 8), seed=seed, device="cpu", dtype=torch.float32
         ).to(self.device)
@@ -382,7 +384,8 @@ class WanVideoPipeline(BasePipeline):
 
         # Denoise
         self.load_models_to_device(["dit"])
-        for i, timestep in enumerate(tqdm(timesteps)):
+        hide_progress = dist.is_initialized() and dist.get_rank() != 0
+        for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
             timestep = timestep.unsqueeze(0).to(dtype=self.config.dit_dtype, device=self.device)
             # Classifier-free guidance
             noise_pred = self.predict_noise_with_cfg(
@@ -442,9 +445,10 @@ class WanVideoPipeline(BasePipeline):
         logger.info(f"loading state dict from {model_config.vae_path} ...")
         vae_state_dict = cls.load_model_checkpoint(model_config.vae_path, device="cpu", dtype=model_config.vae_dtype)
 
-        init_device = "cpu" if offload_mode else device
+        init_device = "cpu" if parallelism > 1 or offload_mode is not None else device
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
         text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=model_config.t5_dtype)
+        vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
 
         image_encoder = None
         if model_config.image_encoder_path is not None:
@@ -474,57 +478,14 @@ class WanVideoPipeline(BasePipeline):
         # shift for different model_type
         shift = SHIFT_FACTORS[model_type] if shift is None else shift
 
-        if parallelism > 1:
-            parallel_config = cls.init_parallel_config(parallelism, use_cfg_parallel, model_config)
-            cfg_degree = parallel_config["cfg_degree"]
-            sp_ulysses_degree = parallel_config["sp_ulysses_degree"]
-            sp_ring_degree = parallel_config["sp_ring_degree"]
-            tp_degree = parallel_config["tp_degree"]
-            use_fsdp = parallel_config["use_fsdp"]
-            batch_cfg = True if use_cfg_parallel else batch_cfg
-
-            vae = WanVideoVAE.from_state_dict(
-                vae_state_dict, parallelism=parallelism, device="cpu", dtype=model_config.vae_dtype
+        with LoRAContext():
+            dit = WanDiT.from_state_dict(
+                dit_state_dict,
+                model_type=model_type,
+                device=init_device,
+                dtype=model_config.dit_dtype,
+                attn_impl=model_config.dit_attn_impl,
             )
-            vae = ParallelModel(
-                vae,
-                cfg_degree=1,
-                sp_ulysses_degree=parallelism,  # not real sequence parallel
-                sp_ring_degree=1,
-                tp_degree=1,
-                master_port=29501,
-                device="cuda",
-            )
-
-            with LoRAContext():
-                dit = WanDiT.from_state_dict(
-                    dit_state_dict,
-                    model_type=model_type,
-                    device="cpu",
-                    dtype=model_config.dit_dtype,
-                    attn_impl=model_config.dit_attn_impl,
-                    use_usp=(sp_ulysses_degree * sp_ring_degree > 1),
-                )
-                dit = ParallelModel(
-                    dit,
-                    cfg_degree=cfg_degree,
-                    sp_ulysses_degree=sp_ulysses_degree,
-                    sp_ring_degree=sp_ring_degree,
-                    tp_degree=tp_degree,
-                    shard_fn=partial(shard_model, wrap_module_names=["blocks"]) if use_fsdp else None,
-                    device="cuda",
-                )
-        else:
-            vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
-
-            with LoRAContext():
-                dit = WanDiT.from_state_dict(
-                    dit_state_dict,
-                    model_type=model_type,
-                    device=init_device,
-                    dtype=model_config.dit_dtype,
-                    attn_impl=model_config.dit_attn_impl,
-                )
 
         pipe = cls(
             config=model_config,
@@ -534,7 +495,7 @@ class WanVideoPipeline(BasePipeline):
             vae=vae,
             image_encoder=image_encoder,
             shift=shift,
-            batch_cfg=batch_cfg,
+            batch_cfg=True if parallelism > 1 and use_cfg_parallel else batch_cfg,
             vae_tiled=vae_tiled,
             vae_tile_size=vae_tile_size,
             vae_tile_stride=vae_tile_stride,
@@ -544,8 +505,21 @@ class WanVideoPipeline(BasePipeline):
         pipe.eval()
         if offload_mode is not None:
             pipe.enable_cpu_offload(offload_mode)
-        return pipe
 
-    def __del__(self):
-        del self.vae
-        del self.dit
+        if parallelism > 1:
+            parallel_config = cls.init_parallel_config(parallelism, use_cfg_parallel, model_config)
+            cfg_degree = parallel_config["cfg_degree"]
+            sp_ulysses_degree = parallel_config["sp_ulysses_degree"]
+            sp_ring_degree = parallel_config["sp_ring_degree"]
+            tp_degree = parallel_config["tp_degree"]
+            use_fsdp = parallel_config["use_fsdp"]
+            return ParallelWrapper(
+                pipe,
+                cfg_degree=cfg_degree,
+                sp_ulysses_degree=sp_ulysses_degree,
+                sp_ring_degree=sp_ring_degree,
+                tp_degree=tp_degree,
+                use_fsdp=use_fsdp,
+                device="cuda",
+            )
+        return pipe

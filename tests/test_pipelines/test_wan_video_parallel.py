@@ -28,6 +28,7 @@ class TestWanVideoTP(VideoTestCase):
             num_frames=41,
             width=480,
             height=480,
+            seed=42,
         )
         self.save_video(video, "wan_t2v.mp4")
 

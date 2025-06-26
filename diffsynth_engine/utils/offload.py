@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-def enable_sequential_cpu_offload(module: nn.Module, device: str = "cuda:0"):
+def enable_sequential_cpu_offload(module: nn.Module, device: str = "cuda"):
     if len(list(module.children())) == 0:
         if len(list(module.parameters())) > 0:  # leaf module with parameters
             add_cpu_offload_hook(module, device)
@@ -14,7 +14,7 @@ def enable_sequential_cpu_offload(module: nn.Module, device: str = "cuda:0"):
 
 
 # TODO: supports module buffer
-def add_cpu_offload_hook(module: nn.Module, device: str = "cuda:0", recurse: bool = True):
+def add_cpu_offload_hook(module: nn.Module, device: str = "cuda", recurse: bool = True):
     def _forward_pre_hook(module: nn.Module, input):
         offload_params = {}
         for name, param in module.named_parameters(recurse=recurse):

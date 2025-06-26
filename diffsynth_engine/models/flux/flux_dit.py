@@ -18,7 +18,12 @@ from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
-from diffsynth_engine.utils.parallel import sequence_parallel, sequence_parallel_unshard
+from diffsynth_engine.utils.parallel import (
+    cfg_parallel,
+    cfg_parallel_unshard,
+    sequence_parallel,
+    sequence_parallel_unshard,
+)
 from diffsynth_engine.utils import logging
 
 
@@ -323,12 +328,12 @@ class FluxSingleTransformerBlock(nn.Module):
 
 class FluxDiT(PreTrainedModel):
     converter = FluxDiTStateDictConverter()
+    _supports_parallelization = True
 
     def __init__(
         self,
         in_channel: int = 64,
         attn_impl: Optional[str] = None,
-        use_usp: bool = False,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -353,8 +358,6 @@ class FluxDiT(PreTrainedModel):
         )
         self.final_norm_out = AdaLayerNorm(3072, device=device, dtype=dtype)
         self.final_proj_out = nn.Linear(3072, 64, device=device, dtype=dtype)
-
-        self.use_usp = use_usp
 
     def patchify(self, hidden_states):
         hidden_states = rearrange(hidden_states, "B C (H P) (W Q) -> B (H W) (C P Q)", P=2, Q=2)
@@ -398,6 +401,8 @@ class FluxDiT(PreTrainedModel):
         **kwargs,
     ):
         h, w = hidden_states.shape[-2:]
+        if image_ids is None:
+            image_ids = self.prepare_image_ids(hidden_states)
         controlnet_double_block_output = (
             controlnet_double_block_output if controlnet_double_block_output is not None else ()
         )
@@ -406,10 +411,24 @@ class FluxDiT(PreTrainedModel):
         )
 
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
-        with fp8_inference(fp8_linear_enabled), gguf_inference():
-            if image_ids is None:
-                image_ids = self.prepare_image_ids(hidden_states)
-
+        with (
+            fp8_inference(fp8_linear_enabled),
+            gguf_inference(),
+            cfg_parallel(
+                (
+                    hidden_states,
+                    timestep,
+                    prompt_emb,
+                    pooled_prompt_emb,
+                    image_emb,
+                    guidance,
+                    text_ids,
+                    image_ids,
+                    *controlnet_double_block_output,
+                    *controlnet_single_block_output,
+                )
+            ),
+        ):
             # warning: keep the order of time_embedding + guidance_embedding + pooled_text_embedding
             # addition of floating point numbers does not meet commutative law
             conditioning = self.time_embedder(timestep, hidden_states.dtype)
@@ -439,7 +458,6 @@ class FluxDiT(PreTrainedModel):
                     *(1 for _ in controlnet_double_block_output),
                     *(1 for _ in controlnet_single_block_output),
                 ),
-                enabled=self.use_usp,
             ):
                 hidden_states = self.x_embedder(hidden_states)
                 prompt_emb = self.context_embedder(prompt_emb)
@@ -465,6 +483,7 @@ class FluxDiT(PreTrainedModel):
                 (hidden_states,) = sequence_parallel_unshard((hidden_states,), seq_dims=(1,), seq_lens=(h * w // 4,))
 
             hidden_states = self.unpatchify(hidden_states, h, w)
+            (hidden_states,) = cfg_parallel_unshard((hidden_states,))
             return hidden_states
 
     @classmethod
@@ -475,7 +494,6 @@ class FluxDiT(PreTrainedModel):
         dtype: torch.dtype,
         in_channel: int = 64,
         attn_impl: Optional[str] = None,
-        use_usp: bool = False,
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
@@ -484,9 +502,11 @@ class FluxDiT(PreTrainedModel):
                 dtype=dtype,
                 in_channel=in_channel,
                 attn_impl=attn_impl,
-                use_usp=use_usp,
             )
             model = model.requires_grad_(False)  # for loading gguf
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
+
+    def get_fsdp_modules(self):
+        return ["blocks", "single_blocks"]

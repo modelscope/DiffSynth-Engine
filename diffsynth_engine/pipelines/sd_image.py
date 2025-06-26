@@ -189,7 +189,7 @@ class SDImagePipeline(BasePipeline):
         vae_tiled: bool = False,
         vae_tile_size: int = 256,
         vae_tile_stride: int = 256,
-        device: str = "cuda:0",
+        device: str = "cuda",
         dtype: torch.dtype = torch.float16,
         offload_mode: str | None = None,
     ) -> "SDImagePipeline":
@@ -247,7 +247,7 @@ class SDImagePipeline(BasePipeline):
 
     @classmethod
     def from_state_dict(
-        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda:0", dtype: torch.dtype = torch.float16
+        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda", dtype: torch.dtype = torch.float16
     ) -> "SDImagePipeline":
         raise NotImplementedError()
 

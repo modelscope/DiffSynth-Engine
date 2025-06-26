@@ -31,7 +31,7 @@ class BasePipeline:
         vae_tiled: bool = False,
         vae_tile_size: int = -1,
         vae_tile_stride: int = -1,
-        device="cuda:0",
+        device="cuda",
         dtype=torch.float16,
     ):
         super().__init__()
@@ -47,7 +47,7 @@ class BasePipeline:
     def from_pretrained(
         cls,
         model_path_or_config: str | os.PathLike | ModelConfig,
-        device: str = "cuda:0",
+        device: str = "cuda",
         dtype: torch.dtype = torch.float16,
         offload_mode: str | None = None,
     ) -> "BasePipeline":
@@ -55,7 +55,7 @@ class BasePipeline:
 
     @classmethod
     def from_state_dict(
-        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda:0", dtype: torch.dtype = torch.float16
+        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda", dtype: torch.dtype = torch.float16
     ) -> "BasePipeline":
         raise NotImplementedError()
 
@@ -269,21 +269,18 @@ class BasePipeline:
             logger.warning("must set an non cpu device for pipeline before calling enable_cpu_offload")
             return
         if offload_mode == "cpu_offload":
-            self.enable_model_cpu_offload()
+            self._enable_model_cpu_offload()
         elif offload_mode == "sequential_cpu_offload":
-            self.enable_sequential_cpu_offload()
+            self._enable_sequential_cpu_offload()
 
-    def enable_model_cpu_offload(self):
+    def _enable_model_cpu_offload(self):
         for model_name in self.model_names:
             model = getattr(self, model_name)
             if model is not None:
                 model.to("cpu")
         self.offload_mode = "cpu_offload"
 
-    def enable_sequential_cpu_offload(self):
-        if self.device == "cpu" or self.device == "mps":
-            logger.warning("must set an non cpu device for pipeline before calling enable_sequential_cpu_offload")
-            return
+    def _enable_sequential_cpu_offload(self):
         for model_name in self.model_names:
             model = getattr(self, model_name)
             if model is not None:

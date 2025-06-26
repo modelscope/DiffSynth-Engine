@@ -14,6 +14,7 @@ class StateDictConverter:
 
 class PreTrainedModel(nn.Module):
     converter = StateDictConverter()
+    _supports_parallelization = False
 
     def load_state_dict(self, state_dict: Dict[str, torch.Tensor], strict: bool = True, assign: bool = False):
         state_dict = self.converter.convert(state_dict)
@@ -54,6 +55,12 @@ class PreTrainedModel(nn.Module):
         for module in self.modules():
             if isinstance(module, (LoRALinear, LoRAConv2d)):
                 module.clear()
+
+    def get_tp_plan(self):
+        raise NotImplementedError(f"{self.__class__.__name__} does not support TP")
+
+    def get_fsdp_modules(self):
+        raise NotImplementedError(f"{self.__class__.__name__} does not support FSDP")
 
 
 def split_suffix(name: str):

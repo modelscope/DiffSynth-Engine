@@ -3,10 +3,10 @@ import os
 import json
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 import math
 from einops import rearrange
 from enum import Enum
-from functools import partial
 from typing import Callable, Dict, List, Tuple, Optional, Union
 from tqdm import tqdm
 from PIL import Image
@@ -26,7 +26,7 @@ from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
-from diffsynth_engine.utils.parallel import ParallelModel, shard_model
+from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.download import fetch_model
@@ -490,7 +490,7 @@ class FluxImagePipeline(BasePipeline):
         vae_tile_size: int = 256,
         vae_tile_stride: int = 256,
         control_type: ControlType = ControlType.normal,
-        device: str = "cuda:0",
+        device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__(
@@ -534,7 +534,7 @@ class FluxImagePipeline(BasePipeline):
         vae_tile_size: int = 256,
         vae_tile_stride: int = 256,
         control_type: ControlType = ControlType.normal,
-        device: str = "cuda:0",
+        device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
         offload_mode: str | None = None,
         parallelism: int = 1,
@@ -567,51 +567,10 @@ class FluxImagePipeline(BasePipeline):
             logger.info(f"loading state dict from {model_config.t5_path} ...")
             t5_state_dict = cls.load_model_checkpoint(model_config.t5_path, device="cpu", dtype=dtype)
 
-        init_device = "cpu" if offload_mode else device
+        init_device = "cpu" if parallelism > 1 or offload_mode is not None else device
         if load_text_encoder:
             tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
             tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
-
-        if parallelism > 1:
-            parallel_config = cls.init_parallel_config(parallelism, use_cfg_parallel, model_config)
-            cfg_degree = parallel_config["cfg_degree"]
-            sp_ulysses_degree = parallel_config["sp_ulysses_degree"]
-            sp_ring_degree = parallel_config["sp_ring_degree"]
-            tp_degree = parallel_config["tp_degree"]
-            use_fsdp = parallel_config["use_fsdp"]
-            with LoRAContext():
-                dit = FluxDiT.from_state_dict(
-                    dit_state_dict,
-                    device=init_device,
-                    dtype=model_config.dit_dtype,
-                    in_channel=control_type.get_in_channel(),
-                    attn_impl=model_config.dit_attn_impl,
-                    use_usp=(sp_ulysses_degree * sp_ring_degree > 1),
-                )
-                if model_config.use_fp8_linear:
-                    enable_fp8_linear(dit)
-                dit = ParallelModel(
-                    dit,
-                    cfg_degree=cfg_degree,
-                    sp_ulysses_degree=sp_ulysses_degree,
-                    sp_ring_degree=sp_ring_degree,
-                    tp_degree=tp_degree,
-                    shard_fn=partial(shard_model, wrap_module_names=["blocks", "single_blocks"]) if use_fsdp else None,
-                    device="cuda",
-                )
-        else:
-            with LoRAContext():
-                dit = FluxDiT.from_state_dict(
-                    dit_state_dict,
-                    device=init_device,
-                    dtype=model_config.dit_dtype,
-                    in_channel=control_type.get_in_channel(),
-                    attn_impl=model_config.dit_attn_impl,
-                )
-                if model_config.use_fp8_linear:
-                    enable_fp8_linear(dit)
-
-        if load_text_encoder:
             with LoRAContext():
                 text_encoder_1 = FluxTextEncoder1.from_state_dict(
                     clip_state_dict, device=init_device, dtype=model_config.clip_dtype
@@ -623,6 +582,17 @@ class FluxImagePipeline(BasePipeline):
         vae_decoder = FluxVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
         vae_encoder = FluxVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
 
+        with LoRAContext():
+            dit = FluxDiT.from_state_dict(
+                dit_state_dict,
+                device=init_device,
+                dtype=model_config.dit_dtype,
+                in_channel=control_type.get_in_channel(),
+                attn_impl=model_config.dit_attn_impl,
+            )
+            if model_config.use_fp8_linear:
+                enable_fp8_linear(dit)
+
         pipe = cls(
             config=model_config,
             tokenizer=tokenizer if load_text_encoder else None,
@@ -633,7 +603,7 @@ class FluxImagePipeline(BasePipeline):
             vae_decoder=vae_decoder,
             vae_encoder=vae_encoder,
             load_text_encoder=load_text_encoder,
-            batch_cfg=batch_cfg,
+            batch_cfg=True if parallelism > 1 and use_cfg_parallel else batch_cfg,
             vae_tiled=vae_tiled,
             vae_tile_size=vae_tile_size,
             vae_tile_stride=vae_tile_stride,
@@ -643,6 +613,23 @@ class FluxImagePipeline(BasePipeline):
         )
         if offload_mode is not None:
             pipe.enable_cpu_offload(offload_mode)
+
+        if parallelism > 1:
+            parallel_config = cls.init_parallel_config(parallelism, use_cfg_parallel, model_config)
+            cfg_degree = parallel_config["cfg_degree"]
+            sp_ulysses_degree = parallel_config["sp_ulysses_degree"]
+            sp_ring_degree = parallel_config["sp_ring_degree"]
+            tp_degree = parallel_config["tp_degree"]
+            use_fsdp = parallel_config["use_fsdp"]
+            return ParallelWrapper(
+                pipe,
+                cfg_degree=cfg_degree,
+                sp_ulysses_degree=sp_ulysses_degree,
+                sp_ring_degree=sp_ring_degree,
+                tp_degree=tp_degree,
+                use_fsdp=use_fsdp,
+                device="cuda",
+            )
         return pipe
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
@@ -663,7 +650,7 @@ class FluxImagePipeline(BasePipeline):
 
     @classmethod
     def from_state_dict(
-        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16
+        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda", dtype: torch.dtype = torch.bfloat16
     ) -> "FluxImagePipeline":
         raise NotImplementedError()
 
@@ -1003,6 +990,8 @@ class FluxImagePipeline(BasePipeline):
             width, height = input_image.size
         self.validate_image_size(height, width, minimum=64, multiple_of=16)
 
+        if dist.is_initialized() and seed is None:
+            raise ValueError("must provide a seed when parallelism is enabled")
         noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device="cpu", dtype=self.dtype).to(
             device=self.device
         )
@@ -1043,7 +1032,8 @@ class FluxImagePipeline(BasePipeline):
 
         # Denoise
         self.load_models_to_device([])
-        for i, timestep in enumerate(tqdm(timesteps)):
+        hide_progress = dist.is_initialized() and dist.get_rank() != 0
+        for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
             timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
             noise_pred = self.predict_noise_with_cfg(
                 latents=latents,

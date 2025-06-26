@@ -15,10 +15,12 @@ from torch.distributed.tensor.parallel._utils import _validate_tp_mesh_dim
 from contextlib import contextmanager
 from datetime import timedelta
 from functools import partial
-from typing import Callable, Dict, List, Union, Optional
+from typing import Dict, List, Union, Optional
 from queue import Empty
 
 import diffsynth_engine.models.basic.attention as attention_ops
+from diffsynth_engine.models import PreTrainedModel
+from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -52,11 +54,11 @@ def get_cfg_group():
 
 
 def get_cfg_world_size():
-    return PROCESS_GROUP.CFG_GROUP.size()
+    return PROCESS_GROUP.CFG_GROUP.size() if PROCESS_GROUP.CFG_GROUP is not None else 1
 
 
 def get_cfg_rank():
-    return PROCESS_GROUP.CFG_GROUP.rank()
+    return PROCESS_GROUP.CFG_GROUP.rank() if PROCESS_GROUP.CFG_GROUP is not None else 0
 
 
 def get_cfg_ranks():
@@ -68,11 +70,11 @@ def get_sp_group():
 
 
 def get_sp_world_size():
-    return PROCESS_GROUP.SP_GROUP.size()
+    return PROCESS_GROUP.SP_GROUP.size() if PROCESS_GROUP.SP_GROUP is not None else 1
 
 
 def get_sp_rank():
-    return PROCESS_GROUP.SP_GROUP.rank()
+    return PROCESS_GROUP.SP_GROUP.rank() if PROCESS_GROUP.SP_GROUP is not None else 0
 
 
 def get_sp_ranks():
@@ -84,11 +86,11 @@ def get_tp_group():
 
 
 def get_tp_world_size():
-    return PROCESS_GROUP.TP_GROUP.size()
+    return PROCESS_GROUP.TP_GROUP.size() if PROCESS_GROUP.TP_GROUP is not None else 1
 
 
 def get_tp_rank():
-    return PROCESS_GROUP.TP_GROUP.rank()
+    return PROCESS_GROUP.TP_GROUP.rank() if PROCESS_GROUP.TP_GROUP is not None else 0
 
 
 def get_tp_ranks():
@@ -168,18 +170,6 @@ def to_device(data, device):
         return data
 
 
-def split_and_get(data, num, dim, index):
-    if isinstance(data, dict):
-        return {k: split_and_get(v, num, dim, index) for k, v in data.items()}
-    if isinstance(data, tuple) or isinstance(data, list):
-        return [split_and_get(t, num, dim, index) for t in data]
-    if isinstance(data, torch.Tensor):
-        if data.shape[dim] < num:
-            raise ValueError(f"data.shape[{dim}] ({data.shape[dim]}) < num ({num}), split failed")
-        return torch.split(data, data.shape[dim] // num, dim)[index]
-    return data
-
-
 def shard_model(
     module: nn.Module,
     device_id: int,
@@ -227,7 +217,7 @@ def parallelize_module(
 
 
 NCCL_TIMEOUT_SEC = int(os.environ.get("NCCL_TIMEOUT_SEC", 600))
-PARALLEL_FWD_TIMEOUT_SEC = int(os.environ.get("PARALLEL_FWD_TIMEOUT_SEC", 300))
+PARALLEL_FWD_TIMEOUT_SEC = int(os.environ.get("PARALLEL_FWD_TIMEOUT_SEC", 3600))
 
 
 def _worker_loop(
@@ -235,12 +225,12 @@ def _worker_loop(
     world_size: int,
     queue_in: mp.Queue,
     queue_out: mp.Queue,
-    module: nn.Module,
+    module: Union[PreTrainedModel, BasePipeline],
     cfg_degree: int,
     sp_ulysses_degree: int,
     sp_ring_degree: int,
     tp_degree: int,
-    shard_fn: Optional[Callable] = None,
+    use_fsdp: bool,
     master_port: int = 29500,
     device: str = "cuda",
 ):
@@ -271,16 +261,31 @@ def _worker_loop(
             world_size=world_size,
         )
 
-        if tp_degree > 1:
-            module = parallelize_module(
-                module=module,
-                device_mesh=DeviceMesh(device, torch.tensor(get_tp_ranks())),
-                parallelize_plan=module.get_tp_plan(),
-            ).to(device)
-        elif shard_fn:
-            module = shard_fn(module=module, device_id=rank)
+        def wrap_for_parallel(module: PreTrainedModel):
+            if not module._supports_parallelization:
+                module = module.to(device)
+                return module
+
+            if tp_degree > 1:
+                module = parallelize_module(
+                    module=module,
+                    device_mesh=DeviceMesh(device, torch.tensor(get_tp_ranks())),
+                    parallelize_plan=module.get_tp_plan(),
+                ).to(device)
+            elif use_fsdp:
+                module = shard_model(module, device_id=rank, wrap_module_names=module.get_fsdp_modules())
+            else:
+                module = module.to(device)
+            return module
+
+        if isinstance(module, BasePipeline):
+            for model_name in module.model_names:
+                submodule = getattr(module, model_name)
+                if isinstance(submodule, PreTrainedModel):
+                    setattr(module, model_name, wrap_for_parallel(submodule))
         else:
-            module = module.to(device)
+            module = wrap_for_parallel(module)
+        logger.info(f"{module.__class__.__name__} init done (rank {rank})")
 
         while True:
             if rank == 0:
@@ -288,25 +293,16 @@ def _worker_loop(
             else:
                 data = [None, None, None]
             dist.broadcast_object_list(data, src=0)
-            name, args, kwargs = clone(data)
+            name, args, kwargs = to_device(clone(data), device=device)
             del data
 
             if not hasattr(module, name):
                 raise AttributeError(f'{module.__class__.__name__} has no attribute "{name}"')
-            if name != "load_loras":
-                args = split_and_get(to_device(args, device), get_cfg_world_size(), 0, get_cfg_rank())
-                kwargs = split_and_get(to_device(kwargs, device), get_cfg_world_size(), 0, get_cfg_rank())
             with torch.no_grad():
-                y = getattr(module, name)(*args, **kwargs)
-
-            is_rank_zero_in_cfg_group = get_cfg_world_size() > 1 and get_sp_rank() == 0 and get_tp_rank() == 0
-            if y is not None and is_rank_zero_in_cfg_group:
-                gathered = torch.zeros((get_cfg_world_size(), *y.shape[1:]), dtype=y.dtype, device=y.device)
-                dist.all_gather_into_tensor(gathered, y, group=get_cfg_group())
-                y = gathered
+                res = getattr(module, name)(*args, **kwargs)
 
             if rank == 0:
-                queue_out.put(y)
+                queue_out.put(res)
             dist.barrier()
     except Exception as e:
         import traceback
@@ -321,15 +317,15 @@ def _worker_loop(
         dist.destroy_process_group()
 
 
-class ParallelModel(nn.Module):
+class ParallelWrapper:
     def __init__(
         self,
-        module: nn.Module,
+        module: Union[PreTrainedModel, BasePipeline],
         cfg_degree: int,
         sp_ulysses_degree: int,
         sp_ring_degree: int,
         tp_degree: int,
-        shard_fn: Optional[Callable] = None,
+        use_fsdp: bool,
         master_port: int = 29500,
         device: str = "cuda",
     ):
@@ -348,27 +344,29 @@ class ParallelModel(nn.Module):
                 sp_ulysses_degree,
                 sp_ring_degree,
                 tp_degree,
-                shard_fn,
+                use_fsdp,
                 master_port,
                 device,
             ),
             nprocs=self.world_size,
             join=False,
         )
+        self._module_name = module.__class__.__name__
 
-    def forward(self, *args, **kwargs):
-        data = ["forward", args, kwargs]
+    def __call__(self, *args, **kwargs):
+        data = ["__call__", args, kwargs]
         self.queue_in.put(data)
         try:
             res = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
             if isinstance(res, Exception):
                 raise res
         except Empty:
-            logger.error("ParallelModel forward timeout")
-            raise RuntimeError("ParallelModel forward timeout")
+            logger.error(f"[ParallelWrapper] {self._module_name}.__call__ timeout")
+            raise RuntimeError(f"[ParallelWrapper] {self._module_name}.__call__ timeout")
         except Exception as e:
-            logger.error(f"ParallelModel forward error: {e}")
-            raise RuntimeError(f"ParallelModel forward error: {e}")
+            logger.error(f"[ParallelWrapper] {self._module_name}.__call__ error: {e}")
+            raise RuntimeError(f"[ParallelWrapper] {self._module_name}.__call__ error: {e}")
+        logger.info(f"[ParallelWrapper] {self._module_name}.__call__ done")
         return res
 
     def __getattr__(self, name):
@@ -380,12 +378,12 @@ class ParallelModel(nn.Module):
                 if isinstance(res, Exception):
                     raise res
             except Empty:
-                logger.error(f"ParallelModel {name} timeout")
-                raise RuntimeError(f"ParallelModel {name} timeout")
+                logger.error(f"[ParallelWrapper] {self._module_name}.{name} timeout")
+                raise RuntimeError(f"[ParallelWrapper] {self._module_name}.{name} timeout")
             except Exception as e:
-                logger.error(f"ParallelModel {name} error: {e}")
-                raise RuntimeError(f"ParallelModel {name} error: {e}")
-            logger.info(f"ParallelModel {name} done")
+                logger.error(f"[ParallelWrapper] {self._module_name}.{name} error: {e}")
+                raise RuntimeError(f"[ParallelWrapper] {self._module_name}.{name}error: {e}")
+            logger.info(f"[ParallelWrapper] {self._module_name}.{name} done")
             return res
 
         return wrapped_func
@@ -399,16 +397,47 @@ class ParallelModel(nn.Module):
         self.queue_out.close()
 
 
-_sequence_parallel_enabled = False
+@contextmanager
+def cfg_parallel(tensors: List[torch.Tensor]):
+    if get_cfg_world_size() == 1:
+        yield
+        return
+
+    original_tensors = clone(tensors)
+    for tensor in tensors:
+        if tensor is None:
+            continue
+        chunks = torch.chunk(tensor, get_cfg_world_size(), dim=0)
+        chunk = chunks[get_cfg_rank()]
+        chunk = chunk.clone()
+        tensor.resize_(chunk.shape)
+        tensor.copy_(chunk)
+    yield
+    for tensor, original_tensor in zip(tensors, original_tensors):
+        if original_tensor is None:
+            continue
+        tensor.resize_(original_tensor.shape)
+        tensor.copy_(original_tensor)
+
+
+def cfg_parallel_unshard(tensors: List[torch.Tensor]):
+    if get_cfg_world_size() == 1:
+        return tensors
+
+    unshard_tensors = []
+    for tensor in tensors:
+        unshard = torch.zeros((get_cfg_world_size(), *tensor.shape[1:]), dtype=tensor.dtype, device=tensor.device)
+        dist.all_gather_into_tensor(unshard, tensor, group=get_cfg_group())
+        unshard_tensors.append(unshard)
+    return unshard_tensors
 
 
 @contextmanager
 def sequence_parallel(
     tensors: List[torch.Tensor] | None = None,
     seq_dims: List[int] | None = None,
-    enabled: bool = False,
 ):
-    if not enabled:
+    if get_sp_world_size() == 1:
         yield
         return
 
@@ -416,7 +445,10 @@ def sequence_parallel(
     seq_dims = [] if seq_dims is None else seq_dims
     assert len(tensors) == len(seq_dims), "tensors and seq_dims must have the same number of elements"
 
+    original_tensors = clone(tensors)
     for tensor, seq_dim in zip(tensors, seq_dims):
+        if tensor is None:
+            continue
         # pad seq_len to multiple of sp_world_size
         # TODO: long_context_attention does not support attn_mask, may cause loss of numerical precision with padding
         seq_len = tensor.size(seq_dim)
@@ -427,15 +459,19 @@ def sequence_parallel(
 
         chunks = torch.chunk(padded_tensor, get_sp_world_size(), dim=seq_dim)
         chunk = chunks[get_sp_rank()]
+        chunk = chunk.clone()
         tensor.resize_(chunk.shape)
         tensor.copy_(chunk)
 
-    global _sequence_parallel_enabled
-    _sequence_parallel_enabled = True
     origin_attention = attention_ops.attention
     attention_ops.attention = attention_ops.long_context_attention
     yield
-    _sequence_parallel_enabled = False
+    for tensor, original_tensor in zip(tensors, original_tensors):
+        if original_tensor is None:
+            continue
+        tensor.resize_(original_tensor.shape)
+        tensor.copy_(original_tensor)
+
     attention_ops.attention = origin_attention
 
 
@@ -444,7 +480,7 @@ def sequence_parallel_unshard(
     seq_dims: List[int],
     seq_lens: List[int],
 ) -> List[torch.Tensor]:
-    if not _sequence_parallel_enabled:
+    if get_sp_world_size() == 1:
         return tensors
 
     assert len(tensors) == len(seq_dims), "tensors and seq_dims must have the same number of elements"
@@ -458,4 +494,10 @@ def sequence_parallel_unshard(
     return unshard_tensors
 
 
-__all__ = ["ParallelModel", "sequence_parallel", "sequence_parallel_unshard"]
+__all__ = [
+    "ParallelWrapper",
+    "cfg_parallel",
+    "cfg_parallel_unshard",
+    "sequence_parallel",
+    "sequence_parallel_unshard",
+]

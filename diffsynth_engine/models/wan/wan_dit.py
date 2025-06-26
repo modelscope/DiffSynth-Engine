@@ -16,7 +16,12 @@ from diffsynth_engine.utils.constants import (
     WAN_DIT_14B_FLF2V_CONFIG_FILE,
 )
 from diffsynth_engine.utils.gguf import gguf_inference
-from diffsynth_engine.utils.parallel import sequence_parallel, sequence_parallel_unshard
+from diffsynth_engine.utils.parallel import (
+    cfg_parallel,
+    cfg_parallel_unshard,
+    sequence_parallel,
+    sequence_parallel_unshard,
+)
 
 T5_TOKEN_NUM = 512
 FLF_TOKEN_NUM = 257 * 2
@@ -244,6 +249,7 @@ class WanDiTStateDictConverter(StateDictConverter):
 
 class WanDiT(PreTrainedModel):
     converter = WanDiTStateDictConverter()
+    _supports_parallelization = True
 
     def __init__(
         self,
@@ -260,7 +266,6 @@ class WanDiT(PreTrainedModel):
         has_image_input: bool,
         flf_pos_emb: bool = False,
         attn_impl: Optional[str] = None,
-        use_usp: bool = False,
         device: str = "cpu",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -303,8 +308,6 @@ class WanDiT(PreTrainedModel):
         if has_image_input:
             self.img_emb = MLP(1280, dim, flf_pos_emb, device=device, dtype=dtype)  # clip_feature_dim = 1280
 
-        self.use_usp = use_usp
-
     def patchify(self, x: torch.Tensor):
         x = self.patch_embedding(x)  # b c f h w -> b 4c f h/2 w/2
         grid_size = x.shape[2:]
@@ -331,7 +334,10 @@ class WanDiT(PreTrainedModel):
         clip_feature: Optional[torch.Tensor] = None,  # clip_vision_encoder(img)
         y: Optional[torch.Tensor] = None,  # vae_encoder(img)
     ):
-        with gguf_inference():
+        with (
+            gguf_inference(),
+            cfg_parallel((x, context, timestep, clip_feature, y)),
+        ):
             t = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep))
             t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
             context = self.text_embedding(context)
@@ -353,12 +359,13 @@ class WanDiT(PreTrainedModel):
                 .to(x.device)
             )
 
-            with sequence_parallel([x, freqs], seq_dims=(1, 0), enabled=self.use_usp):
+            with sequence_parallel((x, freqs), seq_dims=(1, 0)):
                 for block in self.blocks:
                     x = block(x, context, t_mod, freqs)
                 x = self.head(x, t)
                 (x,) = sequence_parallel_unshard((x,), seq_dims=(1,), seq_lens=(f * h * w,))
             x = self.unpatchify(x, (f, h, w))
+            (x,) = cfg_parallel_unshard((x,))
             return x
 
     @classmethod
@@ -369,7 +376,6 @@ class WanDiT(PreTrainedModel):
         dtype,
         model_type="1.3b-t2v",
         attn_impl: Optional[str] = None,
-        use_usp=False,
         assign=True,
     ):
         if model_type == "1.3b-t2v":
@@ -383,9 +389,7 @@ class WanDiT(PreTrainedModel):
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
         with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls, **config, device=device, dtype=dtype, attn_impl=attn_impl, use_usp=use_usp
-            )
+            model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype, attn_impl=attn_impl)
             model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=assign)
         model.to(device=device, dtype=dtype)
@@ -467,3 +471,6 @@ class WanDiT(PreTrainedModel):
                 }
             )
         return tp_plan
+
+    def get_fsdp_modules(self):
+        return ["blocks"]
