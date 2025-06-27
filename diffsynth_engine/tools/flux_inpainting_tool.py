@@ -35,8 +35,20 @@ class FluxInpaintingTool:
         seed: int = 42,
         num_inference_steps: int = 20,
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
+        controlnet_params: Optional[List[ControlNetParams]] = None,
     ):
         assert image.size == mask.size
+        final_controlnet_params = [
+            ControlNetParams(
+                model=self.controlnet,
+                image=image,
+                mask=mask,
+                scale=inpainting_scale,
+            )
+        ]
+        if controlnet_params is not None:
+            final_controlnet_params.extend(controlnet_params)
+
         return self.pipe(
             prompt=prompt,
             negative_prompt=negative_prompt,
@@ -44,11 +56,6 @@ class FluxInpaintingTool:
             height=image.height,
             num_inference_steps=num_inference_steps,
             seed=seed,
-            controlnet_params=ControlNetParams(
-                model=self.controlnet,
-                image=image,
-                mask=mask,
-                scale=inpainting_scale,
-            ),
+            controlnet_params=final_controlnet_params,
             progress_callback=progress_callback,
         )
