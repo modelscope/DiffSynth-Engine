@@ -329,6 +329,12 @@ class ParallelWrapper:
         master_port: int = 29500,
         device: str = "cuda",
     ):
+        current_method = mp.get_start_method(allow_none=True)
+        if current_method is None or current_method != 'spawn':
+            try:
+                mp.set_start_method('spawn')
+            except RuntimeError as e:
+                raise RuntimeError("Failed to set start method to spawn:", e)
         super().__init__()
         self.world_size = cfg_degree * sp_ulysses_degree * sp_ring_degree * tp_degree
         self.queue_in = mp.Queue()
