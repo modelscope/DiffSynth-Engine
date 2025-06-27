@@ -208,13 +208,15 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                 raise ValueError(f"Unsupported key: {key}")
             lora_args = {}
             lora_args["up"] = param
-            lora_args["down"] = lora_state_dict[origin_key.replace("lora_A.weight", "lora_B.weight").replace("lora_up.weight", "lora_down.weight")]
-            lora_args["rank"] = lora_args["up"].shape[1]            
+            lora_args["down"] = lora_state_dict[
+                origin_key.replace("lora_A.weight", "lora_B.weight").replace("lora_up.weight", "lora_down.weight")
+            ]
+            lora_args["rank"] = lora_args["up"].shape[1]
             alpha_key = origin_key.replace("lora_A.weight", "alpha").replace("lora_up.weight", "alpha")
             if alpha_key in lora_state_dict:
                 alpha = lora_state_dict[alpha_key]
             else:
-                alpha = lora_args["rank"] # 如果alpha不存在，则取alpha/rank = 1
+                alpha = lora_args["rank"]  # 如果alpha不存在，则取alpha/rank = 1
             lora_args["alpha"] = alpha
             key = key.replace(".weight", "")
             dit_dict[key] = lora_args
