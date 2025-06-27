@@ -1,7 +1,8 @@
 from diffsynth_engine import fetch_model, FluxControlNet, ControlNetParams, FluxImagePipeline
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Callable
 from PIL import Image
 import torch
+
 
 
 class FluxInpaintingTool:
@@ -11,7 +12,7 @@ class FluxInpaintingTool:
         lora_list: List[Tuple[str, float]] = [],
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
-        offload_mode: Optional[str] = None,
+        offload_mode: Optional[str] = None
     ):
         self.pipe = FluxImagePipeline.from_pretrained(
             flux_model_path, device=device, offload_mode=offload_mode, dtype=dtype
@@ -34,6 +35,7 @@ class FluxInpaintingTool:
         inpainting_scale: float = 0.9,
         seed: int = 42,
         num_inference_steps: int = 20,
+        progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)        
     ):
         assert image.size == mask.size
         return self.pipe(
@@ -49,4 +51,5 @@ class FluxInpaintingTool:
                 mask=mask,
                 scale=inpainting_scale,
             ),
+            progress_callback=progress_callback,
         )

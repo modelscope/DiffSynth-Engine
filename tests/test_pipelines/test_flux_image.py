@@ -1,5 +1,7 @@
 import unittest
 
+import torch
+
 from tests.common.test_case import ImageTestCase
 from diffsynth_engine.pipelines import FluxImagePipeline, FluxModelConfig
 from diffsynth_engine import fetch_model
@@ -46,6 +48,19 @@ class TestFLUXImage(ImageTestCase):
         )
         self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.98)
+
+    def test_diffusers_lora_patch(self):
+        lora_model_path = fetch_model("InstantX/FLUX.1-dev-LoRA-Ghibli", revision="master", path="ghibli_style.safetensors")        
+        self.pipe.load_loras([(lora_model_path, 0.8)], fused=True, save_original_weight=True)
+        image = self.pipe(
+            prompt="ghibli style, a shepherd boy floating on a wooly cloud-whale, holding a glowing dandelion staff to guide sheep-shaped cumulus, miniature storm clouds grazing nearby, his patched jacket flapping in high-altitude winds, aurora-like ribbons in peach and lavender stretching across the sky",
+            width=960,
+            height=1280,
+            num_inference_steps=24,
+            seed=42,
+        )
+        self.pipe.unload_loras()
+        self.assertImageEqualAndSaveFailed(image, "flux/flux_diffusers_lora.png", threshold=0.99)
 
 
 class TestFLUXGGUF(ImageTestCase):

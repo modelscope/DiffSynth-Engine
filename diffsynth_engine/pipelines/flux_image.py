@@ -163,9 +163,8 @@ class FluxLoRAConverter(LoRAStateDictConverter):
         dit_dict = {}
         for key, param in lora_state_dict.items():
             origin_key = key
-            if ".alpha" not in key:
+            if "lora_A.weight" not in key or "lora_up.weight" not in key:
                 continue
-            key = key.replace(".alpha", ".weight")
             key = key.replace("transformer.", "")
             if "single_transformer_blocks" in key:  # transformer.single_transformer_blocks.0.attn.to_k.weight
                 key = key.replace(
@@ -208,10 +207,15 @@ class FluxLoRAConverter(LoRAStateDictConverter):
             else:
                 raise ValueError(f"Unsupported key: {key}")
             lora_args = {}
-            lora_args["alpha"] = param
-            lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
-            lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
-            lora_args["rank"] = lora_args["up"].shape[1]
+            lora_args["up"] = param
+            lora_args["down"] = lora_state_dict[origin_key.replace("lora_A.weight", "lora_B.weight").replace("lora_up.weight", "lora_down.weight")]
+            lora_args["rank"] = lora_args["up"].shape[1]            
+            alpha_key = origin_key.replace("lora_A.weight", "alpha").replace("lora_up.weight", "alpha")
+            if alpha_key in lora_state_dict:
+                alpha = lora_state_dict[alpha_key]
+            else:
+                alpha = lora_args["rank"] # 如果alpha不存在，则取alpha/rank = 1
+            lora_args["alpha"] = alpha
             key = key.replace(".weight", "")
             dit_dict[key] = lora_args
         return {"dit": dit_dict}
