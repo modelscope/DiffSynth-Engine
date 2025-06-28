@@ -29,12 +29,15 @@ from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.platform import empty_cache
+from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
 
 from einops import rearrange
-
+import json
 logger = logging.get_logger(__name__)
-
-
+with open(FLUX_DIT_CONFIG_FILE, "r") as f:
+    config = json.load(f)
+def block_diag(*mats):
+    return torch.block_diag(*mats)
 class FluxLoRAConverter(LoRAStateDictConverter):
     def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         flux_dim = 3072
@@ -161,34 +164,169 @@ class FluxLoRAConverter(LoRAStateDictConverter):
 
     def _from_diffusers(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         dit_dict = {}
-        for key, param in lora_state_dict.items():
+        global_rename_dict = config["diffusers"]["global_rename_dict"]
+        rename_dict = config["diffusers"]["rename_dict"]
+        rename_dict_single = config["diffusers"]["rename_dict_single"]
+        lora_state_dict_ = {}
+        dim = 3072
+        for key, param in list(lora_state_dict.items()):
             origin_key = key
-            if "lora_A.weight" not in key or "lora_up.weight" not in key:
+            param_ = param
+            if "lora_A.weight" not in key:
                 continue
             key = key.replace("transformer.", "")
-            if "single_transformer_blocks" in key:  # transformer.single_transformer_blocks.0.attn.to_k.weight
+            if key == 'proj_out.lora_A.weight':
+                key = key.replace("proj_out", "final_proj_out") 
+                lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")]
+                lora_state_dict.pop(origin_key.replace("lora_A", "lora_B"))
+                lora_state_dict.pop(origin_key.replace("lora_A", "lora_A"))
+
+            elif "single_transformer_blocks" in key:  # transformer.single_transformer_blocks.0.attn.to_k.weight
                 key = key.replace(
                     "single_transformer_blocks", "single_blocks"
                 )  # single_transformer_blocks.0.attn.to_k.weight
-                key = key.replace("norm.linear", "modulation.lin")
-                key = key.replace("proj_out", "linear2")
-                key = key.replace("attn", "linear1")  # linear1 = [to_q, to_k, to_v, mlp]
-                key = key.replace("proj_mlp", "linear1.mlp")
+                if 'attn.to_q.lora_A' in key:
+                    A_q = param
+                    A_k = lora_state_dict[origin_key.replace("to_q", "to_k")]
+                    A_v = lora_state_dict[origin_key.replace("to_q", "to_v")]
+                    A_qkv = torch.cat([A_q, A_k, A_v],dim=0)
+
+                    B_q = lora_state_dict[origin_key.replace("to_q", "to_q").replace("lora_A", "lora_B")]
+                    B_k = lora_state_dict[origin_key.replace("to_q", "to_k").replace("lora_A", "lora_B")]
+                    B_v = lora_state_dict[origin_key.replace("to_q", "to_v").replace("lora_A", "lora_B")]
+                    B_qkv = block_diag(B_q, B_k, B_v)
+
+                    lora_state_dict_[key.replace("to_q.lora_A", "to_qkv.lora_A")] = A_qkv
+                    lora_state_dict_[key.replace("to_q.lora_A", "to_qkv.lora_B")] = B_qkv
+
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_k"))
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_v"))
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_q"))
+
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_q").replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_k").replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_v").replace("lora_A", "lora_B"))
+            
+                elif 'norm.linear.lora_A' in key:
+                    lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                    lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")]
+                    
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_A"))
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_B"))
+                elif 'proj_mlp.lora_A' in key:
+                    key = key.replace("proj_mlp", "mlp.0")
+                    lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                    lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")]
+                    
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_A"))
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_B"))
+                elif 'proj_out.lora_A' in key:
+                    lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                    lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")]
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_A"))
             elif "transformer_blocks" in key:
-                key = key.replace("transformer_blocks", "double_blocks")
-                key = key.replace("attn.add_k_proj", "txt_attn.qkv.to_k")
-                key = key.replace("attn.add_q_proj", "txt_attn.qkv.to_q")
-                key = key.replace("attn.add_v_proj", "txt_attn.qkv.to_v")
-                key = key.replace("attn.to_add_out", "txt_attn.qkv.to_out")
-                key = key.replace("attn.to_k", "img_attn.qkv.to_k")
-                key = key.replace("attn.to_q", "img_attn.qkv.to_q")
-                key = key.replace("attn.to_v", "img_attn.qkv.to_v")
-                key = key.replace("attn.to_out", "img_attn.qkv.to_out")
-                key = key.replace("ff.net", "img_mlp")
-                key = key.replace("ff_context.net", "txt_mlp")
-                key = key.replace("norm1.linear", "img_mod.lin")
-                key = key.replace("norm1_context.linear", "txt_mod.lin")
-                key = key.replace(".0.proj", ".0")
+                key = key.replace("transformer_blocks", "blocks")
+                if 'attn.to_q.lora_A' in key:
+                    A_q = param
+                    A_k = lora_state_dict[origin_key.replace("to_q", "to_k")]
+                    A_v = lora_state_dict[origin_key.replace("to_q", "to_v")]
+                    A_qkv = torch.cat([A_q, A_k, A_v],dim=0)
+
+                    B_q = lora_state_dict[origin_key.replace("to_q", "to_q").replace("lora_A", "lora_B")]
+                    B_k = lora_state_dict[origin_key.replace("to_q", "to_k").replace("lora_A", "lora_B")]
+                    B_v = lora_state_dict[origin_key.replace("to_q", "to_v").replace("lora_A", "lora_B")]
+                    B_qkv = block_diag(B_q, B_k, B_v)
+
+                    lora_state_dict_[key.replace("to_q.lora_A", "a_to_qkv.lora_A")] = A_qkv
+                    lora_state_dict_[key.replace("to_q.lora_A", "a_to_qkv.lora_B")] = B_qkv
+
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_k"))
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_v"))
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_q"))
+
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_q").replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_k").replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_v").replace("lora_A", "lora_B"))
+
+                    lora_state_dict_[key.replace("to_q.lora_A", "a_to_out.lora_A")] = lora_state_dict[origin_key.replace("to_q.lora_A", "to_out.0.lora_A")]
+                    lora_state_dict_[key.replace("to_q.lora_A", "a_to_out.lora_B")] = lora_state_dict[origin_key.replace("to_q.lora_A", "to_out.0.lora_B")]
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_out.0").replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("to_q", "to_out.0").replace("lora_A", "lora_A"))
+                elif 'attn.add_q_proj.lora_A' in key:
+                    A_q = param
+                    A_k = lora_state_dict[origin_key.replace("add_q_proj", "add_k_proj")]
+                    A_v = lora_state_dict[origin_key.replace("add_q_proj", "add_v_proj")]
+                    A_qkv = torch.cat([A_q, A_k, A_v],dim=0)
+
+                    B_q = lora_state_dict[origin_key.replace("add_q_proj", "add_q_proj").replace("lora_A", "lora_B")]
+                    B_k = lora_state_dict[origin_key.replace("add_q_proj", "add_k_proj").replace("lora_A", "lora_B")]
+                    B_v = lora_state_dict[origin_key.replace("add_q_proj", "add_v_proj").replace("lora_A", "lora_B")]
+                    B_qkv = block_diag(B_q, B_k, B_v)
+
+                    lora_state_dict_[key.replace("add_q_proj.lora_A", "b_to_qkv.lora_A")] = A_qkv
+                    lora_state_dict_[key.replace("add_q_proj.lora_A", "b_to_qkv.lora_B")] = B_qkv
+
+                    lora_state_dict.pop(origin_key.replace("add_q_proj", "add_q_proj"))
+                    lora_state_dict.pop(origin_key.replace("add_q_proj", "add_k_proj"))
+                    lora_state_dict.pop(origin_key.replace("add_q_proj", "add_v_proj"))
+
+                    lora_state_dict.pop(origin_key.replace("add_q_proj", "add_q_proj").replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("add_q_proj", "add_k_proj").replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("add_q_proj", "add_v_proj").replace("lora_A", "lora_B"))
+
+                    lora_state_dict_[key.replace("add_q_proj.lora_A", "b_to_out.lora_A")] = lora_state_dict[origin_key.replace("add_q_proj.lora_A", "to_add_out.lora_A")]
+                    lora_state_dict_[key.replace("add_q_proj.lora_A", "b_to_out.lora_B")] = lora_state_dict[origin_key.replace("add_q_proj.lora_A", "to_add_out.lora_B")]
+                    lora_state_dict.pop(origin_key.replace("add_q_proj", "to_add_out").replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("add_q_proj", "to_add_out").replace("lora_A", "lora_A"))
+                elif 'ff.net.0.proj' in key:
+                    key = key.replace("ff.net.0.proj", rename_dict['ff.net.0.proj']) 
+                    lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                    lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")]
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_A"))
+                elif 'ff.net.2' in key:
+                    key = key.replace("ff.net.2", rename_dict['ff.net.2'])
+                    lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                    lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")]
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_A"))
+                elif 'ff_context.net.0.proj' in key:
+                    key = key.replace("ff_context.net.0.proj", rename_dict['ff_context.net.0.proj']) 
+                    lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                    lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")]
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_A"))
+                elif 'ff_context.net.2' in key:
+                    key = key.replace("ff_context.net.2", rename_dict['ff_context.net.2'])
+                    lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                    lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")]
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_A"))
+                elif 'norm1.linear' in key:
+                    key = key.replace("norm1.linear","norm_msa_a.linear")
+                    lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                    lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")][:3*dim]
+
+                    key = key.replace("norm_msa_a.linear","norm_mlp_a.linear")
+                    lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                    lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")][3*dim:]
+
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_A"))
+                elif 'norm1_context.linear' in key:
+                    key = key.replace("norm1_context.linear", "norm_msa_b.linear")
+                    lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                    lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")][:3*dim]
+
+                    key = key.replace("norm_msa_b.linear","norm_mlp_b.linear")
+                    lora_state_dict_[key.replace("lora_A", "lora_A")] = param
+                    lora_state_dict_[key.replace("lora_A", "lora_B")] = lora_state_dict[origin_key.replace("lora_A", "lora_B")][3*dim:]
+
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_B"))
+                    lora_state_dict.pop(origin_key.replace("lora_A", "lora_A"))
+                
             elif "context_embedder" in key:
                 key = key.replace("context_embedder", "txt_in")
             elif "x_embedder" in key and "_x_embedder" not in key:
@@ -206,19 +344,24 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                 key = key.replace("proj_out", "final_layer.linear")
             else:
                 raise ValueError(f"Unsupported key: {key}")
+        
+        for key, param in lora_state_dict_.items():
+            origin_key = key
+            if "lora_A.weight" not in key:
+                continue
             lora_args = {}
-            lora_args["up"] = param
-            lora_args["down"] = lora_state_dict[
-                origin_key.replace("lora_A.weight", "lora_B.weight").replace("lora_up.weight", "lora_down.weight")
+            lora_args["down"] = param
+            lora_args["up"] = lora_state_dict_[
+                origin_key.replace("lora_A.weight", "lora_B.weight")
             ]
             lora_args["rank"] = lora_args["up"].shape[1]
             alpha_key = origin_key.replace("lora_A.weight", "alpha").replace("lora_up.weight", "alpha")
-            if alpha_key in lora_state_dict:
-                alpha = lora_state_dict[alpha_key]
+            if alpha_key in lora_state_dict_:
+                alpha = lora_state_dict_[alpha_key]
             else:
                 alpha = lora_args["rank"]  # 如果alpha不存在，则取alpha/rank = 1
             lora_args["alpha"] = alpha
-            key = key.replace(".weight", "")
+            key = key.replace(".lora_A.weight", "")
             dit_dict[key] = lora_args
         return {"dit": dit_dict}
 

@@ -4,6 +4,7 @@ import unittest
 from tests.common.test_case import ImageTestCase
 from diffsynth_engine.pipelines import FluxImagePipeline, FluxModelConfig
 from diffsynth_engine import fetch_model
+from diffsynth_engine.pipelines.flux_image import ControlType,ControlNetParams,FluxModelConfig
 
 
 class TestFLUXImage(ImageTestCase):
