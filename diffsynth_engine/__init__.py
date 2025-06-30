@@ -10,6 +10,7 @@ from .pipelines import (
     ControlNetParams,
 )
 from .models.flux import FluxControlNet, FluxIPAdapter, FluxRedux
+from .models.sd import SDControlNet
 from .utils.download import fetch_model, fetch_modelscope_model, fetch_civitai_model
 from .utils.video import load_video, save_video
 from .tools import (
@@ -25,6 +26,7 @@ __all__ = [
     "FluxControlNet",
     "FluxIPAdapter",
     "FluxRedux",
+    "SDControlNet",
     "SDXLImagePipeline",
     "SDImagePipeline",
     "WanVideoPipeline",

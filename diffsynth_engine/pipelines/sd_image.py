@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from einops import repeat
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, List
 from tqdm import tqdm
 from PIL import Image, ImageOps
 
@@ -12,6 +12,7 @@ from diffsynth_engine.models.base import split_suffix
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.models.sd import SDTextEncoder, SDVAEDecoder, SDVAEEncoder, SDUNet, sd_unet_config
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
+from diffsynth_engine.pipelines.controlnet_helper import ControlNetParams, accumulate
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler
 from diffsynth_engine.algorithm.sampler import EulerSampler
@@ -259,21 +260,81 @@ class SDImagePipeline(BasePipeline):
         prompt_emb = self.text_encoder(input_ids, clip_skip=clip_skip)
         return prompt_emb
 
+    def preprocess_control_image(self, image: Image.Image, mode="RGB") -> torch.Tensor:
+        image = image.convert(mode)
+        image_array = np.array(image, dtype=np.float32)
+        if len(image_array.shape) == 2:
+            image_array = image_array[:, :, np.newaxis]
+        image = torch.Tensor(image_array / 255).permute(2, 0, 1).unsqueeze(0)
+        return image
+
+    def prepare_controlnet_params(self, controlnet_params: List[ControlNetParams], h, w):
+        results = []
+        for param in controlnet_params:
+            condition = self.preprocess_control_image(param.image).to(device=self.device, dtype=self.dtype)
+            results.append(
+                ControlNetParams(
+                    model=param.model,
+                    scale=param.scale,
+                    image=condition,
+                )
+            )
+        return results
+
+    def predict_multicontrolnet(
+        self,
+        latents: torch.Tensor,
+        timestep: torch.Tensor,
+        prompt_emb: torch.Tensor,
+        controlnet_params: List[ControlNetParams],
+        current_step: int,
+        total_step: int,
+    ):
+        controlnet_res_stack = None
+        if len(controlnet_params) > 0:
+            self.load_models_to_device([])        
+        for param in controlnet_params:
+            current_scale = param.scale
+            if not (
+                current_step >= param.control_start * total_step and current_step <= param.control_end * total_step
+            ):
+                # if current_step is not in the control range
+                # skip thie controlnet
+                continue
+            if self.offload_mode is not None:
+                empty_cache()
+                param.model.to(self.device)
+            controlnet_res = param.model(
+                latents,
+                timestep,
+                prompt_emb,
+                param.image
+            )
+            controlnet_res = [res * current_scale for res in controlnet_res]
+            if self.offload_mode is not None:
+                empty_cache()
+                param.model.to("cpu")            
+            controlnet_res_stack = accumulate(controlnet_res_stack, controlnet_res)
+        return controlnet_res_stack
+
     def predict_noise_with_cfg(
         self,
         latents: torch.Tensor,
         timestep: torch.Tensor,
         positive_prompt_emb: torch.Tensor,
         negative_prompt_emb: torch.Tensor,
+        controlnet_params: List[ControlNetParams],
+        current_step: int,
+        total_step: int,        
         cfg_scale: float,
         batch_cfg: bool = True,
     ):
         if cfg_scale <= 1.0:
-            return self.predict_noise(latents, timestep, positive_prompt_emb)
+            return self.predict_noise(latents, timestep, positive_prompt_emb, controlnet_params, current_step, total_step)
         if not batch_cfg:
             # cfg by predict noise one by one
-            positive_noise_pred = self.predict_noise(latents, timestep, positive_prompt_emb)
-            negative_noise_pred = self.predict_noise(latents, timestep, negative_prompt_emb)
+            positive_noise_pred = self.predict_noise(latents, timestep, positive_prompt_emb, controlnet_params, current_step, total_step)
+            negative_noise_pred = self.predict_noise(latents, timestep, negative_prompt_emb, controlnet_params, current_step, total_step)
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
         else:
@@ -281,15 +342,18 @@ class SDImagePipeline(BasePipeline):
             prompt_emb = torch.cat([positive_prompt_emb, negative_prompt_emb], dim=0)
             latents = torch.cat([latents, latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
-            positive_noise_pred, negative_noise_pred = self.predict_noise(latents, timestep, prompt_emb).chunk(2)
+            positive_noise_pred, negative_noise_pred = self.predict_noise(latents, timestep, prompt_emb, controlnet_params, current_step, total_step).chunk(2)
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
 
-    def predict_noise(self, latents, timestep, prompt_emb):
+    def predict_noise(self, latents, timestep, prompt_emb, controlnet_params, current_step, total_step):
+        controlnet_res_stack = self.predict_multicontrolnet(latents, timestep, prompt_emb, controlnet_params, current_step, total_step)
+
         noise_pred = self.unet(
             x=latents,
             timestep=timestep,
             context=prompt_emb,
+            controlnet_res_stack=controlnet_res_stack,
             device=self.device,
         )
         return noise_pred
@@ -329,8 +393,12 @@ class SDImagePipeline(BasePipeline):
         width: int = 1024,
         num_inference_steps: int = 20,
         seed: int | None = None,
+        controlnet_params: List[ControlNetParams] | ControlNetParams = [],
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
+        if not isinstance(controlnet_params, list):
+            controlnet_params = [controlnet_params]
+
         if input_image is not None:
             width, height = input_image.size
         self.validate_image_size(height, width, minimum=64, multiple_of=8)
@@ -344,6 +412,9 @@ class SDImagePipeline(BasePipeline):
             mask, overlay_image = self.prepare_mask(input_image, mask_image, vae_scale_factor=8)
         # Initialize sampler
         self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas, mask=mask)
+
+        # ControlNet
+        controlnet_params = self.prepare_controlnet_params(controlnet_params, h=height, w=width)
 
         # Encode prompts
         self.load_models_to_device(["text_encoder"])
@@ -361,6 +432,9 @@ class SDImagePipeline(BasePipeline):
                 positive_prompt_emb=positive_prompt_emb,
                 negative_prompt_emb=negative_prompt_emb,
                 cfg_scale=cfg_scale,
+                controlnet_params=controlnet_params,
+                current_step=i,
+                total_step=len(timesteps),                
                 batch_cfg=self.batch_cfg,
             )
             # Denoise

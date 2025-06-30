@@ -20,6 +20,7 @@ from diffsynth_engine.models.flux import (
 )
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
+from diffsynth_engine.pipelines.controlnet_helper import ControlNetParams, accumulate
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
@@ -238,17 +239,6 @@ def calculate_shift(
     return mu
 
 
-def accumulate(result, new_item):
-    if result is None:
-        return new_item
-    for i, item in enumerate(new_item):
-        result[i] += item
-    return result
-
-
-ImageType = Union[Image.Image, torch.Tensor, List[Image.Image], List[torch.Tensor]]
-
-
 class ControlType(Enum):
     normal = "normal"
     bfl_control = "bfl_control"
@@ -261,17 +251,6 @@ class ControlType(Enum):
             return 128
         elif self == ControlType.bfl_fill:
             return 384
-
-
-@dataclass
-class ControlNetParams:
-    scale: float
-    image: ImageType
-    model: Optional[nn.Module] = None
-    mask: Optional[ImageType] = None
-    control_start: float = 0
-    control_end: float = 1
-
 
 @dataclass
 class FluxModelConfig:

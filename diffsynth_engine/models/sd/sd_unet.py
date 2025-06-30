@@ -264,7 +264,7 @@ class SDUNet(PreTrainedModel):
         self.conv_act = nn.SiLU()
         self.conv_out = nn.Conv2d(320, 4, kernel_size=3, padding=1, device=device, dtype=dtype)
 
-    def forward(self, x, timestep, context, **kwargs):
+    def forward(self, x, timestep, context, controlnet_res_stack=None, **kwargs):
         # 1. time
         time_emb = self.time_embedding(timestep, dtype=x.dtype)
 
@@ -273,9 +273,17 @@ class SDUNet(PreTrainedModel):
         text_emb = context
         res_stack = [hidden_states]
 
+        controlnet_insert_block_id = 30
+
         # 3. blocks
         for i, block in enumerate(self.blocks):
+            # 3.1 UNet
             hidden_states, time_emb, text_emb, res_stack = block(hidden_states, time_emb, text_emb, res_stack)
+
+            # 3.2 Controlnet
+            if i == controlnet_insert_block_id and controlnet_res_stack is not None:
+                hidden_states += controlnet_res_stack.pop()
+                res_stack = [res + controlnet_res for res, controlnet_res in zip(res_stack, controlnet_res_stack)]
 
         # 4. output
         hidden_states = self.conv_norm_out(hidden_states)
