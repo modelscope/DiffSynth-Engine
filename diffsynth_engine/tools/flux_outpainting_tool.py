@@ -8,7 +8,6 @@ class FluxOutpaintingTool:
     def __init__(
         self,
         flux_model_path: str,
-        lora_list: List[Tuple[str, float]] = [],
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         offload_mode: Optional[str] = None,
@@ -16,7 +15,6 @@ class FluxOutpaintingTool:
         self.pipe = FluxImagePipeline.from_pretrained(
             flux_model_path, device=device, offload_mode=offload_mode, dtype=dtype
         )
-        self.pipe.load_loras(lora_list)
         self.controlnet = FluxControlNet.from_pretrained(
             fetch_model(
                 "alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta", path="diffusion_pytorch_model.safetensors"
@@ -24,6 +22,15 @@ class FluxOutpaintingTool:
             device=device,
             dtype=torch.bfloat16,
         )
+
+    def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
+        self.pipe.load_loras(lora_list, fused, save_original_weight)
+
+    def load_lora(self, lora_path: str, scale: float, fused: bool = True, save_original_weight: bool = False):
+        self.pipe.load_lora(lora_path, scale, fused, save_original_weight)
+
+    def unload_loras(self):
+        self.pipe.unload_loras()
 
     def __call__(
         self,

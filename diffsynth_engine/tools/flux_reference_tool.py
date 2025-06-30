@@ -12,7 +12,6 @@ class FluxReduxRefTool:
     def __init__(
         self,
         flux_model_path: str,
-        lora_list: List[Tuple[str, float]] = [],
         load_text_encoder=True,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
@@ -21,10 +20,18 @@ class FluxReduxRefTool:
         self.pipe: FluxImagePipeline = FluxImagePipeline.from_pretrained(
             flux_model_path, load_text_encoder=load_text_encoder, device=device, offload_mode=offload_mode, dtype=dtype
         )
-        self.pipe.load_loras(lora_list)
         redux_model_path = fetch_model("muse/flux1-redux-dev", path="flux1-redux-dev.safetensors", revision="v1")
-        flux_redux: FluxRedux = FluxRedux.from_pretrained(redux_model_path, device=device)
+        flux_redux = FluxRedux.from_pretrained(redux_model_path, device=device)
         self.pipe.load_redux(flux_redux)
+    
+    def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
+        self.pipe.load_loras(lora_list, fused, save_original_weight)
+    
+    def load_lora(self, lora_path: str, scale: float, fused: bool = True, save_original_weight: bool = False):
+        self.pipe.load_lora(lora_path, scale, fused, save_original_weight)
+    
+    def unload_loras(self):
+        self.pipe.unload_loras()
 
     def __call__(
         self,
