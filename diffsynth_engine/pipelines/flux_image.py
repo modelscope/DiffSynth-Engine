@@ -1,8 +1,10 @@
 import re
 import os
+import json
 import torch
 import torch.nn as nn
 import math
+from einops import rearrange
 from enum import Enum
 from functools import partial
 from typing import Callable, Dict, List, Tuple, Optional, Union
@@ -31,16 +33,10 @@ from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.platform import empty_cache
 from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
 
-from einops import rearrange
-import json
-
 logger = logging.get_logger(__name__)
+
 with open(FLUX_DIT_CONFIG_FILE, "r") as f:
     config = json.load(f)
-
-
-def block_diag(*mats):
-    return torch.block_diag(*mats)
 
 
 class FluxLoRAConverter(LoRAStateDictConverter):
@@ -199,7 +195,7 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                     B_q = lora_state_dict[origin_key.replace("to_q", "to_q").replace("lora_A", "lora_B")]
                     B_k = lora_state_dict[origin_key.replace("to_q", "to_k").replace("lora_A", "lora_B")]
                     B_v = lora_state_dict[origin_key.replace("to_q", "to_v").replace("lora_A", "lora_B")]
-                    B_qkv = block_diag(B_q, B_k, B_v)
+                    B_qkv = torch.block_diag(B_q, B_k, B_v)
 
                     lora_state_dict_[key.replace("to_q.lora_A", "to_qkv.lora_A")] = A_qkv
                     lora_state_dict_[key.replace("to_q.lora_A", "to_qkv.lora_B")] = B_qkv
@@ -247,7 +243,7 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                     B_q = lora_state_dict[origin_key.replace("to_q", "to_q").replace("lora_A", "lora_B")]
                     B_k = lora_state_dict[origin_key.replace("to_q", "to_k").replace("lora_A", "lora_B")]
                     B_v = lora_state_dict[origin_key.replace("to_q", "to_v").replace("lora_A", "lora_B")]
-                    B_qkv = block_diag(B_q, B_k, B_v)
+                    B_qkv = torch.block_diag(B_q, B_k, B_v)
 
                     lora_state_dict_[key.replace("to_q.lora_A", "a_to_qkv.lora_A")] = A_qkv
                     lora_state_dict_[key.replace("to_q.lora_A", "a_to_qkv.lora_B")] = B_qkv
@@ -277,7 +273,7 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                     B_q = lora_state_dict[origin_key.replace("add_q_proj", "add_q_proj").replace("lora_A", "lora_B")]
                     B_k = lora_state_dict[origin_key.replace("add_q_proj", "add_k_proj").replace("lora_A", "lora_B")]
                     B_v = lora_state_dict[origin_key.replace("add_q_proj", "add_v_proj").replace("lora_A", "lora_B")]
-                    B_qkv = block_diag(B_q, B_k, B_v)
+                    B_qkv = torch.block_diag(B_q, B_k, B_v)
 
                     lora_state_dict_[key.replace("add_q_proj.lora_A", "b_to_qkv.lora_A")] = A_qkv
                     lora_state_dict_[key.replace("add_q_proj.lora_A", "b_to_qkv.lora_B")] = B_qkv
