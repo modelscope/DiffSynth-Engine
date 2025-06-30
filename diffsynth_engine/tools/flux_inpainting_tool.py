@@ -25,10 +25,10 @@ class FluxInpaintingTool:
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         self.pipe.load_loras(lora_list, fused, save_original_weight)
-    
+
     def load_lora(self, lora_path: str, scale: float, fused: bool = True, save_original_weight: bool = False):
         self.pipe.load_lora(lora_path, scale, fused, save_original_weight)
-    
+
     def unload_loras(self):
         self.pipe.unload_loras()
 

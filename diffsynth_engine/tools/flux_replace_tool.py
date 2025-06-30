@@ -31,7 +31,7 @@ class FluxReplaceByControlTool:
             device=device,
             dtype=torch.bfloat16,
         )
-    
+
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         self.pipe.load_loras(lora_list, fused, save_original_weight)
 

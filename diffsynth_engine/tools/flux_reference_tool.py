@@ -23,13 +23,13 @@ class FluxReduxRefTool:
         redux_model_path = fetch_model("muse/flux1-redux-dev", path="flux1-redux-dev.safetensors", revision="v1")
         flux_redux = FluxRedux.from_pretrained(redux_model_path, device=device)
         self.pipe.load_redux(flux_redux)
-    
+
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         self.pipe.load_loras(lora_list, fused, save_original_weight)
-    
+
     def load_lora(self, lora_path: str, scale: float, fused: bool = True, save_original_weight: bool = False):
         self.pipe.load_lora(lora_path, scale, fused, save_original_weight)
-    
+
     def unload_loras(self):
         self.pipe.unload_loras()
 
