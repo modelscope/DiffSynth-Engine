@@ -81,6 +81,7 @@ If you have any questions or feedback, please scan the QR code below, or send em
 We welcome contributions to DiffSynth-Engine. After Install from source, we recommand developers install this project using following command to setup the development environment.
 ```bash
 pip install -e '.[dev]'
+pre-commit install
 ```
 TODO: Please refer to [CONTRIBUTING.md](./CONTRIBUTING.md) for more details.
 
