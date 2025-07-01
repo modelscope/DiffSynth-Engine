@@ -14,6 +14,7 @@ class ControlNetParams:
     mask: Optional[ImageType] = None
     control_start: float = 0
     control_end: float = 1
+    processor_name: Optional[str] = None # only used for sdxl controlnet union now
 
 def accumulate(result, new_item):
     if result is None:

@@ -740,7 +740,7 @@ class FluxImagePipeline(BasePipeline):
                 current_step >= param.control_start * total_step and current_step <= param.control_end * total_step
             ):
                 # if current_step is not in the control range
-                # skip thie controlnet
+                # skip this controlnet
                 continue
             if self.offload_mode is not None:
                 empty_cache()

@@ -1,9 +1,8 @@
-import json
 import torch
 import torch.nn as nn
 from typing import Dict, Optional
 
-from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter, split_suffix
+from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.models.basic.unet_helper import (

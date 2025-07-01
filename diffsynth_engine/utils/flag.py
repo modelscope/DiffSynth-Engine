@@ -19,7 +19,7 @@ if FLASH_ATTN_2_AVAILABLE:
 else:
     logger.info("Flash attention 2 is not available")
 
-XFORMERS_AVAILABLE = None # importlib.util.find_spec("xformers") is not None
+XFORMERS_AVAILABLE = importlib.util.find_spec("xformers") is not None
 if XFORMERS_AVAILABLE:
     logger.info("XFormers is available")
 else:

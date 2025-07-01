@@ -290,16 +290,14 @@ class SDImagePipeline(BasePipeline):
         current_step: int,
         total_step: int,
     ):
-        controlnet_res_stack = None
-        if len(controlnet_params) > 0:
-            self.load_models_to_device([])        
+        controlnet_res_stack = None   
         for param in controlnet_params:
             current_scale = param.scale
             if not (
                 current_step >= param.control_start * total_step and current_step <= param.control_end * total_step
             ):
                 # if current_step is not in the control range
-                # skip thie controlnet
+                # skip this controlnet
                 continue
             if self.offload_mode is not None:
                 empty_cache()

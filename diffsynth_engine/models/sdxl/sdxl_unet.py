@@ -244,7 +244,7 @@ class SDXLUNet(PreTrainedModel):
 
         self.is_kolors = is_kolors
 
-    def forward(self, x, timestep, context, y, **kwargs):
+    def forward(self, x, timestep, context, y, controlnet_res_stack=None, **kwargs):
         # 1. time embedding
         t_emb = self.time_embedding(timestep, dtype=x.dtype)
         ## add embedding
@@ -257,14 +257,23 @@ class SDXLUNet(PreTrainedModel):
         text_emb = context if self.text_intermediate_proj is None else self.text_intermediate_proj(context)
         res_stack = [hidden_states]
 
+        controlnet_insert_block_id = 22
+
         # 3. blocks
         for i, block in enumerate(self.blocks):
+            # 3.1 UNet
             hidden_states, time_emb, text_emb, res_stack = block(
                 hidden_states,
                 time_emb,
                 text_emb,
                 res_stack,
             )
+            
+            # 3.2 Controlnet
+            if i == controlnet_insert_block_id and controlnet_res_stack is not None:
+                hidden_states += controlnet_res_stack.pop()
+                res_stack = [res + controlnet_res for res, controlnet_res in zip(res_stack, controlnet_res_stack)]
+
 
         # 4. output
         hidden_states = self.conv_norm_out(hidden_states)

@@ -3,7 +3,7 @@ import re
 import torch
 import numpy as np
 from einops import repeat
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, List
 from tqdm import tqdm
 from PIL import Image, ImageOps
 from dataclasses import dataclass
@@ -20,6 +20,7 @@ from diffsynth_engine.models.sdxl import (
     sdxl_unet_config,
 )
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
+from diffsynth_engine.pipelines.controlnet_helper import ControlNetParams, accumulate
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler
 from diffsynth_engine.algorithm.sampler import EulerSampler
@@ -28,7 +29,6 @@ from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKE
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
-
 
 class SDXLLoRAConverter(LoRAStateDictConverter):
     def _replace_kohya_te1_key(self, key):
@@ -262,6 +262,28 @@ class SDXLImagePipeline(BasePipeline):
 
         return prompt_emb, add_text_embeds
 
+    def preprocess_control_image(self, image: Image.Image, mode="RGB") -> torch.Tensor:
+        image = image.convert(mode)
+        image_array = np.array(image, dtype=np.float32)
+        if len(image_array.shape) == 2:
+            image_array = image_array[:, :, np.newaxis]
+        image = torch.Tensor(image_array / 255).permute(2, 0, 1).unsqueeze(0)
+        return image
+
+    def prepare_controlnet_params(self, controlnet_params: List[ControlNetParams], h, w):
+        results = []
+        for param in controlnet_params:
+            condition = self.preprocess_control_image(param.image).to(device=self.device, dtype=self.dtype)
+            results.append(
+                ControlNetParams(
+                    model=param.model,
+                    scale=param.scale,
+                    image=condition,
+                    processor_name=param.processor_name
+                )
+            )
+        return results
+
     def prepare_add_time_id(self, latents):
         height, width = latents.shape[2] * 8, latents.shape[3] * 8
         add_time_id = torch.tensor([height, width, 0, 0, height, width], device=self.device).repeat(latents.shape[0])
@@ -277,6 +299,47 @@ class SDXLImagePipeline(BasePipeline):
         add_embeds = add_embeds.to(dtype)
         return add_embeds
 
+    def predict_multicontrolnet(
+        self,
+        latents: torch.Tensor,
+        timestep: torch.Tensor,
+        prompt_emb: torch.Tensor,
+        add_text_embeds: torch.Tensor,        
+        add_time_id: torch.Tensor,    
+        controlnet_params: List[ControlNetParams],
+        current_step: int,
+        total_step: int,
+    ):
+        controlnet_res_stack = None 
+        for param in controlnet_params:
+            current_scale = param.scale
+            if not (
+                current_step >= param.control_start * total_step and current_step <= param.control_end * total_step
+            ):
+                # if current_step is not in the control range
+                # skip this controlnet
+                continue
+            if self.offload_mode is not None:
+                empty_cache()
+                param.model.to(self.device)
+            if param.image.shape[0] != latents.shape[0]:
+                param.image = repeat(param.image, "1 c h w -> b c h w", b=latents.shape[0])
+            controlnet_res = param.model(
+                latents,
+                timestep,
+                prompt_emb,
+                param.image,
+                param.processor_name,
+                add_time_id,
+                add_text_embeds,
+            )
+            controlnet_res = [res * current_scale for res in controlnet_res]
+            if self.offload_mode is not None:
+                empty_cache()
+                param.model.to("cpu")            
+            controlnet_res_stack = accumulate(controlnet_res_stack, controlnet_res)
+        return controlnet_res_stack
+
     def predict_noise_with_cfg(
         self,
         latents: torch.Tensor,
@@ -285,19 +348,22 @@ class SDXLImagePipeline(BasePipeline):
         negative_prompt_emb: torch.Tensor,
         positive_add_text_embeds: torch.Tensor,
         negative_add_text_embeds: torch.Tensor,
+        controlnet_params: List[ControlNetParams],
+        current_step: int,
+        total_step: int,            
         add_time_id: torch.Tensor,
         cfg_scale: float,
         batch_cfg: bool = True,
     ):
         if cfg_scale <= 1.0:
-            return self.predict_noise(latents, timestep, positive_prompt_emb, add_time_id)
+            return self.predict_noise(latents, timestep, positive_prompt_emb, add_time_id, controlnet_params, current_step, total_step)
         if not batch_cfg:
             # cfg by predict noise one by one
             positive_noise_pred = self.predict_noise(
-                latents, timestep, positive_prompt_emb, positive_add_text_embeds, add_time_id
+                latents, timestep, positive_prompt_emb, positive_add_text_embeds, add_time_id, controlnet_params, current_step, total_step
             )
             negative_noise_pred = self.predict_noise(
-                latents, timestep, negative_prompt_emb, negative_add_text_embeds, add_time_id
+                latents, timestep, negative_prompt_emb, negative_add_text_embeds, add_time_id, controlnet_params, current_step, total_step
             )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
@@ -309,18 +375,21 @@ class SDXLImagePipeline(BasePipeline):
             latents = torch.cat([latents, latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
             positive_noise_pred, negative_noise_pred = self.predict_noise(
-                latents, timestep, prompt_emb, add_text_embeds, add_time_ids
+                latents, timestep, prompt_emb, add_text_embeds, add_time_ids, controlnet_params, current_step, total_step
             )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
 
-    def predict_noise(self, latents, timestep, prompt_emb, add_text_embeds, add_time_id):
+    def predict_noise(self, latents, timestep, prompt_emb, add_text_embeds, add_time_id, controlnet_params, current_step, total_step):
         y = self.prepare_add_embeds(add_text_embeds, add_time_id, self.dtype)
+        controlnet_res_stack = self.predict_multicontrolnet(latents, timestep, prompt_emb, add_text_embeds, add_time_id, controlnet_params, current_step, total_step)
+
         noise_pred = self.unet(
             x=latents,
             timestep=timestep,
             y=y,
             context=prompt_emb,
+            controlnet_res_stack=controlnet_res_stack,
             device=self.device,
         )
         return noise_pred
@@ -361,8 +430,12 @@ class SDXLImagePipeline(BasePipeline):
         width: int = 1024,
         num_inference_steps: int = 20,
         seed: int | None = None,
+        controlnet_params: List[ControlNetParams] | ControlNetParams = [],        
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
+        if not isinstance(controlnet_params, list):
+            controlnet_params = [controlnet_params]
+
         if input_image is not None:
             width, height = input_image.size
         self.validate_image_size(height, width, minimum=64, multiple_of=8)
@@ -376,6 +449,9 @@ class SDXLImagePipeline(BasePipeline):
             mask, overlay_image = self.prepare_mask(input_image, mask_image, vae_scale_factor=8)
         # Initialize sampler
         self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas, mask=mask)
+
+        # ControlNet
+        controlnet_params = self.prepare_controlnet_params(controlnet_params, h=height, w=width)
 
         # Encode prompts
         self.load_models_to_device(["text_encoder", "text_encoder_2"])
@@ -411,6 +487,9 @@ class SDXLImagePipeline(BasePipeline):
                 negative_add_text_embeds=negative_add_text_embeds,
                 add_time_id=add_time_id,
                 cfg_scale=cfg_scale,
+                controlnet_params=controlnet_params,
+                current_step=i,
+                total_step=len(timesteps),                
                 batch_cfg=self.batch_cfg,
             )
             # Denoise
