@@ -62,7 +62,7 @@ class BasePipeline:
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         for lora_path, lora_scale in lora_list:
             logger.info(f"loading lora from {lora_path} with scale {lora_scale}")
-            state_dict = load_file(lora_path, device="cpu")
+            state_dict = load_file(lora_path, device=self.device)
             lora_state_dict = self.lora_converter.convert(state_dict)
             for model_name, state_dict in lora_state_dict.items():
                 model = getattr(self, model_name)

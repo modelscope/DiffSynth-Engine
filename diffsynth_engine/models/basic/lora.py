@@ -131,8 +131,7 @@ class LoRALinear(nn.Linear):
         self._lora_dict.clear()
         self._frozen_lora_list = []
         if self._original_weight is not None:
-            self.weight.data = self._original_weight
-            self._original_weight = None
+            self.weight.data.copy_(self._original_weight)
 
     def forward(self, x):
         w_x = super().forward(x)

@@ -24,7 +24,7 @@ def load_file(path: str | os.PathLike, device: str = "cpu"):
             direct_io=(os.environ.get("FAST_SAFETENSORS_DIRECT_IO", "False").upper() == "TRUE"),
         )
         logger.info(f"FastSafetensors Load Model End. Time: {time.time() - start_time:.2f}s")
-        return result
+        return {k: v.to(device) for k, v in result.items()}
     else:
         logger.info(f"Safetensors load model from {path}")
         start_time = time.time()
