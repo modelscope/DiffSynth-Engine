@@ -382,7 +382,7 @@ class ParallelWrapper:
                 raise RuntimeError(f"[ParallelWrapper] {self._module_name}.{name} timeout")
             except Exception as e:
                 logger.error(f"[ParallelWrapper] {self._module_name}.{name} error: {e}")
-                raise RuntimeError(f"[ParallelWrapper] {self._module_name}.{name}error: {e}")
+                raise RuntimeError(f"[ParallelWrapper] {self._module_name}.{name} error: {e}")
             logger.info(f"[ParallelWrapper] {self._module_name}.{name} done")
             return res
 
