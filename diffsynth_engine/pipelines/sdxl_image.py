@@ -452,7 +452,6 @@ class SDXLImagePipeline(BasePipeline):
 
         # ControlNet
         controlnet_params = self.prepare_controlnet_params(controlnet_params, h=height, w=width)
-
         # Encode prompts
         self.load_models_to_device(["text_encoder", "text_encoder_2"])
         positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)

@@ -22,17 +22,17 @@ class QuickGELU(torch.nn.Module):
 
 class ResidualAttentionBlock(torch.nn.Module):
 
-    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None):
+    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None, device="cuda:0", dtype=torch.float16):
         super().__init__()
 
-        self.attn = torch.nn.MultiheadAttention(d_model, n_head)
-        self.ln_1 = torch.nn.LayerNorm(d_model)
+        self.attn = torch.nn.MultiheadAttention(d_model, n_head, device=device, dtype=dtype)
+        self.ln_1 = torch.nn.LayerNorm(d_model, device=device, dtype=dtype)
         self.mlp = torch.nn.Sequential(OrderedDict([
-            ("c_fc", torch.nn.Linear(d_model, d_model * 4)),
+            ("c_fc", torch.nn.Linear(d_model, d_model * 4, device=device, dtype=dtype)),
             ("gelu", QuickGELU()),
-            ("c_proj", torch.nn.Linear(d_model * 4, d_model))
+            ("c_proj", torch.nn.Linear(d_model * 4, d_model, device=device, dtype=dtype))
         ]))
-        self.ln_2 = torch.nn.LayerNorm(d_model)
+        self.ln_2 = torch.nn.LayerNorm(d_model, device=device, dtype=dtype)
         self.attn_mask = attn_mask
 
     def attention(self, x: torch.Tensor):
@@ -162,65 +162,65 @@ class SDXLControlNetUnion(PreTrainedModel):
 
         self.add_time_proj = TemporalTimesteps(256, flip_sin_to_cos=True, downscale_freq_shift=0, device=device, dtype=dtype)
         self.add_time_embedding = torch.nn.Sequential(
-            torch.nn.Linear(2816, 1280),
+            torch.nn.Linear(2816, 1280, device=device, dtype=dtype),
             torch.nn.SiLU(),
-            torch.nn.Linear(1280, 1280)
+            torch.nn.Linear(1280, 1280, device=device, dtype=dtype)
         )
         self.control_type_proj = TemporalTimesteps(256, flip_sin_to_cos=True, downscale_freq_shift=0, device=device, dtype=dtype)
         self.control_type_embedding = torch.nn.Sequential(
-            torch.nn.Linear(256 * 8, 1280),
+            torch.nn.Linear(256 * 8, 1280, device=device, dtype=dtype),
             torch.nn.SiLU(),
-            torch.nn.Linear(1280, 1280)
+            torch.nn.Linear(1280, 1280, device=device, dtype=dtype)
         )
-        self.conv_in = torch.nn.Conv2d(4, 320, kernel_size=3, padding=1)
+        self.conv_in = torch.nn.Conv2d(4, 320, kernel_size=3, padding=1, device=device, dtype=dtype)
 
-        self.controlnet_conv_in = ControlNetConditioningLayer(channels=(3, 16, 32, 96, 256, 320))
-        self.controlnet_transformer = ResidualAttentionBlock(320, 8)
+        self.controlnet_conv_in = ControlNetConditioningLayer(channels=(3, 16, 32, 96, 256, 320), device=device, dtype=dtype)
+        self.controlnet_transformer = ResidualAttentionBlock(320, 8, device=device, dtype=dtype)
         self.task_embedding = torch.nn.Parameter(torch.randn(8, 320))
-        self.spatial_ch_projs = torch.nn.Linear(320, 320)
+        self.spatial_ch_projs = torch.nn.Linear(320, 320, device=device, dtype=dtype)
 
         self.blocks = torch.nn.ModuleList([
             # DownBlock2D
-            ResnetBlock(320, 320, 1280),
+            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
             PushBlock(),
-            ResnetBlock(320, 320, 1280),
+            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
             PushBlock(),
-            DownSampler(320),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(320, 640, 1280),
-            AttentionBlock(10, 64, 640, 2, 2048),
-            PushBlock(),
-            ResnetBlock(640, 640, 1280),
-            AttentionBlock(10, 64, 640, 2, 2048),
-            PushBlock(),
-            DownSampler(640),
+            DownSampler(320, device=device, dtype=dtype),
             PushBlock(),
             # CrossAttnDownBlock2D
-            ResnetBlock(640, 1280, 1280),
-            AttentionBlock(20, 64, 1280, 10, 2048),
+            ResnetBlock(320, 640, 1280, device=device, dtype=dtype),
+            AttentionBlock(10, 64, 640, 2, 2048, device=device, dtype=dtype),
             PushBlock(),
-            ResnetBlock(1280, 1280, 1280),
-            AttentionBlock(20, 64, 1280, 10, 2048),
+            ResnetBlock(640, 640, 1280, device=device, dtype=dtype),
+            AttentionBlock(10, 64, 640, 2, 2048, device=device, dtype=dtype),
+            PushBlock(),
+            DownSampler(640, device=device, dtype=dtype),
+            PushBlock(),
+            # CrossAttnDownBlock2D
+            ResnetBlock(640, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
+            PushBlock(),
+            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
             PushBlock(),
             # UNetMidBlock2DCrossAttn
-            ResnetBlock(1280, 1280, 1280),
-            AttentionBlock(20, 64, 1280, 10, 2048),
-            ResnetBlock(1280, 1280, 1280),
+            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
+            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
             PushBlock()
         ])
 
         self.controlnet_blocks = torch.nn.ModuleList([
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1)),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1)),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1)),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1)),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1)),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1)),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1)),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1)),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1)),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1)),
+            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
         ])
 
         # 0 -- openpose

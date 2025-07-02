@@ -15,17 +15,17 @@ from diffsynth_engine.models.basic.unet_helper import (
 )
 
 class ControlNetConditioningLayer(nn.Module):
-    def __init__(self, channels = (3, 16, 32, 96, 256, 320)):
+    def __init__(self, channels = (3, 16, 32, 96, 256, 320), device = "cuda:0", dtype=torch.float16):
         super().__init__()
         self.blocks = torch.nn.ModuleList([])
-        self.blocks.append(torch.nn.Conv2d(channels[0], channels[1], kernel_size=3, padding=1))
+        self.blocks.append(torch.nn.Conv2d(channels[0], channels[1], kernel_size=3, padding=1, device=device, dtype=dtype))
         self.blocks.append(torch.nn.SiLU())
         for i in range(1, len(channels) - 2):
-            self.blocks.append(torch.nn.Conv2d(channels[i], channels[i], kernel_size=3, padding=1))
+            self.blocks.append(torch.nn.Conv2d(channels[i], channels[i], kernel_size=3, padding=1, device=device, dtype=dtype))
             self.blocks.append(torch.nn.SiLU())
-            self.blocks.append(torch.nn.Conv2d(channels[i], channels[i+1], kernel_size=3, padding=1, stride=2))
+            self.blocks.append(torch.nn.Conv2d(channels[i], channels[i+1], kernel_size=3, padding=1, stride=2, device=device, dtype=dtype))
             self.blocks.append(torch.nn.SiLU())
-        self.blocks.append(torch.nn.Conv2d(channels[-2], channels[-1], kernel_size=3, padding=1))
+        self.blocks.append(torch.nn.Conv2d(channels[-2], channels[-1], kernel_size=3, padding=1, device=device, dtype=dtype))
 
     def forward(self, conditioning):
         for block in self.blocks:
@@ -496,64 +496,64 @@ class SDControlNet(PreTrainedModel):
     ):
         super().__init__()
         self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280, device=device, dtype=dtype)
-        self.conv_in = torch.nn.Conv2d(4, 320, kernel_size=3, padding=1)
+        self.conv_in = torch.nn.Conv2d(4, 320, kernel_size=3, padding=1, device=device, dtype=dtype)
 
-        self.controlnet_conv_in = ControlNetConditioningLayer(channels=(3, 16, 32, 96, 256, 320))
+        self.controlnet_conv_in = ControlNetConditioningLayer(channels=(3, 16, 32, 96, 256, 320), device=device, dtype=dtype)
 
         self.blocks = torch.nn.ModuleList([
             # CrossAttnDownBlock2D
-            ResnetBlock(320, 320, 1280),
-            AttentionBlock(8, 40, 320, 1, 768),
+            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
+            AttentionBlock(8, 40, 320, 1, 768, device=device, dtype=dtype),
             PushBlock(),
-            ResnetBlock(320, 320, 1280),
-            AttentionBlock(8, 40, 320, 1, 768),
+            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
+            AttentionBlock(8, 40, 320, 1, 768, device=device, dtype=dtype),
             PushBlock(),
-            DownSampler(320),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(320, 640, 1280),
-            AttentionBlock(8, 80, 640, 1, 768),
-            PushBlock(),
-            ResnetBlock(640, 640, 1280),
-            AttentionBlock(8, 80, 640, 1, 768),
-            PushBlock(),
-            DownSampler(640),
+            DownSampler(320, device=device, dtype=dtype),
             PushBlock(),
             # CrossAttnDownBlock2D
-            ResnetBlock(640, 1280, 1280),
-            AttentionBlock(8, 160, 1280, 1, 768),
+            ResnetBlock(320, 640, 1280, device=device, dtype=dtype),
+            AttentionBlock(8, 80, 640, 1, 768, device=device, dtype=dtype),
             PushBlock(),
-            ResnetBlock(1280, 1280, 1280),
-            AttentionBlock(8, 160, 1280, 1, 768),
+            ResnetBlock(640, 640, 1280, device=device, dtype=dtype),
+            AttentionBlock(8, 80, 640, 1, 768, device=device, dtype=dtype),
             PushBlock(),
-            DownSampler(1280),
+            DownSampler(640, device=device, dtype=dtype),
+            PushBlock(),
+            # CrossAttnDownBlock2D
+            ResnetBlock(640, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(8, 160, 1280, 1, 768, device=device, dtype=dtype),
+            PushBlock(),
+            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(8, 160, 1280, 1, 768, device=device, dtype=dtype),
+            PushBlock(),
+            DownSampler(1280, device=device, dtype=dtype),
             PushBlock(),
             # DownBlock2D
-            ResnetBlock(1280, 1280, 1280),
+            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
             PushBlock(),
-            ResnetBlock(1280, 1280, 1280),
+            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
             PushBlock(),
             # UNetMidBlock2DCrossAttn
-            ResnetBlock(1280, 1280, 1280),
-            AttentionBlock(8, 160, 1280, 1, 768),
-            ResnetBlock(1280, 1280, 1280),
+            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(8, 160, 1280, 1, 768, device=device, dtype=dtype),
+            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
             PushBlock()
         ])
 
         self.controlnet_blocks = torch.nn.ModuleList([
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1)),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1)),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), bias=False),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), bias=False),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1)),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False),
+            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
+            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
         ])
 
     def forward(
