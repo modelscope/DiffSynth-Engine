@@ -167,7 +167,7 @@ class SDUNetStateDictConverter(StateDictConverter):
             state_dict = self._from_diffusers(state_dict)
             logger.info("use diffusers format state dict")
         else:
-            logger.info("user diffsynth format state dict")
+            logger.info("use diffsynth format state dict")
         return state_dict
 
 

@@ -62,7 +62,7 @@ if SAGE_ATTN_AVAILABLE:
 if SPARGE_ATTN_AVAILABLE:
     from spas_sage_attn import spas_sage2_attn_meansim_cuda
 
-    def sparge_attn(self, q, k, v, attn_mask=None, scale=None):
+    def sparge_attn(q, k, v, attn_mask=None, scale=None):
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
