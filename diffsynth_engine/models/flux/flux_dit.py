@@ -411,6 +411,7 @@ class FluxDiT(PreTrainedModel):
         )
 
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
+        use_cfg = hidden_states.shape[0] > 1
         with (
             fp8_inference(fp8_linear_enabled),
             gguf_inference(),
@@ -426,7 +427,8 @@ class FluxDiT(PreTrainedModel):
                     image_ids,
                     *controlnet_double_block_output,
                     *controlnet_single_block_output,
-                )
+                ),
+                use_cfg=use_cfg,
             ),
         ):
             # warning: keep the order of time_embedding + guidance_embedding + pooled_text_embedding
@@ -483,7 +485,7 @@ class FluxDiT(PreTrainedModel):
                 (hidden_states,) = sequence_parallel_unshard((hidden_states,), seq_dims=(1,), seq_lens=(h * w // 4,))
 
             hidden_states = self.unpatchify(hidden_states, h, w)
-            (hidden_states,) = cfg_parallel_unshard((hidden_states,))
+            (hidden_states,) = cfg_parallel_unshard((hidden_states,), use_cfg=use_cfg)
             return hidden_states
 
     @classmethod

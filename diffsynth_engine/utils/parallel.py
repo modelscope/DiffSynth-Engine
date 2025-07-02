@@ -330,9 +330,9 @@ class ParallelWrapper:
         device: str = "cuda",
     ):
         current_method = mp.get_start_method(allow_none=True)
-        if current_method is None or current_method != 'spawn':
+        if current_method is None or current_method != "spawn":
             try:
-                mp.set_start_method('spawn')
+                mp.set_start_method("spawn")
             except RuntimeError as e:
                 raise RuntimeError("Failed to set start method to spawn:", e)
         super().__init__()
@@ -404,8 +404,8 @@ class ParallelWrapper:
 
 
 @contextmanager
-def cfg_parallel(tensors: List[torch.Tensor]):
-    if get_cfg_world_size() == 1:
+def cfg_parallel(tensors: List[torch.Tensor], use_cfg=True):
+    if get_cfg_world_size() == 1 or not use_cfg:
         yield
         return
 
@@ -426,8 +426,8 @@ def cfg_parallel(tensors: List[torch.Tensor]):
         tensor.copy_(original_tensor)
 
 
-def cfg_parallel_unshard(tensors: List[torch.Tensor]):
-    if get_cfg_world_size() == 1:
+def cfg_parallel_unshard(tensors: List[torch.Tensor], use_cfg=True):
+    if get_cfg_world_size() == 1 or not use_cfg:
         return tensors
 
     unshard_tensors = []
