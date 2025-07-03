@@ -2,12 +2,11 @@ import re
 import os
 import json
 import torch
-import torch.nn as nn
 import torch.distributed as dist
 import math
 from einops import rearrange
 from enum import Enum
-from typing import Callable, Dict, List, Tuple, Optional, Union
+from typing import Callable, Dict, List, Tuple, Optional
 from tqdm import tqdm
 from PIL import Image
 from dataclasses import dataclass

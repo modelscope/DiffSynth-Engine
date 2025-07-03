@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import Dict, List, Tuple, Union, Optional
+from typing import List, Union, Optional
 from PIL import Image
 from dataclasses import dataclass
 

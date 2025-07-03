@@ -10,8 +10,6 @@ from diffsynth_engine.models.basic.unet_helper import (
     AttentionBlock,
     PushBlock,
     DownSampler,
-    PopBlock,
-    UpSampler,
 )
 
 class ControlNetConditioningLayer(nn.Module):
@@ -565,7 +563,6 @@ class SDControlNet(PreTrainedModel):
         time_emb = self.time_embedding(timestep, dtype=sample.dtype)
 
         # 2. pre-process
-        height, width = sample.shape[2], sample.shape[3]
         hidden_states = self.conv_in(sample) + self.controlnet_conv_in(conditioning)
         text_emb = encoder_hidden_states
         res_stack = [hidden_states]
