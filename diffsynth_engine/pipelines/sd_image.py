@@ -310,8 +310,8 @@ class SDImagePipeline(BasePipeline):
             )
             controlnet_res = [res * current_scale for res in controlnet_res]
             if self.offload_mode is not None:
+                param.model.to("cpu")        
                 empty_cache()
-                param.model.to("cpu")            
             controlnet_res_stack = accumulate(controlnet_res_stack, controlnet_res)
         return controlnet_res_stack
 

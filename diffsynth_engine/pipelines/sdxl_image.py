@@ -335,8 +335,8 @@ class SDXLImagePipeline(BasePipeline):
             )
             controlnet_res = [res * current_scale for res in controlnet_res]
             if self.offload_mode is not None:
-                empty_cache()
-                param.model.to("cpu")            
+                param.model.to("cpu") 
+                empty_cache()           
             controlnet_res_stack = accumulate(controlnet_res_stack, controlnet_res)
         return controlnet_res_stack
 

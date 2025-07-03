@@ -757,8 +757,8 @@ class FluxImagePipeline(BasePipeline):
                 text_ids,
             )
             if self.offload_mode is not None:
-                empty_cache()
                 param.model.to("cpu")
+                empty_cache()
             double_block_output_results = accumulate(double_block_output_results, double_block_output)
             single_block_output_results = accumulate(single_block_output_results, single_block_output)
         return double_block_output_results, single_block_output_results
