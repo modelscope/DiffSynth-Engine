@@ -1,13 +1,10 @@
 import torch
-import torch.nn as nn
 from typing import Optional, Dict
 from diffsynth_engine.models.basic.unet_helper import (
     ResnetBlock,
     AttentionBlock,
     PushBlock,
     DownSampler,
-    PopBlock,
-    UpSampler,
 )
 from diffsynth_engine.models.sd.sd_controlnet import ControlNetConditioningLayer
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
@@ -283,7 +280,6 @@ class SDXLControlNetUnion(PreTrainedModel):
         time_emb = t_emb + add_embeds + control_embeds
 
         # 2. pre-process
-        height, width = sample.shape[2], sample.shape[3]
         hidden_states = self.conv_in(sample)
         hidden_states = self.fuse_condition_to_input(hidden_states, task_id, conditioning)
         text_emb = encoder_hidden_states

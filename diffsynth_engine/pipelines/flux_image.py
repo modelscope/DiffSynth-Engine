@@ -1,11 +1,10 @@
 import re
 import os
 import torch
-import torch.nn as nn
 import math
 from enum import Enum
 from functools import partial
-from typing import Callable, Dict, List, Tuple, Optional, Union
+from typing import Callable, Dict, List, Tuple, Optional
 from tqdm import tqdm
 from PIL import Image
 from dataclasses import dataclass

@@ -26,6 +26,7 @@ from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler
 from diffsynth_engine.algorithm.sampler import EulerSampler
 from diffsynth_engine.utils.prompt import tokenize_long_prompt
 from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKENIZER_2_CONF_PATH
+from diffsynth_engine.utils.platform import empty_cache
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -89,6 +90,8 @@ class SDXLLoRAConverter(LoRAStateDictConverter):
                 unet_dict[key] = lora_args
             else:
                 raise ValueError(f"Unsupported key: {key}")
+        # clip skip
+        te1_dict = {k: v for k, v in te1_dict.items() if not k.startswith('encoders.11')}
         return {"unet": unet_dict, "text_encoder": te1_dict, "text_encoder_2": te2_dict}
 
     def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:

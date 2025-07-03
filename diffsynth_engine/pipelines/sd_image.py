@@ -18,6 +18,7 @@ from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler
 from diffsynth_engine.algorithm.sampler import EulerSampler
 from diffsynth_engine.utils.prompt import tokenize_long_prompt
 from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH
+from diffsynth_engine.utils.platform import empty_cache
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
