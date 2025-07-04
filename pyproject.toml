@@ -59,6 +59,7 @@ diffsynth_engine = [
 ]
 
 [tool.setuptools_scm]
+local_scheme = "no-local-version"
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
