@@ -545,7 +545,10 @@ class FluxImagePipeline(BasePipeline):
             logger.info(f"loading state dict from {model_config.t5_path} ...")
             t5_state_dict = cls.load_model_checkpoint(model_config.t5_path, device="cpu", dtype=dtype)
 
-        init_device = "cpu" if parallelism > 1 or offload_mode is not None else device
+        if offload_mode is not None:
+            init_device = "cpu"
+        else:
+            init_device = cls.get_init_device(parallelism, use_cfg_parallel, model_config, device)
         if load_text_encoder:
             tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
             tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)

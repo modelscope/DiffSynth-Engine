@@ -214,6 +214,21 @@ class BasePipeline:
         return self
 
     @staticmethod
+    def get_init_device(
+        parallelism: int,
+        use_cfg_parallel: bool,
+        model_config: ModelConfig,
+        device: str,
+    ) -> str:
+        if parallelism == 1:
+            return device
+        tp_degree = getattr(model_config, "tp_degree", None)
+        use_fsdp = getattr(model_config, "use_fsdp", False)
+        if use_fsdp or (tp_degree is not None and tp_degree > 1):
+            return "cpu"
+        return device
+
+    @staticmethod
     def init_parallel_config(
         parallelism: int,
         use_cfg_parallel: bool,
