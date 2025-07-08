@@ -773,7 +773,7 @@ class FluxImagePipeline(BasePipeline):
                 image_ids = image_ids.repeat(1, 2, 1)
                 image_ids[:, image_ids.shape[1] // 2 :, 0] += 1
             else:
-                latents = torch.cat((latents, controlnet_param.image * controlnet_params.scale), dim=1)
+                latents = torch.cat((latents, controlnet_param.image * controlnet_param.scale), dim=1)
             latents = latents.to(self.dtype)
             controlnet_params = []
 
