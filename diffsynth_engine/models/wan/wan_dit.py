@@ -334,9 +334,10 @@ class WanDiT(PreTrainedModel):
         clip_feature: Optional[torch.Tensor] = None,  # clip_vision_encoder(img)
         y: Optional[torch.Tensor] = None,  # vae_encoder(img)
     ):
+        use_cfg = x.shape[0] > 1
         with (
             gguf_inference(),
-            cfg_parallel((x, context, timestep, clip_feature, y)),
+            cfg_parallel((x, context, timestep, clip_feature, y), use_cfg=use_cfg),
         ):
             t = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep))
             t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
@@ -365,7 +366,7 @@ class WanDiT(PreTrainedModel):
                 x = self.head(x, t)
                 (x,) = sequence_parallel_unshard((x,), seq_dims=(1,), seq_lens=(f * h * w,))
             x = self.unpatchify(x, (f, h, w))
-            (x,) = cfg_parallel_unshard((x,))
+            (x,) = cfg_parallel_unshard((x,), use_cfg=use_cfg)
             return x
 
     @classmethod

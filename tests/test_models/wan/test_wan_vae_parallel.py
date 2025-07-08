@@ -1,5 +1,4 @@
 import torch
-import torch.multiprocessing as mp
 import unittest
 import numpy as np
 
@@ -13,7 +12,6 @@ from tests.common.test_case import VideoTestCase
 class TestWanVAEParallel(VideoTestCase):
     @classmethod
     def setUpClass(cls):
-        mp.set_start_method("spawn")
         cls._vae_model_path = fetch_model("muse/wan2.1-vae", path="vae.safetensors")
         loaded_state_dict = load_file(cls._vae_model_path)
         vae = WanVideoVAE.from_state_dict(loaded_state_dict, parallelism=4)
