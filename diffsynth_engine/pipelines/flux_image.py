@@ -419,9 +419,10 @@ class ControlType(Enum):
     normal = "normal"
     bfl_control = "bfl_control"
     bfl_fill = "bfl_fill"
+    bfl_kontext = "bfl_kontext"
 
     def get_in_channel(self):
-        if self == ControlType.normal:
+        if self in [ControlType.normal, ControlType.bfl_kontext]:
             return 64
         elif self == ControlType.bfl_control:
             return 128
@@ -764,9 +765,15 @@ class FluxImagePipeline(BasePipeline):
         current_step: int,
         total_step: int,
     ):
+        origin_latents_shape = latents.shape
         if self.control_type != ControlType.normal:
             controlnet_param = controlnet_params[0]
-            latents = torch.cat((latents, controlnet_param.image * controlnet_param.scale), dim=1)
+            if self.control_type == ControlType.bfl_kontext:
+                latents = torch.cat((latents, controlnet_param.image * controlnet_param.scale), dim=2)
+                image_ids = image_ids.repeat(1, 2, 1)
+                image_ids[:, image_ids.shape[1] // 2 :, 0] += 1
+            else:
+                latents = torch.cat((latents, controlnet_param.image * controlnet_params.scale), dim=1)
             latents = latents.to(self.dtype)
             controlnet_params = []
 
@@ -797,6 +804,8 @@ class FluxImagePipeline(BasePipeline):
             controlnet_double_block_output=double_block_output,
             controlnet_single_block_output=single_block_output,
         )
+        if self.control_type == ControlType.bfl_kontext:
+            noise_pred = noise_pred[:, :, : origin_latents_shape[2], : origin_latents_shape[3]]
         return noise_pred
 
     def prepare_latents(

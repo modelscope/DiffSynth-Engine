@@ -108,5 +108,33 @@ class TestFLUXBFLFillImage(ImageTestCase):
         self.assertImageEqualAndSaveFailed(image, "flux/flux_bfl_fill.png", threshold=0.99)
 
 
+class TestFLUXBFLKontextImage(ImageTestCase):
+    @classmethod
+    def setUpClass(cls):
+        # cls.kontext_model_path = fetch_model(
+        #     "black-forest-labs/FLUX.1-Kontext-dev", revision="master", path="flux1-kontext-dev.safetensors"
+        # )
+        from diffsynth_engine.pipelines.flux_image import FluxModelConfig
+        kontext_model_config = FluxModelConfig(
+            dit_path="/home/admin/.cache/datahub/openlm/RTPDiffusion/flux.1-dev-kontext/v1/flux1-kontext-dev.safetensors",
+            clip_path="/home/admin/.cache/datahub/openlm/RTPDiffusion/sd35_clip_l/20241024114322/clip_l.safetensors",
+            vae_path="/home/admin/.cache/datahub/openlm/RTPDiffusion/flux_vae/20241016114315/ae.safetensors",
+            t5_path="/home/admin/.cache/datahub/openlm/RTPDiffusion/t5xxl_v1_1_bf16/20241024105236/t5xxl_v1_1_bf16.safetensors"
+        )
+        cls.pipe = FluxImagePipeline.from_pretrained(kontext_model_config, control_type=ControlType.bfl_kontext).eval()
+    
+    def test_kontext_image(self):
+        image = self.pipe(
+            prompt="Make the wall color to red",
+            height=1024,
+            width=1024,
+            controlnet_params=ControlNetParams(image=self.get_input_image("flux_kontext_input.png")),
+            cfg_scale=1.0,
+            seed=42,
+            num_inference_steps=30,
+        )
+        self.assertImageEqualAndSaveFailed(image, "flux/flux_bfl_kontext.png", threshold=0.99)
+
+
 if __name__ == "__main__":
     unittest.main()

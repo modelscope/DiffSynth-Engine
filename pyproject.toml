@@ -30,7 +30,8 @@ dependencies = [
     "pillow",
     "imageio[ffmpeg]",
     "yunchang ; sys_platform == 'linux'",
-    "onnxruntime"
+    "onnxruntime",
+    "opencv-python"
 ]
 
 [project.optional-dependencies]

@@ -8,8 +8,8 @@ ImageType = Union[Image.Image, torch.Tensor, List[Image.Image], List[torch.Tenso
 
 @dataclass
 class ControlNetParams:
-    scale: float
     image: ImageType
+    scale: float = 1.0
     model: Optional[nn.Module] = None
     mask: Optional[ImageType] = None
     control_start: float = 0
