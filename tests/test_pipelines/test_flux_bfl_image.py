@@ -111,17 +111,10 @@ class TestFLUXBFLFillImage(ImageTestCase):
 class TestFLUXBFLKontextImage(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        # cls.kontext_model_path = fetch_model(
-        #     "black-forest-labs/FLUX.1-Kontext-dev", revision="master", path="flux1-kontext-dev.safetensors"
-        # )
-        from diffsynth_engine.pipelines.flux_image import FluxModelConfig
-        kontext_model_config = FluxModelConfig(
-            dit_path="/home/admin/.cache/datahub/openlm/RTPDiffusion/flux.1-dev-kontext/v1/flux1-kontext-dev.safetensors",
-            clip_path="/home/admin/.cache/datahub/openlm/RTPDiffusion/sd35_clip_l/20241024114322/clip_l.safetensors",
-            vae_path="/home/admin/.cache/datahub/openlm/RTPDiffusion/flux_vae/20241016114315/ae.safetensors",
-            t5_path="/home/admin/.cache/datahub/openlm/RTPDiffusion/t5xxl_v1_1_bf16/20241024105236/t5xxl_v1_1_bf16.safetensors"
+        kontext_model_path = fetch_model(
+            "black-forest-labs/FLUX.1-Kontext-dev", revision="master", path="flux1-kontext-dev.safetensors"
         )
-        cls.pipe = FluxImagePipeline.from_pretrained(kontext_model_config, control_type=ControlType.bfl_kontext).eval()
+        cls.pipe = FluxImagePipeline.from_pretrained(kontext_model_path, control_type=ControlType.bfl_kontext).eval()
     
     def test_kontext_image(self):
         image = self.pipe(
