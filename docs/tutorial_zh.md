@@ -35,6 +35,31 @@ from diffsynth_engine import fetch_model
 model_path = fetch_model("MAILAND/majicflus_v1", path="majicflus_v134.safetensors")
 ```
 
+![Image](https://github.com/user-attachments/assets/596c3383-23b3-4372-a7ce-3c4e1c1ba81a)
+
+对于模型分片的情况，可以通过 `path` 参数指定多个文件。
+
+```python
+from diffsynth_engine import fetch_model
+
+model_path = fetch_model("Wan-AI/Wan2.1-T2V-14B", path=[
+    "diffusion_pytorch_model-00001-of-00006.safetensors",
+    "diffusion_pytorch_model-00002-of-00006.safetensors",
+    "diffusion_pytorch_model-00003-of-00006.safetensors",
+    "diffusion_pytorch_model-00004-of-00006.safetensors",
+    "diffusion_pytorch_model-00005-of-00006.safetensors",
+    "diffusion_pytorch_model-00006-of-00006.safetensors",
+])
+```
+
+也支持使用通配符来匹配多个文件。
+
+```python
+from diffsynth_engine import fetch_model
+
+model_path = fetch_model("Wan-AI/Wan2.1-T2V-14B", path="diffusion_pytorch_model*.safetensors")
+```
+
 `fetch_model` 函数返回的文件路径 `model_path` 即为下载后的文件路径。
 
 ## 模型类型

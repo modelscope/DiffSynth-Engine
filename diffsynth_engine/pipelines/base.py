@@ -91,15 +91,21 @@ class BasePipeline:
 
     @staticmethod
     def load_model_checkpoint(
-        checkpoint_path: str, device: str = "cpu", dtype: torch.dtype = torch.float16
+        checkpoint_path: str | List[str], device: str = "cpu", dtype: torch.dtype = torch.float16
     ) -> Dict[str, torch.Tensor]:
-        if not os.path.isfile(checkpoint_path):
-            FileNotFoundError(f"{checkpoint_path} is not a file")
-        if checkpoint_path.endswith(".safetensors"):
-            return load_file(checkpoint_path, device=device)
-        if checkpoint_path.endswith(".gguf"):
-            return load_gguf_checkpoint(checkpoint_path, device=device, dtype=dtype)
-        raise ValueError(f"{checkpoint_path} is not a .safetensors or .gguf file")
+        if isinstance(checkpoint_path, str):
+            checkpoint_path = [checkpoint_path]
+        state_dict = {}
+        for path in checkpoint_path:
+            if not os.path.isfile(path):
+                raise FileNotFoundError(f"{path} is not a file")
+            elif path.endswith(".safetensors"):
+                state_dict.update(**load_file(path, device=device))
+            elif path.endswith(".gguf"):
+                state_dict.update(**load_gguf_checkpoint(path, device=device, dtype=dtype))
+            else:
+                raise ValueError(f"{path} is not a .safetensors or .gguf file")
+        return state_dict
 
     @staticmethod
     def validate_image_size(

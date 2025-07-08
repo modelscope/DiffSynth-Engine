@@ -2,10 +2,11 @@ import os
 import shutil
 import tqdm
 import tempfile
-from typing import Optional
+from typing import List, Optional
 from pathlib import Path
 from urllib.parse import urlparse
 import requests
+import glob
 
 from modelscope import snapshot_download
 from modelscope.hub.api import HubApi
@@ -23,11 +24,11 @@ MODEL_SOURCES = ["modelscope", "civitai"]
 def fetch_model(
     model_uri: str,
     revision: Optional[str] = None,
-    path: Optional[str] = None,
+    path: Optional[str | List[str]] = None,
     access_token: Optional[str] = None,
     source: str = "modelscope",
-    fetch_safetensors: bool = True,
-) -> str:
+    fetch_safetensors: bool = True,  # TODO: supports other formats like GGUF
+) -> str | List[str]:
     if source == "modelscope":
         return fetch_modelscope_model(model_uri, revision, path, access_token, fetch_safetensors)
     if source == "civitai":
@@ -38,7 +39,7 @@ def fetch_model(
 def fetch_modelscope_model(
     model_id: str,
     revision: Optional[str] = None,
-    path: Optional[str] = None,
+    path: Optional[str | List[str]] = None,
     access_token: Optional[str] = None,
     fetch_safetensors: bool = True,
 ) -> str:
@@ -52,12 +53,15 @@ def fetch_modelscope_model(
         directory = os.path.join(DIFFSYNTH_CACHE, "modelscope", model_id, revision if revision else "__version")
         dirpath = snapshot_download(model_id, revision=revision, local_dir=directory, allow_patterns=path)
 
-    if path is not None:
-        path = os.path.join(dirpath, path)
+    if isinstance(path, str):
+        path = glob.glob(os.path.join(dirpath, path))
+        path = path[0] if len(path) == 1 else path
+    elif isinstance(path, list):
+        path = [os.path.join(dirpath, p) for p in path]
     else:
         path = dirpath
 
-    if os.path.isdir(path) and fetch_safetensors:
+    if isinstance(path, str) and os.path.isdir(path) and fetch_safetensors:
         return _fetch_safetensors(path)
     return path
 
@@ -122,16 +126,17 @@ def ensure_directory_exists(filename: str):
     Path(filename).parent.mkdir(parents=True, exist_ok=True)
 
 
-def _fetch_safetensors(dirpath: str) -> str:
+def _fetch_safetensors(dirpath: str) -> str | List[str]:
     all_safetensors = []
     for filename in os.listdir(dirpath):
         if filename.endswith(".safetensors"):
             all_safetensors.append(os.path.join(dirpath, filename))
-    if len(all_safetensors) == 1:
-        logger.info(f"Fetch safetensors file {all_safetensors[0]}")
-        return all_safetensors[0]
-    elif len(all_safetensors) == 0:
+    if len(all_safetensors) == 0:
         logger.error(f"No safetensors file found in {dirpath}")
+        return dirpath
+    elif len(all_safetensors) == 1:
+        all_safetensors = all_safetensors[0]
+        logger.info(f"Fetch safetensors file {all_safetensors}")
     else:
-        logger.error(f"Multiple safetensors files found in {dirpath}, please specify the file name")
-    return dirpath
+        logger.info(f"Fetch safetensors files {all_safetensors}")
+    return all_safetensors
