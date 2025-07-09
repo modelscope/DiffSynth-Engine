@@ -12,23 +12,27 @@ from diffsynth_engine.models.basic.timestep import TimestepEmbeddings, TemporalT
 
 from collections import OrderedDict
 
-class QuickGELU(torch.nn.Module):
 
+class QuickGELU(torch.nn.Module):
     def forward(self, x: torch.Tensor):
         return x * torch.sigmoid(1.702 * x)
 
-class ResidualAttentionBlock(torch.nn.Module):
 
+class ResidualAttentionBlock(torch.nn.Module):
     def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None, device="cuda:0", dtype=torch.float16):
         super().__init__()
 
         self.attn = torch.nn.MultiheadAttention(d_model, n_head, device=device, dtype=dtype)
         self.ln_1 = torch.nn.LayerNorm(d_model, device=device, dtype=dtype)
-        self.mlp = torch.nn.Sequential(OrderedDict([
-            ("c_fc", torch.nn.Linear(d_model, d_model * 4, device=device, dtype=dtype)),
-            ("gelu", QuickGELU()),
-            ("c_proj", torch.nn.Linear(d_model * 4, d_model, device=device, dtype=dtype))
-        ]))
+        self.mlp = torch.nn.Sequential(
+            OrderedDict(
+                [
+                    ("c_fc", torch.nn.Linear(d_model, d_model * 4, device=device, dtype=dtype)),
+                    ("gelu", QuickGELU()),
+                    ("c_proj", torch.nn.Linear(d_model * 4, d_model, device=device, dtype=dtype)),
+                ]
+            )
+        )
         self.ln_2 = torch.nn.LayerNorm(d_model, device=device, dtype=dtype)
         self.attn_mask = attn_mask
 
@@ -49,10 +53,30 @@ class SDXLControlNetUnionStateDictConverter(StateDictConverter):
     def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # architecture
         block_types = [
-            "ResnetBlock", "PushBlock", "ResnetBlock", "PushBlock", "DownSampler", "PushBlock",
-            "ResnetBlock", "AttentionBlock", "PushBlock", "ResnetBlock", "AttentionBlock", "PushBlock", "DownSampler", "PushBlock",
-            "ResnetBlock", "AttentionBlock", "PushBlock", "ResnetBlock", "AttentionBlock", "PushBlock",
-            "ResnetBlock", "AttentionBlock", "ResnetBlock", "PushBlock"
+            "ResnetBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "PushBlock",
+            "DownSampler",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "DownSampler",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "ResnetBlock",
+            "PushBlock",
         ]
 
         # controlnet_rename_dict
@@ -107,7 +131,12 @@ class SDXLControlNetUnionStateDictConverter(StateDictConverter):
             elif names[0] in ["down_blocks", "mid_block", "up_blocks"]:
                 if names[0] == "mid_block":
                     names.insert(1, "0")
-                block_type = {"resnets": "ResnetBlock", "attentions": "AttentionBlock", "downsamplers": "DownSampler", "upsamplers": "UpSampler"}[names[2]]
+                block_type = {
+                    "resnets": "ResnetBlock",
+                    "attentions": "AttentionBlock",
+                    "downsamplers": "DownSampler",
+                    "upsamplers": "UpSampler",
+                }[names[2]]
                 block_type_with_id = ".".join(names[:4])
                 if block_type_with_id != last_block_type_with_id[block_type]:
                     block_id[block_type] += 1
@@ -118,9 +147,9 @@ class SDXLControlNetUnionStateDictConverter(StateDictConverter):
                 names = ["blocks", str(block_id[block_type])] + names[4:]
                 if "ff" in names:
                     ff_index = names.index("ff")
-                    component = ".".join(names[ff_index:ff_index+3])
+                    component = ".".join(names[ff_index : ff_index + 3])
                     component = {"ff.net.0": "act_fn", "ff.net.2": "ff"}[component]
-                    names = names[:ff_index] + [component] + names[ff_index+3:]
+                    names = names[:ff_index] + [component] + names[ff_index + 3 :]
                 if "to_out" in names:
                     names.pop(names.index("to_out") + 1)
             else:
@@ -137,19 +166,20 @@ class SDXLControlNetUnionStateDictConverter(StateDictConverter):
                 param = param.squeeze()
             state_dict_[rename_dict[name]] = param
         return state_dict_
-    
+
     # TODO: check civitai
     def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         return self._from_diffusers(state_dict)
 
-    
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         return self._from_diffusers(state_dict)
+
 
 class SDXLControlNetUnion(PreTrainedModel):
     converter = SDXLControlNetUnionStateDictConverter()
 
-    def __init__(self,         
+    def __init__(
+        self,
         attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
@@ -157,68 +187,78 @@ class SDXLControlNetUnion(PreTrainedModel):
         super().__init__()
         self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280, device=device, dtype=dtype)
 
-        self.add_time_proj = TemporalTimesteps(256, flip_sin_to_cos=True, downscale_freq_shift=0, device=device, dtype=dtype)
+        self.add_time_proj = TemporalTimesteps(
+            256, flip_sin_to_cos=True, downscale_freq_shift=0, device=device, dtype=dtype
+        )
         self.add_time_embedding = torch.nn.Sequential(
             torch.nn.Linear(2816, 1280, device=device, dtype=dtype),
             torch.nn.SiLU(),
-            torch.nn.Linear(1280, 1280, device=device, dtype=dtype)
+            torch.nn.Linear(1280, 1280, device=device, dtype=dtype),
         )
-        self.control_type_proj = TemporalTimesteps(256, flip_sin_to_cos=True, downscale_freq_shift=0, device=device, dtype=dtype)
+        self.control_type_proj = TemporalTimesteps(
+            256, flip_sin_to_cos=True, downscale_freq_shift=0, device=device, dtype=dtype
+        )
         self.control_type_embedding = torch.nn.Sequential(
             torch.nn.Linear(256 * 8, 1280, device=device, dtype=dtype),
             torch.nn.SiLU(),
-            torch.nn.Linear(1280, 1280, device=device, dtype=dtype)
+            torch.nn.Linear(1280, 1280, device=device, dtype=dtype),
         )
         self.conv_in = torch.nn.Conv2d(4, 320, kernel_size=3, padding=1, device=device, dtype=dtype)
 
-        self.controlnet_conv_in = ControlNetConditioningLayer(channels=(3, 16, 32, 96, 256, 320), device=device, dtype=dtype)
+        self.controlnet_conv_in = ControlNetConditioningLayer(
+            channels=(3, 16, 32, 96, 256, 320), device=device, dtype=dtype
+        )
         self.controlnet_transformer = ResidualAttentionBlock(320, 8, device=device, dtype=dtype)
         self.task_embedding = torch.nn.Parameter(torch.randn(8, 320))
         self.spatial_ch_projs = torch.nn.Linear(320, 320, device=device, dtype=dtype)
 
-        self.blocks = torch.nn.ModuleList([
-            # DownBlock2D
-            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
-            PushBlock(),
-            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
-            PushBlock(),
-            DownSampler(320, device=device, dtype=dtype),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(320, 640, 1280, device=device, dtype=dtype),
-            AttentionBlock(10, 64, 640, 2, 2048, device=device, dtype=dtype),
-            PushBlock(),
-            ResnetBlock(640, 640, 1280, device=device, dtype=dtype),
-            AttentionBlock(10, 64, 640, 2, 2048, device=device, dtype=dtype),
-            PushBlock(),
-            DownSampler(640, device=device, dtype=dtype),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(640, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
-            PushBlock(),
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
-            PushBlock(),
-            # UNetMidBlock2DCrossAttn
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            PushBlock()
-        ])
+        self.blocks = torch.nn.ModuleList(
+            [
+                # DownBlock2D
+                ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
+                PushBlock(),
+                ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
+                PushBlock(),
+                DownSampler(320, device=device, dtype=dtype),
+                PushBlock(),
+                # CrossAttnDownBlock2D
+                ResnetBlock(320, 640, 1280, device=device, dtype=dtype),
+                AttentionBlock(10, 64, 640, 2, 2048, device=device, dtype=dtype),
+                PushBlock(),
+                ResnetBlock(640, 640, 1280, device=device, dtype=dtype),
+                AttentionBlock(10, 64, 640, 2, 2048, device=device, dtype=dtype),
+                PushBlock(),
+                DownSampler(640, device=device, dtype=dtype),
+                PushBlock(),
+                # CrossAttnDownBlock2D
+                ResnetBlock(640, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
+                PushBlock(),
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
+                PushBlock(),
+                # UNetMidBlock2DCrossAttn
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                PushBlock(),
+            ]
+        )
 
-        self.controlnet_blocks = torch.nn.ModuleList([
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
-        ])
+        self.controlnet_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
+            ]
+        )
 
         # 0 -- openpose
         # 1 -- depth
@@ -236,9 +276,8 @@ class SDXLControlNetUnion(PreTrainedModel):
             "lineart": 3,
             "lineart_anime": 3,
             "tile": 6,
-            "inpaint": 7
+            "inpaint": 7,
         }
-
 
     def fuse_condition_to_input(self, hidden_states, task_id, conditioning):
         controlnet_cond = self.controlnet_conv_in(conditioning)
@@ -247,19 +286,25 @@ class SDXLControlNetUnion(PreTrainedModel):
         x = torch.stack([feat_seq, torch.mean(hidden_states, dim=(2, 3))], dim=1)
         x = self.controlnet_transformer(x)
 
-        alpha = self.spatial_ch_projs(x[:,0]).unsqueeze(-1).unsqueeze(-1)
+        alpha = self.spatial_ch_projs(x[:, 0]).unsqueeze(-1).unsqueeze(-1)
         controlnet_cond_fuser = controlnet_cond + alpha
 
         hidden_states = hidden_states + controlnet_cond_fuser
         return hidden_states
-    
 
     def forward(
         self,
-        sample, timestep, encoder_hidden_states,
-        conditioning, processor_name, add_time_id, add_text_embeds,
-        tiled=False, tile_size=64, tile_stride=32,
-        **kwargs
+        sample,
+        timestep,
+        encoder_hidden_states,
+        conditioning,
+        processor_name,
+        add_time_id,
+        add_text_embeds,
+        tiled=False,
+        tile_size=64,
+        tile_stride=32,
+        **kwargs,
     ):
         task_id = self.task_id[processor_name]
 

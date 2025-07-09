@@ -115,7 +115,7 @@ class TestFLUXBFLKontextImage(ImageTestCase):
             "black-forest-labs/FLUX.1-Kontext-dev", revision="master", path="flux1-kontext-dev.safetensors"
         )
         cls.pipe = FluxImagePipeline.from_pretrained(kontext_model_path, control_type=ControlType.bfl_kontext).eval()
-    
+
     def test_kontext_image(self):
         image = self.pipe(
             prompt="Make the wall color to red",

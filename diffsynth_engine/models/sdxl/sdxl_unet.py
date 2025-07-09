@@ -268,12 +268,11 @@ class SDXLUNet(PreTrainedModel):
                 text_emb,
                 res_stack,
             )
-            
+
             # 3.2 Controlnet
             if i == controlnet_insert_block_id and controlnet_res_stack is not None:
                 hidden_states += controlnet_res_stack.pop()
                 res_stack = [res + controlnet_res for res, controlnet_res in zip(res_stack, controlnet_res_stack)]
-
 
         # 4. output
         hidden_states = self.conv_norm_out(hidden_states)

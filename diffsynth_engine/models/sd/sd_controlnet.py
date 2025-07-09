@@ -12,18 +12,29 @@ from diffsynth_engine.models.basic.unet_helper import (
     DownSampler,
 )
 
+
 class ControlNetConditioningLayer(nn.Module):
-    def __init__(self, channels = (3, 16, 32, 96, 256, 320), device = "cuda:0", dtype=torch.float16):
+    def __init__(self, channels=(3, 16, 32, 96, 256, 320), device="cuda:0", dtype=torch.float16):
         super().__init__()
         self.blocks = torch.nn.ModuleList([])
-        self.blocks.append(torch.nn.Conv2d(channels[0], channels[1], kernel_size=3, padding=1, device=device, dtype=dtype))
+        self.blocks.append(
+            torch.nn.Conv2d(channels[0], channels[1], kernel_size=3, padding=1, device=device, dtype=dtype)
+        )
         self.blocks.append(torch.nn.SiLU())
         for i in range(1, len(channels) - 2):
-            self.blocks.append(torch.nn.Conv2d(channels[i], channels[i], kernel_size=3, padding=1, device=device, dtype=dtype))
+            self.blocks.append(
+                torch.nn.Conv2d(channels[i], channels[i], kernel_size=3, padding=1, device=device, dtype=dtype)
+            )
             self.blocks.append(torch.nn.SiLU())
-            self.blocks.append(torch.nn.Conv2d(channels[i], channels[i+1], kernel_size=3, padding=1, stride=2, device=device, dtype=dtype))
+            self.blocks.append(
+                torch.nn.Conv2d(
+                    channels[i], channels[i + 1], kernel_size=3, padding=1, stride=2, device=device, dtype=dtype
+                )
+            )
             self.blocks.append(torch.nn.SiLU())
-        self.blocks.append(torch.nn.Conv2d(channels[-2], channels[-1], kernel_size=3, padding=1, device=device, dtype=dtype))
+        self.blocks.append(
+            torch.nn.Conv2d(channels[-2], channels[-1], kernel_size=3, padding=1, device=device, dtype=dtype)
+        )
 
     def forward(self, conditioning):
         for block in self.blocks:
@@ -38,15 +49,73 @@ class SDControlNetStateDictConverter(StateDictConverter):
     def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # architecture
         block_types = [
-            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler', 'PushBlock',
-            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler', 'PushBlock',
-            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler', 'PushBlock',
-            'ResnetBlock', 'PushBlock', 'ResnetBlock', 'PushBlock', 
-            'ResnetBlock', 'AttentionBlock', 'ResnetBlock',
-            'PopBlock', 'ResnetBlock', 'PopBlock', 'ResnetBlock', 'PopBlock', 'ResnetBlock', 'UpSampler',
-            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'UpSampler',
-            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'UpSampler',
-            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock'
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "DownSampler",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "DownSampler",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "DownSampler",
+            "PushBlock",
+            "ResnetBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "ResnetBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "UpSampler",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "UpSampler",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "UpSampler",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
         ]
 
         # controlnet_rename_dict
@@ -66,7 +135,7 @@ class SDControlNetStateDictConverter(StateDictConverter):
             "controlnet_cond_embedding.blocks.5.weight": "controlnet_conv_in.blocks.12.weight",
             "controlnet_cond_embedding.blocks.5.bias": "controlnet_conv_in.blocks.12.bias",
             "controlnet_cond_embedding.conv_out.weight": "controlnet_conv_in.blocks.14.weight",
-            "controlnet_cond_embedding.conv_out.bias": "controlnet_conv_in.blocks.14.bias",         
+            "controlnet_cond_embedding.conv_out.bias": "controlnet_conv_in.blocks.14.bias",
         }
 
         # Rename each parameter
@@ -91,7 +160,12 @@ class SDControlNetStateDictConverter(StateDictConverter):
             elif names[0] in ["down_blocks", "mid_block", "up_blocks"]:
                 if names[0] == "mid_block":
                     names.insert(1, "0")
-                block_type = {"resnets": "ResnetBlock", "attentions": "AttentionBlock", "downsamplers": "DownSampler", "upsamplers": "UpSampler"}[names[2]]
+                block_type = {
+                    "resnets": "ResnetBlock",
+                    "attentions": "AttentionBlock",
+                    "downsamplers": "DownSampler",
+                    "upsamplers": "UpSampler",
+                }[names[2]]
                 block_type_with_id = ".".join(names[:4])
                 if block_type_with_id != last_block_type_with_id[block_type]:
                     block_id[block_type] += 1
@@ -102,9 +176,9 @@ class SDControlNetStateDictConverter(StateDictConverter):
                 names = ["blocks", str(block_id[block_type])] + names[4:]
                 if "ff" in names:
                     ff_index = names.index("ff")
-                    component = ".".join(names[ff_index:ff_index+3])
+                    component = ".".join(names[ff_index : ff_index + 3])
                     component = {"ff.net.0": "act_fn", "ff.net.2": "ff"}[component]
-                    names = names[:ff_index] + [component] + names[ff_index+3:]
+                    names = names[:ff_index] + [component] + names[ff_index + 3 :]
                 if "to_out" in names:
                     names.pop(names.index("to_out") + 1)
             else:
@@ -117,13 +191,21 @@ class SDControlNetStateDictConverter(StateDictConverter):
             if ".proj_in." in name or ".proj_out." in name:
                 param = param.squeeze()
             if rename_dict[name] in [
-                "controlnet_blocks.1.bias", "controlnet_blocks.2.bias", "controlnet_blocks.3.bias", "controlnet_blocks.5.bias", "controlnet_blocks.6.bias",
-                "controlnet_blocks.8.bias", "controlnet_blocks.9.bias", "controlnet_blocks.10.bias", "controlnet_blocks.11.bias", "controlnet_blocks.12.bias"
+                "controlnet_blocks.1.bias",
+                "controlnet_blocks.2.bias",
+                "controlnet_blocks.3.bias",
+                "controlnet_blocks.5.bias",
+                "controlnet_blocks.6.bias",
+                "controlnet_blocks.8.bias",
+                "controlnet_blocks.9.bias",
+                "controlnet_blocks.10.bias",
+                "controlnet_blocks.11.bias",
+                "controlnet_blocks.12.bias",
             ]:
                 continue
             state_dict_[rename_dict[name]] = param
         return state_dict_
-    
+
     def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "control_model.time_embed.0.weight": "time_embedding.timestep_embedder.0.weight",
@@ -496,69 +578,71 @@ class SDControlNet(PreTrainedModel):
         self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280, device=device, dtype=dtype)
         self.conv_in = torch.nn.Conv2d(4, 320, kernel_size=3, padding=1, device=device, dtype=dtype)
 
-        self.controlnet_conv_in = ControlNetConditioningLayer(channels=(3, 16, 32, 96, 256, 320), device=device, dtype=dtype)
+        self.controlnet_conv_in = ControlNetConditioningLayer(
+            channels=(3, 16, 32, 96, 256, 320), device=device, dtype=dtype
+        )
 
-        self.blocks = torch.nn.ModuleList([
-            # CrossAttnDownBlock2D
-            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 40, 320, 1, 768, device=device, dtype=dtype),
-            PushBlock(),
-            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 40, 320, 1, 768, device=device, dtype=dtype),
-            PushBlock(),
-            DownSampler(320, device=device, dtype=dtype),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(320, 640, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 80, 640, 1, 768, device=device, dtype=dtype),
-            PushBlock(),
-            ResnetBlock(640, 640, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 80, 640, 1, 768, device=device, dtype=dtype),
-            PushBlock(),
-            DownSampler(640, device=device, dtype=dtype),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(640, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 160, 1280, 1, 768, device=device, dtype=dtype),
-            PushBlock(),
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 160, 1280, 1, 768, device=device, dtype=dtype),
-            PushBlock(),
-            DownSampler(1280, device=device, dtype=dtype),
-            PushBlock(),
-            # DownBlock2D
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            PushBlock(),
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            PushBlock(),
-            # UNetMidBlock2DCrossAttn
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 160, 1280, 1, 768, device=device, dtype=dtype),
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            PushBlock()
-        ])
+        self.blocks = torch.nn.ModuleList(
+            [
+                # CrossAttnDownBlock2D
+                ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 40, 320, 1, 768, device=device, dtype=dtype),
+                PushBlock(),
+                ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 40, 320, 1, 768, device=device, dtype=dtype),
+                PushBlock(),
+                DownSampler(320, device=device, dtype=dtype),
+                PushBlock(),
+                # CrossAttnDownBlock2D
+                ResnetBlock(320, 640, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 80, 640, 1, 768, device=device, dtype=dtype),
+                PushBlock(),
+                ResnetBlock(640, 640, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 80, 640, 1, 768, device=device, dtype=dtype),
+                PushBlock(),
+                DownSampler(640, device=device, dtype=dtype),
+                PushBlock(),
+                # CrossAttnDownBlock2D
+                ResnetBlock(640, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 160, 1280, 1, 768, device=device, dtype=dtype),
+                PushBlock(),
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 160, 1280, 1, 768, device=device, dtype=dtype),
+                PushBlock(),
+                DownSampler(1280, device=device, dtype=dtype),
+                PushBlock(),
+                # DownBlock2D
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                PushBlock(),
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                PushBlock(),
+                # UNetMidBlock2DCrossAttn
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 160, 1280, 1, 768, device=device, dtype=dtype),
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                PushBlock(),
+            ]
+        )
 
-        self.controlnet_blocks = torch.nn.ModuleList([
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
-            torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
-            torch.nn.Conv2d(640, 640, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
-            torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
-        ])
+        self.controlnet_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.Conv2d(320, 320, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+                torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+                torch.nn.Conv2d(320, 320, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+                torch.nn.Conv2d(640, 640, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(640, 640, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+                torch.nn.Conv2d(640, 640, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+                torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), device=device, dtype=dtype),
+                torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+                torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+                torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+                torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+                torch.nn.Conv2d(1280, 1280, kernel_size=(1, 1), bias=False, device=device, dtype=dtype),
+            ]
+        )
 
-    def forward(
-        self,
-        sample, timestep, encoder_hidden_states, conditioning,
-        **kwargs
-    ):
+    def forward(self, sample, timestep, encoder_hidden_states, conditioning, **kwargs):
         # 1. time
         time_emb = self.time_embedding(timestep, dtype=sample.dtype)
 
@@ -585,9 +669,7 @@ class SDControlNet(PreTrainedModel):
         attn_impl: Optional[str] = None,
     ):
         with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls, attn_impl=attn_impl, device=device, dtype=dtype
-            )
+            model = torch.nn.utils.skip_init(cls, attn_impl=attn_impl, device=device, dtype=dtype)
         model.load_state_dict(state_dict)
         model.to(device=device, dtype=dtype, non_blocking=True)
-        return model    
+        return model

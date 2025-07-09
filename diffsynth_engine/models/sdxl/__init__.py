@@ -9,7 +9,7 @@ __all__ = [
     "SDXLUNet",
     "SDXLVAEDecoder",
     "SDXLVAEEncoder",
-    "SDXLControlNetUnion",    
+    "SDXLControlNetUnion",
     "sdxl_text_encoder_config",
     "sdxl_unet_config",
 ]

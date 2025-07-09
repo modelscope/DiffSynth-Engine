@@ -4,6 +4,7 @@ from .flux_vae import FluxVAEDecoder, FluxVAEEncoder, config as flux_vae_config
 from .flux_controlnet import FluxControlNet
 from .flux_ipadapter import FluxIPAdapter
 from .flux_redux import FluxRedux
+from .flux_dit_fbcache import FluxDiTFBCache
 
 __all__ = [
     "FluxRedux",
@@ -14,6 +15,7 @@ __all__ = [
     "FluxTextEncoder2",
     "FluxVAEDecoder",
     "FluxVAEEncoder",
+    "FluxDiTFBCache",
     "flux_dit_config",
     "flux_text_encoder_config",
     "flux_vae_config",

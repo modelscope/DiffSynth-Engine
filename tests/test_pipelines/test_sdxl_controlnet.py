@@ -34,5 +34,6 @@ class TestSDXLImage(ImageTestCase):
         )
         self.assertImageEqualAndSaveFailed(output_image, "flux/flux_union_pro_canny.png", threshold=0.7)
 
+
 if __name__ == "__main__":
     unittest.main()

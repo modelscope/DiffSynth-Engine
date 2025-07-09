@@ -291,7 +291,7 @@ class SDImagePipeline(BasePipeline):
         current_step: int,
         total_step: int,
     ):
-        controlnet_res_stack = None   
+        controlnet_res_stack = None
         for param in controlnet_params:
             current_scale = param.scale
             if not (
@@ -303,15 +303,10 @@ class SDImagePipeline(BasePipeline):
             if self.offload_mode is not None:
                 empty_cache()
                 param.model.to(self.device)
-            controlnet_res = param.model(
-                latents,
-                timestep,
-                prompt_emb,
-                param.image
-            )
+            controlnet_res = param.model(latents, timestep, prompt_emb, param.image)
             controlnet_res = [res * current_scale for res in controlnet_res]
             if self.offload_mode is not None:
-                param.model.to("cpu")        
+                param.model.to("cpu")
                 empty_cache()
             controlnet_res_stack = accumulate(controlnet_res_stack, controlnet_res)
         return controlnet_res_stack
@@ -324,16 +319,22 @@ class SDImagePipeline(BasePipeline):
         negative_prompt_emb: torch.Tensor,
         controlnet_params: List[ControlNetParams],
         current_step: int,
-        total_step: int,        
+        total_step: int,
         cfg_scale: float,
         batch_cfg: bool = True,
     ):
         if cfg_scale <= 1.0:
-            return self.predict_noise(latents, timestep, positive_prompt_emb, controlnet_params, current_step, total_step)
+            return self.predict_noise(
+                latents, timestep, positive_prompt_emb, controlnet_params, current_step, total_step
+            )
         if not batch_cfg:
             # cfg by predict noise one by one
-            positive_noise_pred = self.predict_noise(latents, timestep, positive_prompt_emb, controlnet_params, current_step, total_step)
-            negative_noise_pred = self.predict_noise(latents, timestep, negative_prompt_emb, controlnet_params, current_step, total_step)
+            positive_noise_pred = self.predict_noise(
+                latents, timestep, positive_prompt_emb, controlnet_params, current_step, total_step
+            )
+            negative_noise_pred = self.predict_noise(
+                latents, timestep, negative_prompt_emb, controlnet_params, current_step, total_step
+            )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
         else:
@@ -341,12 +342,16 @@ class SDImagePipeline(BasePipeline):
             prompt_emb = torch.cat([positive_prompt_emb, negative_prompt_emb], dim=0)
             latents = torch.cat([latents, latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
-            positive_noise_pred, negative_noise_pred = self.predict_noise(latents, timestep, prompt_emb, controlnet_params, current_step, total_step).chunk(2)
+            positive_noise_pred, negative_noise_pred = self.predict_noise(
+                latents, timestep, prompt_emb, controlnet_params, current_step, total_step
+            ).chunk(2)
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
 
     def predict_noise(self, latents, timestep, prompt_emb, controlnet_params, current_step, total_step):
-        controlnet_res_stack = self.predict_multicontrolnet(latents, timestep, prompt_emb, controlnet_params, current_step, total_step)
+        controlnet_res_stack = self.predict_multicontrolnet(
+            latents, timestep, prompt_emb, controlnet_params, current_step, total_step
+        )
 
         noise_pred = self.unet(
             x=latents,
@@ -433,7 +438,7 @@ class SDImagePipeline(BasePipeline):
                 cfg_scale=cfg_scale,
                 controlnet_params=controlnet_params,
                 current_step=i,
-                total_step=len(timesteps),                
+                total_step=len(timesteps),
                 batch_cfg=self.batch_cfg,
             )
             # Denoise
