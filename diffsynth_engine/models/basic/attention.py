@@ -61,6 +61,7 @@ if SAGE_ATTN_AVAILABLE:
 
 if SPARGE_ATTN_AVAILABLE:
     from spas_sage_attn import spas_sage2_attn_meansim_cuda
+    from spas_sage_attn.autotune import SparseAttentionMeansim
 
     def sparge_attn(q, k, v, attn_mask=None, scale=None):
         q = q.transpose(1, 2)
@@ -226,7 +227,13 @@ def long_context_attention(
         elif attn_impl == "sage_attn":
             attn_func = LongContextAttention(attn_type=AttnType.SAGE_FP8)
         elif attn_impl == "sparge_attn":
-            attn_func = LongContextAttention(attn_type=AttnType.SPARSE_SAGE)
+            attn_processor = SparseAttentionMeansim()
+            # TODO: expose sparge args
+            # default args from spas_sage2_attn_meansim_cuda
+            attn_processor.cdfthreshd = torch.tensor(0.98)
+            attn_processor.simthreshd1 = torch.tensor(0.6)
+            attn_processor.pvthreshd = torch.tensor(50)
+            attn_func = LongContextAttention(attn_type=AttnType.SPARSE_SAGE, attn_processor=attn_processor)
         else:
             raise ValueError(f"Invalid long context attention implementation: {attn_impl}")
     return attn_func(q, k, v, softmax_scale=scale)

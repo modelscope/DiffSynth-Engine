@@ -5,7 +5,7 @@ from diffsynth_engine.utils.video import save_video
 
 if __name__ == "__main__":
     config = WanModelConfig(
-        model_path=fetch_model("MusePublic/wan2.1-14b-t2v", path="dit.safetensors"),
+        model_path=fetch_model("MusePublic/wan2.1-t2v-14b-bf16", path="dit.safetensors"),
         t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
         vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
         use_fsdp=True,
