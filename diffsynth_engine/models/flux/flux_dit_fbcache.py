@@ -26,7 +26,7 @@ class FluxDiTFBCache(FluxDiT):
         dtype: torch.dtype = torch.bfloat16,
         relative_l1_threshold: float = 0.05,
     ):
-        super().__init__()
+        super().__init__(in_channel=in_channel, attn_impl=attn_impl, device=device, dtype=dtype)
         self.relative_l1_threshold = relative_l1_threshold
         self.step_count = 0
         self.num_inference_steps = 0
@@ -130,7 +130,7 @@ class FluxDiTFBCache(FluxDiT):
                 original_hidden_states = hidden_states
                 hidden_states, prompt_emb = self.blocks[0](hidden_states, prompt_emb, conditioning, rope_emb, image_emb)
                 first_hidden_states_residual = hidden_states - original_hidden_states
-                del original_hidden_states
+
                 (first_hidden_states_residual,) = sequence_parallel_unshard(
                     (first_hidden_states_residual,), seq_dims=(1,), seq_lens=(h * w // 4,)
                 )
@@ -151,7 +151,7 @@ class FluxDiTFBCache(FluxDiT):
                 else:
                     self.prev_first_hidden_states_residual = first_hidden_states_residual
 
-                    ori_hidden_states = hidden_states.clone()
+                    first_hidden_states = hidden_states.clone()
                     for i, block in enumerate(self.blocks[1:]):
                         hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, rope_emb, image_emb)
                         if len(controlnet_double_block_output) > 0:
@@ -168,7 +168,7 @@ class FluxDiTFBCache(FluxDiT):
 
                     hidden_states = hidden_states[:, prompt_emb.shape[1] :]
 
-                    previous_residual = hidden_states - ori_hidden_states
+                    previous_residual = hidden_states - first_hidden_states
                     self.previous_residual = previous_residual
 
                 hidden_states = self.final_norm_out(hidden_states, conditioning)
@@ -188,6 +188,7 @@ class FluxDiTFBCache(FluxDiT):
         dtype: torch.dtype,
         in_channel: int = 64,
         attn_impl: Optional[str] = None,
+        fb_cache_relative_l1_threshold: float = 0.05,
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
@@ -196,11 +197,9 @@ class FluxDiTFBCache(FluxDiT):
                 dtype=dtype,
                 in_channel=in_channel,
                 attn_impl=attn_impl,
+                fb_cache_relative_l1_threshold=fb_cache_relative_l1_threshold,
             )
             model = model.requires_grad_(False)  # for loading gguf
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
-
-    def get_fsdp_modules(self):
-        return ["blocks", "single_blocks"]

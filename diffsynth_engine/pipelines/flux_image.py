@@ -565,19 +565,24 @@ class FluxImagePipeline(BasePipeline):
         vae_decoder = FluxVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
         vae_encoder = FluxVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
 
-        if use_fb_cache:
-            dit_class = FluxDiTFBCache
-        else:
-            dit_class = FluxDiT
-
         with LoRAContext():
-            dit = dit_class.from_state_dict(
-                dit_state_dict,
-                device=init_device,
-                dtype=model_config.dit_dtype,
-                in_channel=control_type.get_in_channel(),
-                attn_impl=model_config.dit_attn_impl,
-            )
+            if use_fb_cache:
+                dit = FluxDiTFBCache.from_state_dict(
+                    dit_state_dict,
+                    device=init_device,
+                    dtype=model_config.dit_dtype,
+                    in_channel=control_type.get_in_channel(),
+                    attn_impl=model_config.dit_attn_impl,
+                    relative_l1_threshold=fb_cache_relative_l1_threshold,
+                )
+            else:
+                dit = FluxDiT.from_state_dict(
+                    dit_state_dict,
+                    device=init_device,
+                    dtype=model_config.dit_dtype,
+                    in_channel=control_type.get_in_channel(),
+                    attn_impl=model_config.dit_attn_impl,
+                )
             if model_config.use_fp8_linear:
                 enable_fp8_linear(dit)
 
