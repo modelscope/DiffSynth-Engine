@@ -18,7 +18,7 @@ def add_cpu_offload_hook(module: nn.Module, device: str = "cuda", recurse: bool 
     def _forward_pre_hook(module: nn.Module, input):
         offload_params = {}
         for name, param in module.named_parameters(recurse=recurse):
-            offload_params[name] = param.data
+            offload_params[name] = param.data.pin_memory()
             param.data = param.data.to(device=device)
         setattr(module, "_offload_params", offload_params)
         return tuple(x.to(device=device) if isinstance(x, torch.Tensor) else x for x in input)

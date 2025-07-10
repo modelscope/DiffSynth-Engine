@@ -53,7 +53,7 @@ class FluxVAEEncoder(VAEEncoder):
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
-        model.load_state_dict(state_dict)
+        model.load_state_dict(state_dict, assign=True)
         return model
 
 
@@ -74,5 +74,5 @@ class FluxVAEDecoder(VAEDecoder):
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
-        model.load_state_dict(state_dict)
+        model.load_state_dict(state_dict, assign=True)
         return model
