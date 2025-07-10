@@ -526,29 +526,29 @@ class FluxImagePipeline(BasePipeline):
         model_config = (
             model_path_or_config
             if isinstance(model_path_or_config, FluxModelConfig)
-            else FluxModelConfig(dit_path=model_path_or_config, dit_dtype=dtype, t5_dtype=dtype, clip_dtype=dtype)
+            else FluxModelConfig(dit_path=model_path_or_config, dit_dtype=dtype, t5_dtype=dtype)
         )
         if model_config.vae_path is None:
-            model_config.vae_path = fetch_model("muse/flux_vae", revision="20241015120836", path="ae.safetensors")
+            model_config.vae_path = fetch_model("muse/FLUX.1-dev-fp8", path="ae-bf16.safetensors")
 
         if model_config.clip_path is None and load_text_encoder:
-            model_config.clip_path = fetch_model(
-                "muse/flux_clip_l", revision="20241209", path="clip_l_bf16.safetensors"
-            )
+            model_config.clip_path = fetch_model("muse/FLUX.1-dev-fp8", path="clip-bf16.safetensors")
         if model_config.t5_path is None and load_text_encoder:
             model_config.t5_path = fetch_model(
-                "muse/google_t5_v1_1_xxl", revision="20241024105236", path="t5xxl_v1_1_bf16.safetensors"
+                "muse/FLUX.1-dev-fp8", path=["t5-fp8-00001-of-00002.safetensors", "t5-fp8-00002-of-00002.safetensors"]
             )
 
         logger.info(f"loading state dict from {model_config.dit_path} ...")
-        dit_state_dict = cls.load_model_checkpoint(model_config.dit_path, device="cpu", dtype=dtype)
+        dit_state_dict = cls.load_model_checkpoint(model_config.dit_path, device="cpu", dtype=model_config.dit_dtype)
         logger.info(f"loading state dict from {model_config.vae_path} ...")
-        vae_state_dict = cls.load_model_checkpoint(model_config.vae_path, device="cpu", dtype=dtype)
+        vae_state_dict = cls.load_model_checkpoint(model_config.vae_path, device="cpu", dtype=model_config.vae_dtype)
         if load_text_encoder:
             logger.info(f"loading state dict from {model_config.clip_path} ...")
-            clip_state_dict = cls.load_model_checkpoint(model_config.clip_path, device="cpu", dtype=dtype)
+            clip_state_dict = cls.load_model_checkpoint(
+                model_config.clip_path, device="cpu", dtype=model_config.clip_dtype
+            )
             logger.info(f"loading state dict from {model_config.t5_path} ...")
-            t5_state_dict = cls.load_model_checkpoint(model_config.t5_path, device="cpu", dtype=dtype)
+            t5_state_dict = cls.load_model_checkpoint(model_config.t5_path, device="cpu", dtype=model_config.t5_dtype)
 
         init_device = "cpu" if parallelism > 1 or offload_mode is not None else device
         if load_text_encoder:
@@ -602,10 +602,20 @@ class FluxImagePipeline(BasePipeline):
             vae_tile_stride=vae_tile_stride,
             control_type=control_type,
             device=device,
-            dtype=dtype,
+            dtype=model_config.dit_dtype,
         )
-        if offload_mode is not None:
-            pipe.enable_cpu_offload(offload_mode)
+        pipe.enable_cpu_offload(offload_mode)
+        if model_config.dit_dtype == torch.float8_e4m3fn:
+            pipe.dtype = torch.bfloat16  # running dtype
+            pipe.enable_fp8_autocast(
+                model_names=["dit"], running_dtype=pipe.dtype, use_fp8_linear=model_config.use_fp8_linear
+            )
+
+        if model_config.t5_dtype == torch.float8_e4m3fn:
+            pipe.dtype = torch.bfloat16  # running dtype
+            pipe.enable_fp8_autocast(
+                model_names=["text_encoder_2"], running_dtype=pipe.dtype, use_fp8_linear=model_config.use_fp8_linear
+            )
 
         if parallelism > 1:
             parallel_config = cls.init_parallel_config(parallelism, use_cfg_parallel, model_config)
@@ -803,7 +813,6 @@ class FluxImagePipeline(BasePipeline):
             current_step=current_step,
             total_step=total_step,
         )
-
         self.load_models_to_device(["dit"])
 
         noise_pred = self.dit(

@@ -1,16 +1,29 @@
 import unittest
-
-
 from tests.common.test_case import ImageTestCase
 from diffsynth_engine.pipelines import FluxImagePipeline, FluxModelConfig
 from diffsynth_engine import fetch_model
+import torch
 
 
 class TestFLUXImage(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_model("muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors")
-        cls.pipe = FluxImagePipeline.from_pretrained(model_path).eval()
+        model_path = fetch_model(
+            "muse/FLUX.1-dev-fp8",
+            path=[
+                "dit-fp8-00001-of-00004.safetensors",
+                "dit-fp8-00002-of-00004.safetensors",
+                "dit-fp8-00003-of-00004.safetensors",
+                "dit-fp8-00004-of-00004.safetensors",
+            ],
+        )
+        config = FluxModelConfig(
+            dit_path=model_path,
+            dit_dtype=torch.float8_e4m3fn,
+            t5_dtype=torch.float8_e4m3fn,
+            # use_fp8_linear=True, # only support for hopper, ada, blackwell
+        )
+        cls.pipe = FluxImagePipeline.from_pretrained(config, offload_mode="cpu_offload").eval()
 
     def test_txt2img(self):
         image = self.pipe(
@@ -35,7 +48,7 @@ class TestFLUXImage(ImageTestCase):
         self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.99)
 
-    def test_unfused_lora(self):
+    def test_unfused_lora111(self):
         lora_model_path = fetch_model("MAILAND/Merjic-Maria", revision="v1.0", path="12.safetensors")
         self.pipe.load_loras([(lora_model_path, 0.8)], fused=False)
         image = self.pipe(
@@ -46,7 +59,7 @@ class TestFLUXImage(ImageTestCase):
             seed=42,
         )
         self.pipe.unload_loras()
-        self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.98)
+        self.assertImageEqualAndSaveFailed(image, "flux/flux_lora_unfused.png", threshold=0.98)
 
     def test_diffusers_lora_patch(self):
         lora_model_path = fetch_model(

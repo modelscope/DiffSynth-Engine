@@ -435,7 +435,7 @@ class FluxDiT(PreTrainedModel):
             # addition of floating point numbers does not meet commutative law
             conditioning = self.time_embedder(timestep, hidden_states.dtype)
             if self.guidance_embedder is not None:
-                guidance = guidance * 1000
+                guidance = (guidance.to(torch.float32) * 1000).to(hidden_states.dtype)
                 conditioning += self.guidance_embedder(guidance, hidden_states.dtype)
             conditioning += self.pooled_text_embedder(pooled_prompt_emb)
             rope_emb = self.pos_embedder(torch.cat((text_ids, image_ids), dim=1))

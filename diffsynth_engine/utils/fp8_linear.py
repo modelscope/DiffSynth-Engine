@@ -4,6 +4,45 @@ import torch.nn.functional as F
 from contextlib import contextmanager
 
 
+def enable_fp8_autocast(module: nn.Module, running_dtype: torch.dtype = torch.bfloat16, use_fp8_linear: bool = False):
+    if len(list(module.children())) == 0:
+        if len(list(module.parameters())) > 0:
+            add_fp8_autocast_hook(module, running_dtype, use_fp8_linear)
+        return
+    if len(list(module.parameters(recurse=False))) > 0:
+        add_fp8_autocast_hook(module, running_dtype, use_fp8_linear)
+    for submodule in module.children():
+        if isinstance(submodule, nn.Linear) and use_fp8_linear:
+            continue
+
+        enable_fp8_autocast(submodule, running_dtype, use_fp8_linear)
+
+
+def add_fp8_autocast_hook(module: nn.Module, running_dtype: torch.dtype = torch.bfloat16, use_fp8_linear: bool = False):
+    def _fp8_autocast_pre_hook(module: nn.Module, input_):
+        for name, param in module.named_parameters():
+            if param.dtype == torch.float8_e4m3fn:
+                param.data = param.data.to(running_dtype)
+        new_inputs = []
+        for x in input_:
+            if isinstance(x, torch.Tensor) and x.dtype in [torch.float8_e4m3fn, torch.float16, torch.bfloat16]:
+                new_inputs.append(x.to(running_dtype))
+            else:
+                new_inputs.append(x)
+        return tuple(new_inputs)
+
+    def _fp8_autocast_hook(module: nn.Module, input, output):
+        for name, param in module.named_parameters():
+            if param.dtype == running_dtype:
+                param.data = param.data.to(torch.float8_e4m3fn)
+
+    if getattr(module, "_fp8_autocast_enabled", False):
+        return
+    module.register_forward_pre_hook(_fp8_autocast_pre_hook)
+    module.register_forward_hook(_fp8_autocast_hook)
+    setattr(module, "_fp8_autocast_enabled", True)
+
+
 def enable_fp8_linear(module: nn.Module):
     _enable_fp8_linear(module)
     setattr(module, "fp8_linear_enabled", True)

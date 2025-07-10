@@ -4,7 +4,7 @@ from typing import Dict, Optional
 
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic.relative_position_emb import RelativePositionEmbedding
-from diffsynth_engine.models.basic.transformer_helper import RMSNorm, NewGELUActivation
+from diffsynth_engine.models.basic.transformer_helper import RMSNorm
 from diffsynth_engine.models.basic.attention import Attention
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.gguf import gguf_inference
@@ -21,14 +21,12 @@ class T5FeedForward(nn.Module):
         self.wi_1 = nn.Linear(d_model, d_ff, bias=False, device=device, dtype=dtype)
         self.wo = nn.Linear(d_ff, d_model, bias=False, device=device, dtype=dtype)
         self.dropout = nn.Dropout(dropout_rate)
-        self.act = NewGELUActivation()
+        self.act = nn.GELU(approximate="tanh")
 
     def forward(self, hidden_states):
         hidden_gelu = self.act(self.wi_0(hidden_states))
         hidden_linear = self.wi_1(hidden_states)
         hidden_states = self.dropout(hidden_gelu * hidden_linear)
-
-        hidden_states = hidden_states.to(self.wo.weight.dtype)
         hidden_states = self.wo(hidden_states)
         return hidden_states
 

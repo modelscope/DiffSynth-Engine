@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple
 from PIL import Image
 from dataclasses import dataclass
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload
+from diffsynth_engine.utils.fp8_linear import enable_fp8_autocast
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.loader import load_file
@@ -100,7 +101,10 @@ class BasePipeline:
             if not os.path.isfile(path):
                 raise FileNotFoundError(f"{path} is not a file")
             elif path.endswith(".safetensors"):
-                state_dict.update(**load_file(path, device=device))
+                state_dict_ = load_file(path, device=device)
+                for key, value in state_dict_.items():
+                    state_dict[key] = value.to(dtype)
+
             elif path.endswith(".gguf"):
                 state_dict.update(**load_gguf_checkpoint(path, device=device, dtype=dtype))
             else:
@@ -154,7 +158,7 @@ class BasePipeline:
     @staticmethod
     def generate_noise(shape, seed=None, device="cpu", dtype=torch.float16):
         generator = None if seed is None else torch.Generator(device).manual_seed(seed)
-        noise = torch.randn(shape, generator=generator, device=device, dtype=dtype)
+        noise = torch.randn(shape, generator=generator, device=device).to(dtype)
         return noise
 
     def encode_image(
@@ -293,6 +297,15 @@ class BasePipeline:
                 model.to("cpu")
                 enable_sequential_cpu_offload(model, self.device)
         self.offload_mode = "sequential_cpu_offload"
+
+    def enable_fp8_autocast(
+        self, model_names: List[str], running_dtype: torch.dtype = torch.bfloat16, use_fp8_linear: bool = False
+    ):
+        for model_name in model_names:
+            model = getattr(self, model_name)
+            if model is not None:
+                enable_fp8_autocast(model, running_dtype, use_fp8_linear)
+        self.fp8_autocast_enabled = True
 
     def load_models_to_device(self, load_model_names: List[str] | None = None):
         load_model_names = load_model_names if load_model_names else []

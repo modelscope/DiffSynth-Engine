@@ -37,14 +37,23 @@ class LoRA(nn.Module):
         else:
             delta_w = self.scale * (self.alpha / self.rank) * (self.up.weight @ self.down.weight)
         if isinstance(w, (nn.Linear, nn.Conv2d)):
-            delta_w = delta_w.to(device=w.weight.data.device, dtype=w.weight.data.dtype)
+            delta_w = delta_w.to(device=w.weight.data.device, dtype=self.dtype)
+            w_dtype = w.weight.data.dtype
+            w.weight.data = w.weight.data.to(self.dtype)
             w.weight.data.add_(delta_w)
+            w.weight.data = w.weight.data.to(w_dtype)
         elif isinstance(w, nn.Parameter):
-            delta_w = delta_w.to(device=w.data.device, dtype=w.data.dtype)
+            delta_w = delta_w.to(device=w.data.device, dtype=self.dtype)
+            w_dtype = w.data.dtype
+            w.data = w.data.to(self.dtype)
             w.data.add_(delta_w)
+            w.data = w.data.to(w_dtype)
         elif isinstance(w, torch.Tensor):
-            delta_w = delta_w.to(device=w.device, dtype=w.dtype)
+            delta_w = delta_w.to(device=w.device, dtype=self.dtype)
+            w_dtype = w.dtype
+            w = w.to(self.dtype)
             w.add_(delta_w)
+            w = w.to(w_dtype)
 
 
 class LoRALinear(nn.Linear):
@@ -60,8 +69,8 @@ class LoRALinear(nn.Linear):
         # LoRA
         self._lora_dict = OrderedDict()
         # Frozen LoRA
-        self._frozen_lora_list = []
-        self.register_buffer("_original_weight", None)
+        self.patched_frozen_lora = False
+        self._original_weight = None
 
     @staticmethod
     def from_linear(linear: nn.Linear):
@@ -118,20 +127,21 @@ class LoRALinear(nn.Linear):
         save_original_weight: bool = True,
     ):
         if save_original_weight and self._original_weight is None:
-            self._original_weight = self.weight.clone()
+            self._original_weight = self.weight.to(dtype=torch.bfloat16, device="cpu")
         lora = LoRA(scale, rank, alpha, up, down, device, dtype)
         lora.apply_to(self)
-        self._frozen_lora_list.append(lora)
+        self.patched_frozen_lora = True
 
     def clear(self):
-        if self._original_weight is None and len(self._frozen_lora_list) > 0:
+        if self.patched_frozen_lora and self._original_weight is None:
             raise RuntimeError(
                 "Current LoRALinear has patched by frozen LoRA, but original weight is not saved, so you cannot clear LoRA."
             )
         self._lora_dict.clear()
-        self._frozen_lora_list = []
         if self._original_weight is not None:
-            self.weight.data.copy_(self._original_weight)
+            self.weight.data.copy_(
+                self._original_weight.to(device=self.weight.data.device, dtype=self.weight.data.dtype)
+            )
 
     def forward(self, x):
         w_x = super().forward(x)
@@ -161,8 +171,8 @@ class LoRAConv2d(nn.Conv2d):
         # LoRA
         self._lora_dict = OrderedDict()
         # Frozen LoRA
-        self._frozen_lora_list = []
         self._original_weight = None
+        self.patched_frozen_lora = False
 
     @staticmethod
     def from_conv2d(conv2d: nn.Conv2d):
@@ -257,20 +267,19 @@ class LoRAConv2d(nn.Conv2d):
         save_original_weight: bool = True,
     ):
         if save_original_weight and self._original_weight is None:
-            self._original_weight = self.weight.clone()
+            self._original_weight = self.weight.to(dtype=torch.bfloat16, device="cpu")
         lora = self._construct_lora(name, scale, rank, alpha, up, down, device, dtype)
         lora.apply_to(self)
-        self._frozen_lora_list.append(lora)
+        self.patched_frozen_lora = True
 
     def clear(self):
-        if self._original_weight is None and len(self._frozen_lora_list) > 0:
+        if self.patched_frozen_lora and self._original_weight is None:
             raise RuntimeError(
                 "Current LoRALinear has patched by frozen LoRA, but original weight is not saved, so you cannot clear LoRA."
             )
         self._lora_dict.clear()
-        self._frozen_lora_list = []
         if self._original_weight is not None:
-            self.weight.copy_(self._original_weight)
+            self.weight.copy_(self._original_weight.to(device=self.weight.device, dtype=self.weight.dtype))
             self._original_weight = None
 
     def forward(self, x):
