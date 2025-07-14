@@ -127,12 +127,15 @@ class LoRALinear(nn.Linear):
         save_original_weight: bool = True,
     ):
         if save_original_weight and self._original_weight is None:
-            self._original_weight = self.weight.to(dtype=torch.bfloat16, device="cpu")
+            if self.weight.dtype == torch.float8_e4m3fn:
+                self._original_weight = self.weight.to(dtype=torch.bfloat16, device="cpu", copy=True).pin_memory()
+            else:
+                self._original_weight = self.weight.to(device="cpu", copy=True).pin_memory()
         lora = LoRA(scale, rank, alpha, up, down, device, dtype)
         lora.apply_to(self)
         self.patched_frozen_lora = True
 
-    def clear(self):
+    def clear(self, release_all_cpu_memory: bool = False):
         if self.patched_frozen_lora and self._original_weight is None:
             raise RuntimeError(
                 "Current LoRALinear has patched by frozen LoRA, but original weight is not saved, so you cannot clear LoRA."
@@ -142,6 +145,9 @@ class LoRALinear(nn.Linear):
             self.weight.data.copy_(
                 self._original_weight.to(device=self.weight.data.device, dtype=self.weight.data.dtype)
             )
+            if release_all_cpu_memory:
+                del self._original_weight
+            self.patched_frozen_lora = False
 
     def forward(self, x):
         w_x = super().forward(x)
@@ -267,12 +273,15 @@ class LoRAConv2d(nn.Conv2d):
         save_original_weight: bool = True,
     ):
         if save_original_weight and self._original_weight is None:
-            self._original_weight = self.weight.to(dtype=torch.bfloat16, device="cpu")
+            if self.weight.dtype == torch.float8_e4m3fn:
+                self._original_weight = self.weight.to(dtype=torch.bfloat16, device="cpu", copy=True).pin_memory()
+            else:
+                self._original_weight = self.weight.to(device="cpu", copy=True).pin_memory()
         lora = self._construct_lora(name, scale, rank, alpha, up, down, device, dtype)
         lora.apply_to(self)
         self.patched_frozen_lora = True
 
-    def clear(self):
+    def clear(self, release_all_cpu_memory: bool = False):
         if self.patched_frozen_lora and self._original_weight is None:
             raise RuntimeError(
                 "Current LoRALinear has patched by frozen LoRA, but original weight is not saved, so you cannot clear LoRA."
@@ -280,7 +289,9 @@ class LoRAConv2d(nn.Conv2d):
         self._lora_dict.clear()
         if self._original_weight is not None:
             self.weight.copy_(self._original_weight.to(device=self.weight.device, dtype=self.weight.dtype))
-            self._original_weight = None
+            if release_all_cpu_memory:
+                del self._original_weight
+            self.patched_frozen_lora = False
 
     def forward(self, x):
         w_x = super().forward(x)

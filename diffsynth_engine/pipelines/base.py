@@ -299,12 +299,12 @@ class BasePipeline:
         self.offload_mode = "sequential_cpu_offload"
 
     def enable_fp8_autocast(
-        self, model_names: List[str], running_dtype: torch.dtype = torch.bfloat16, use_fp8_linear: bool = False
+        self, model_names: List[str], compute_dtype: torch.dtype = torch.bfloat16, use_fp8_linear: bool = False
     ):
         for model_name in model_names:
             model = getattr(self, model_name)
             if model is not None:
-                enable_fp8_autocast(model, running_dtype, use_fp8_linear)
+                enable_fp8_autocast(model, compute_dtype, use_fp8_linear)
         self.fp8_autocast_enabled = True
 
     def load_models_to_device(self, load_model_names: List[str] | None = None):

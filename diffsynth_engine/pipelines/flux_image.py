@@ -608,13 +608,13 @@ class FluxImagePipeline(BasePipeline):
         if model_config.dit_dtype == torch.float8_e4m3fn:
             pipe.dtype = torch.bfloat16  # running dtype
             pipe.enable_fp8_autocast(
-                model_names=["dit"], running_dtype=pipe.dtype, use_fp8_linear=model_config.use_fp8_linear
+                model_names=["dit"], compute_dtype=pipe.dtype, use_fp8_linear=model_config.use_fp8_linear
             )
 
         if model_config.t5_dtype == torch.float8_e4m3fn:
             pipe.dtype = torch.bfloat16  # running dtype
             pipe.enable_fp8_autocast(
-                model_names=["text_encoder_2"], running_dtype=pipe.dtype, use_fp8_linear=model_config.use_fp8_linear
+                model_names=["text_encoder_2"], compute_dtype=pipe.dtype, use_fp8_linear=model_config.use_fp8_linear
             )
 
         if parallelism > 1:

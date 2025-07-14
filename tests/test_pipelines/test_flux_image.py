@@ -48,7 +48,7 @@ class TestFLUXImage(ImageTestCase):
         self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.99)
 
-    def test_unfused_lora111(self):
+    def test_unfused_lora(self):
         lora_model_path = fetch_model("MAILAND/Merjic-Maria", revision="v1.0", path="12.safetensors")
         self.pipe.load_loras([(lora_model_path, 0.8)], fused=False)
         image = self.pipe(
