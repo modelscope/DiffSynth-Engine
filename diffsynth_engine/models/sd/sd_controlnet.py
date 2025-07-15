@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import Dict, Optional
+from typing import Dict
 
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
@@ -570,7 +570,6 @@ class SDControlNet(PreTrainedModel):
 
     def __init__(
         self,
-        attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -666,10 +665,9 @@ class SDControlNet(PreTrainedModel):
         state_dict: Dict[str, torch.Tensor],
         device: str,
         dtype: torch.dtype,
-        attn_impl: Optional[str] = None,
     ):
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, attn_impl=attn_impl, device=device, dtype=dtype)
+            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
         model.load_state_dict(state_dict)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from typing import Dict, List, Tuple
 from PIL import Image
-from dataclasses import dataclass
+from diffsynth_engine.config import DiffsynthConfig
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload
 from diffsynth_engine.utils.fp8_linear import enable_fp8_autocast
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
@@ -12,11 +12,6 @@ from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.utils.platform import empty_cache
 
 logger = logging.get_logger(__name__)
-
-
-@dataclass
-class ModelConfig:
-    pass
 
 
 class LoRAStateDictConverter:
@@ -45,13 +40,7 @@ class BasePipeline:
         self.model_names = []
 
     @classmethod
-    def from_pretrained(
-        cls,
-        model_path_or_config: str | os.PathLike | ModelConfig,
-        device: str = "cuda",
-        dtype: torch.dtype = torch.float16,
-        offload_mode: str | None = None,
-    ) -> "BasePipeline":
+    def from_pretrained(cls, config: DiffsynthConfig) -> "BasePipeline":
         raise NotImplementedError()
 
     @classmethod
@@ -224,52 +213,41 @@ class BasePipeline:
         return self
 
     @staticmethod
-    def init_parallel_config(
-        parallelism: int,
-        use_cfg_parallel: bool,
-        model_config: ModelConfig,
-    ):
-        assert parallelism in (2, 4, 8), "parallelism must be 2, 4 or 8"
-        cfg_degree = 2 if use_cfg_parallel else 1
-        sp_ulysses_degree = getattr(model_config, "sp_ulysses_degree", None)
-        sp_ring_degree = getattr(model_config, "sp_ring_degree", None)
-        tp_degree = getattr(model_config, "tp_degree", None)
-        use_fsdp = getattr(model_config, "use_fsdp", False)
+    def init_parallel_config(config: DiffsynthConfig):
+        assert config.parallelism in (2, 4, 8), "parallelism must be 2, 4 or 8"
+        config.batch_cfg = True if config.parallelism > 1 and config.use_cfg_parallel else config.batch_cfg
 
-        if tp_degree is not None:
-            assert sp_ulysses_degree is None and sp_ring_degree is None, (
+        if config.use_cfg_parallel is True and config.cfg_degree is not None:
+            raise ValueError("use_cfg_parallel and cfg_degree should not be specified together")
+        config.cfg_degree = (2 if config.use_cfg_parallel else 1) if config.cfg_degree is None else config.cfg_degree
+
+        if config.tp_degree is not None:
+            assert config.sp_ulysses_degree is None and config.sp_ring_degree is None, (
                 "not allowed to enable sequence parallel and tensor parallel together; "
                 "either set sp_ulysses_degree=None, sp_ring_degree=None or set tp_degree=None during pipeline initialization"
             )
-            assert use_fsdp is False, (
+            assert config.use_fsdp is False, (
                 "not allowed to enable fully sharded data parallel and tensor parallel together; "
                 "either set use_fsdp=False or set tp_degree=None during pipeline initialization"
             )
-            assert parallelism == cfg_degree * tp_degree, (
-                f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * tp_degree ({tp_degree})"
+            assert config.parallelism == config.cfg_degree * config.tp_degree, (
+                f"parallelism ({config.parallelism}) must be equal to cfg_degree ({config.cfg_degree}) * tp_degree ({config.tp_degree})"
             )
-            sp_ulysses_degree = 1
-            sp_ring_degree = 1
-        elif sp_ulysses_degree is None and sp_ring_degree is None:
+            config.sp_ulysses_degree = 1
+            config.sp_ring_degree = 1
+        elif config.sp_ulysses_degree is None and config.sp_ring_degree is None:
             # use ulysses if not specified
-            sp_ulysses_degree = parallelism // cfg_degree
-            sp_ring_degree = 1
-            tp_degree = 1
-        elif sp_ulysses_degree is not None and sp_ring_degree is not None:
-            assert parallelism == cfg_degree * sp_ulysses_degree * sp_ring_degree, (
-                f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * "
-                f"sp_ulysses_degree ({sp_ulysses_degree}) * sp_ring_degree ({sp_ring_degree})"
+            config.sp_ulysses_degree = config.parallelism // config.cfg_degree
+            config.sp_ring_degree = 1
+            config.tp_degree = 1
+        elif config.sp_ulysses_degree is not None and config.sp_ring_degree is not None:
+            assert config.parallelism == config.cfg_degree * config.sp_ulysses_degree * config.sp_ring_degree, (
+                f"parallelism ({config.parallelism}) must be equal to cfg_degree ({config.cfg_degree}) * "
+                f"sp_ulysses_degree ({config.sp_ulysses_degree}) * sp_ring_degree ({config.sp_ring_degree})"
             )
-            tp_degree = 1
+            config.tp_degree = 1
         else:
             raise ValueError("sp_ulysses_degree and sp_ring_degree must be specified together")
-        return {
-            "cfg_degree": cfg_degree,
-            "sp_ulysses_degree": sp_ulysses_degree,
-            "sp_ring_degree": sp_ring_degree,
-            "tp_degree": tp_degree,
-            "use_fsdp": use_fsdp,
-        }
 
     def enable_cpu_offload(self, offload_mode: str):
         valid_offload_mode = ("cpu_offload", "sequential_cpu_offload")

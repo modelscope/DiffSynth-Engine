@@ -1,7 +1,7 @@
 import unittest
 
 from tests.common.test_case import ImageTestCase
-from diffsynth_engine import fetch_model
+from diffsynth_engine import DiffsynthConfig, fetch_model
 from diffsynth_engine.pipelines.sdxl_image import SDXLImagePipeline
 
 
@@ -9,7 +9,8 @@ class TestSDXLImage(ImageTestCase):
     @classmethod
     def setUpClass(cls):
         model_path = fetch_model("muse/sd_xl_base_1.0", revision="20240425120250", path="sd_xl_base_1.0.safetensors")
-        cls.pipe = SDXLImagePipeline.from_pretrained(model_path)
+        config = DiffsynthConfig(model_path=model_path)
+        cls.pipe = SDXLImagePipeline.from_pretrained(config)
 
     def test_txt2img(self):
         image = self.pipe(

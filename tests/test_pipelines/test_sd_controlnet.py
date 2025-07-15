@@ -1,7 +1,7 @@
 import unittest
 
 from tests.common.test_case import ImageTestCase
-from diffsynth_engine import SDImagePipeline, SDControlNet, ControlNetParams, fetch_model
+from diffsynth_engine import DiffsynthConfig, SDImagePipeline, SDControlNet, ControlNetParams, fetch_model
 import torch
 
 
@@ -11,7 +11,8 @@ class TestSDControlNet(ImageTestCase):
         model_path = fetch_model(
             "muse/v1-5-pruned-emaonly", revision="20240118200020", path="v1-5-pruned-emaonly.safetensors"
         )
-        cls.pipe = SDImagePipeline.from_pretrained(model_path)
+        config = DiffsynthConfig(model_path=model_path)
+        cls.pipe = SDImagePipeline.from_pretrained(config)
 
     def test_canny(self):
         canny_image = self.get_input_image("canny.png")

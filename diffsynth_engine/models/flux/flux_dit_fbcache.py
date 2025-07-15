@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.gguf import gguf_inference
@@ -21,12 +21,12 @@ class FluxDiTFBCache(FluxDiT):
     def __init__(
         self,
         in_channel: int = 64,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         relative_l1_threshold: float = 0.05,
     ):
-        super().__init__(in_channel=in_channel, attn_impl=attn_impl, device=device, dtype=dtype)
+        super().__init__(in_channel=in_channel, attn_kwargs=attn_kwargs, device=device, dtype=dtype)
         self.relative_l1_threshold = relative_l1_threshold
         self.step_count = 0
         self.num_inference_steps = 0
@@ -187,7 +187,7 @@ class FluxDiTFBCache(FluxDiT):
         device: str,
         dtype: torch.dtype,
         in_channel: int = 64,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         fb_cache_relative_l1_threshold: float = 0.05,
     ):
         with no_init_weights():
@@ -196,7 +196,7 @@ class FluxDiTFBCache(FluxDiT):
                 device=device,
                 dtype=dtype,
                 in_channel=in_channel,
-                attn_impl=attn_impl,
+                attn_kwargs=attn_kwargs,
                 fb_cache_relative_l1_threshold=fb_cache_relative_l1_threshold,
             )
             model = model.requires_grad_(False)  # for loading gguf

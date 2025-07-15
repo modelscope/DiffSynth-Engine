@@ -1,7 +1,7 @@
 import unittest
 
 from tests.common.test_case import ImageTestCase
-from diffsynth_engine import fetch_model
+from diffsynth_engine import DiffsynthConfig, fetch_model
 from diffsynth_engine.pipelines.sd_image import SDImagePipeline
 
 
@@ -11,7 +11,8 @@ class TestSDImage(ImageTestCase):
         model_path = fetch_model(
             "muse/v1-5-pruned-emaonly", revision="20240118200020", path="v1-5-pruned-emaonly.safetensors"
         )
-        cls.pipe = SDImagePipeline.from_pretrained(model_path)
+        config = DiffsynthConfig(model_path=model_path)
+        cls.pipe = SDImagePipeline.from_pretrained(config)
 
     def test_txt2img(self):
         image = self.pipe(prompt="beautiful girl", width=512, height=512, num_inference_steps=20, seed=42)

@@ -1,12 +1,13 @@
 from PIL import Image
 
-from diffsynth_engine.pipelines import WanVideoPipeline, WanModelConfig
+from diffsynth_engine import DiffsynthConfig
+from diffsynth_engine.pipelines import WanVideoPipeline
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.video import save_video
 
 
 if __name__ == "__main__":
-    config = WanModelConfig(
+    config = DiffsynthConfig(
         model_path=fetch_model("MusePublic/wan2.1-flf2v-14b-720p-bf16", path="dit.safetensors"),
         t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
         vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
@@ -14,9 +15,12 @@ if __name__ == "__main__":
             "muse/open-clip-xlm-roberta-large-vit-huge-14",
             path="open-clip-xlm-roberta-large-vit-huge-14.safetensors",
         ),
+        offload_mode="cpu_offload",
+        parallelism=4,
+        use_cfg_parallel=True,
         use_fsdp=True,
     )
-    pipe = WanVideoPipeline.from_pretrained(config, parallelism=4, use_cfg_parallel=True, offload_mode="cpu_offload")
+    pipe = WanVideoPipeline.from_pretrained(config)
 
     fisrt_frame = Image.open("input/wan_flf2v_input_first_frame.png").convert("RGB")
     last_frame = Image.open("input/wan_flf2v_input_last_frame.png").convert("RGB")

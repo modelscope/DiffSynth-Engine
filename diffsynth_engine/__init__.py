@@ -1,12 +1,9 @@
+from .config.base import DiffsynthConfig
 from .pipelines import (
     FluxImagePipeline,
     SDXLImagePipeline,
     SDImagePipeline,
     WanVideoPipeline,
-    FluxModelConfig,
-    SDXLModelConfig,
-    SDModelConfig,
-    WanModelConfig,
     ControlNetParams,
 )
 from .models.flux import FluxControlNet, FluxIPAdapter, FluxRedux
@@ -23,6 +20,7 @@ from .tools import (
 )
 
 __all__ = [
+    "DiffsynthConfig",
     "FluxImagePipeline",
     "FluxControlNet",
     "FluxIPAdapter",
@@ -32,10 +30,6 @@ __all__ = [
     "SDXLImagePipeline",
     "SDImagePipeline",
     "WanVideoPipeline",
-    "FluxModelConfig",
-    "SDXLModelConfig",
-    "SDModelConfig",
-    "WanModelConfig",
     "FluxInpaintingTool",
     "FluxOutpaintingTool",
     "FluxIPAdapterRefTool",
