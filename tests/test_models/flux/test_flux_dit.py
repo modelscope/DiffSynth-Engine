@@ -48,6 +48,7 @@ class TestFluxDiT(TestCase):
                 timestep=timestep,
                 prompt_emb=prompt_emb,
                 pooled_prompt_emb=pooled_prompt_emb,
+                image_emb=None,
                 guidance=guidance,
                 image_ids=image_ids,
                 text_ids=text_ids,

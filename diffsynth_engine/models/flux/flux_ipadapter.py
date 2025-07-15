@@ -2,7 +2,7 @@ import torch
 from einops import rearrange
 from torch import nn
 from PIL import Image
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 from functools import partial
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.models.text_encoder.siglip import SiglipImageEncoder
@@ -19,7 +19,7 @@ class FluxIPAdapterAttention(nn.Module):
         dim: int = 3072,
         head_num: int = 24,
         scale: float = 1.0,
-        attn_impl="auto",
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -29,12 +29,12 @@ class FluxIPAdapterAttention(nn.Module):
         self.to_v_ip = nn.Linear(image_emb_dim, dim, device=device, dtype=dtype, bias=False)
         self.head_num = head_num
         self.scale = scale
-        self.attn_impl = attn_impl
+        self.attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
 
     def forward(self, query: torch.Tensor, image_emb: torch.Tensor):
         key = rearrange(self.norm_k(self.to_k_ip(image_emb)), "b s (h d) -> b s h d", h=self.head_num)
         value = rearrange(self.to_v_ip(image_emb), "b s (h d) -> b s h d", h=self.head_num)
-        attn_out = attention(query, key, value)
+        attn_out = attention(query, key, value, **self.attn_kwargs)
         return self.scale * rearrange(attn_out, "b s h d -> b s (h d)")
 
     @classmethod
@@ -142,7 +142,7 @@ class FluxIPAdapter(PreTrainedModel):
                 single_attention_callback, self=dit.single_blocks[i].attn
             )
 
-    def image_encode(self, image: Image.Image) -> torch.Tensor:
+    def encode_image(self, image: Image.Image) -> torch.Tensor:
         image_emb = self.image_encoder(image)
         return self.image_proj(image_emb)
 

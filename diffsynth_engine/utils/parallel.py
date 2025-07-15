@@ -325,7 +325,7 @@ class ParallelWrapper:
         sp_ulysses_degree: int,
         sp_ring_degree: int,
         tp_degree: int,
-        use_fsdp: bool,
+        use_fsdp: bool = False,
         master_port: int = 29500,
         device: str = "cuda",
     ):

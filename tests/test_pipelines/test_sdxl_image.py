@@ -34,7 +34,7 @@ class TestSDXLImage(ImageTestCase):
 
     def test_unfused_lora(self):
         lora_model_path = fetch_model("MusePublic/89_lora_SD_XL", revision="532", path="532.safetensors")
-        self.pipe.load_loras([(lora_model_path, 0.8)])
+        self.pipe.load_loras([(lora_model_path, 0.8)], fused=False)
         image = self.pipe(
             prompt="a beautiful girl, chibi",
             width=1024,
@@ -48,7 +48,7 @@ class TestSDXLImage(ImageTestCase):
 
     def test_fused_lora(self):
         lora_model_path = fetch_model("MusePublic/89_lora_SD_XL", revision="532", path="532.safetensors")
-        self.pipe.load_loras([(lora_model_path, 0.8)], fused=True)
+        self.pipe.load_loras([(lora_model_path, 0.8)], fused=True, save_original_weight=True)
         image = self.pipe(
             prompt="a beautiful girl, chibi",
             width=1024,

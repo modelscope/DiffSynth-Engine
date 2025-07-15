@@ -1,6 +1,7 @@
 import unittest
 
 from tests.common.test_case import ImageTestCase
+from diffsynth_engine.configs import FluxPipelineConfig
 from diffsynth_engine.pipelines import FluxImagePipeline
 from diffsynth_engine.pipelines.flux_image import ControlType, ControlNetParams
 from diffsynth_engine.processor.canny_processor import CannyProcessor
@@ -16,7 +17,8 @@ class TestFLUXBFLCannyImage(ImageTestCase):
         cls.canny_model_path = fetch_model(
             "AI-ModelScope/FLUX.1-Canny-dev", revision="master", path="flux1-canny-dev.safetensors"
         )
-        cls.pipe = FluxImagePipeline.from_pretrained(cls.canny_model_path, control_type=ControlType.bfl_control).eval()
+        config = FluxPipelineConfig(model_path=cls.canny_model_path, control_type=ControlType.bfl_control)
+        cls.pipe = FluxImagePipeline.from_pretrained(config)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -49,7 +51,8 @@ class TestFLUXBFLDepthImage(ImageTestCase):
         cls.depth_model_path = fetch_model(
             "AI-ModelScope/FLUX.1-Depth-dev", revision="master", path="flux1-depth-dev.safetensors"
         )
-        cls.pipe = FluxImagePipeline.from_pretrained(cls.depth_model_path, control_type=ControlType.bfl_control).eval()
+        config = FluxPipelineConfig(model_path=cls.depth_model_path, control_type=ControlType.bfl_control)
+        cls.pipe = FluxImagePipeline.from_pretrained(config)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -81,7 +84,8 @@ class TestFLUXBFLFillImage(ImageTestCase):
         cls.fill_model_path = fetch_model(
             "AI-ModelScope/FLUX.1-Fill-dev", revision="master", path="flux1-fill-dev.safetensors"
         )
-        cls.pipe = FluxImagePipeline.from_pretrained(cls.fill_model_path, control_type=ControlType.bfl_fill).eval()
+        config = FluxPipelineConfig(model_path=cls.fill_model_path, control_type=ControlType.bfl_fill)
+        cls.pipe = FluxImagePipeline.from_pretrained(config)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -114,7 +118,12 @@ class TestFLUXBFLKontextImage(ImageTestCase):
         kontext_model_path = fetch_model(
             "black-forest-labs/FLUX.1-Kontext-dev", revision="master", path="flux1-kontext-dev.safetensors"
         )
-        cls.pipe = FluxImagePipeline.from_pretrained(kontext_model_path, control_type=ControlType.bfl_kontext).eval()
+        config = FluxPipelineConfig(model_path=kontext_model_path, control_type=ControlType.bfl_kontext)
+        cls.pipe = FluxImagePipeline.from_pretrained(config)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        del cls.pipe
 
     def test_kontext_image(self):
         image = self.pipe(

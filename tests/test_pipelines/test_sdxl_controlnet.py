@@ -1,6 +1,6 @@
 import unittest
-
 import torch
+
 from tests.common.test_case import ImageTestCase
 from diffsynth_engine import fetch_model, SDXLImagePipeline, SDXLControlNetUnion, ControlNetParams
 

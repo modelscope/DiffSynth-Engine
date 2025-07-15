@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from typing import Dict, List, Tuple
 from PIL import Image
-from dataclasses import dataclass
+from diffsynth_engine.configs import BaseConfig
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload
 from diffsynth_engine.utils.fp8_linear import enable_fp8_autocast
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
@@ -12,11 +12,6 @@ from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.utils.platform import empty_cache
 
 logger = logging.get_logger(__name__)
-
-
-@dataclass
-class ModelConfig:
-    pass
 
 
 class LoRAStateDictConverter:
@@ -30,8 +25,8 @@ class BasePipeline:
     def __init__(
         self,
         vae_tiled: bool = False,
-        vae_tile_size: int = -1,
-        vae_tile_stride: int = -1,
+        vae_tile_size: int | Tuple[int, int] = -1,
+        vae_tile_stride: int | Tuple[int, int] = -1,
         device="cuda",
         dtype=torch.float16,
     ):
@@ -46,13 +41,7 @@ class BasePipeline:
         self._models_offload_params = {}
 
     @classmethod
-    def from_pretrained(
-        cls,
-        model_path_or_config: str | os.PathLike | ModelConfig,
-        device: str = "cuda",
-        dtype: torch.dtype = torch.float16,
-        offload_mode: str | None = None,
-    ) -> "BasePipeline":
+    def from_pretrained(cls, model_path_or_config: str | BaseConfig) -> "BasePipeline":
         raise NotImplementedError()
 
     @classmethod
@@ -224,54 +213,6 @@ class BasePipeline:
                 model.eval()
         return self
 
-    @staticmethod
-    def init_parallel_config(
-        parallelism: int,
-        use_cfg_parallel: bool,
-        model_config: ModelConfig,
-    ):
-        assert parallelism in (2, 4, 8), "parallelism must be 2, 4 or 8"
-        cfg_degree = 2 if use_cfg_parallel else 1
-        sp_ulysses_degree = getattr(model_config, "sp_ulysses_degree", None)
-        sp_ring_degree = getattr(model_config, "sp_ring_degree", None)
-        tp_degree = getattr(model_config, "tp_degree", None)
-        use_fsdp = getattr(model_config, "use_fsdp", False)
-
-        if tp_degree is not None:
-            assert sp_ulysses_degree is None and sp_ring_degree is None, (
-                "not allowed to enable sequence parallel and tensor parallel together; "
-                "either set sp_ulysses_degree=None, sp_ring_degree=None or set tp_degree=None during pipeline initialization"
-            )
-            assert use_fsdp is False, (
-                "not allowed to enable fully sharded data parallel and tensor parallel together; "
-                "either set use_fsdp=False or set tp_degree=None during pipeline initialization"
-            )
-            assert parallelism == cfg_degree * tp_degree, (
-                f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * tp_degree ({tp_degree})"
-            )
-            sp_ulysses_degree = 1
-            sp_ring_degree = 1
-        elif sp_ulysses_degree is None and sp_ring_degree is None:
-            # use ulysses if not specified
-            sp_ulysses_degree = parallelism // cfg_degree
-            sp_ring_degree = 1
-            tp_degree = 1
-        elif sp_ulysses_degree is not None and sp_ring_degree is not None:
-            assert parallelism == cfg_degree * sp_ulysses_degree * sp_ring_degree, (
-                f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * "
-                f"sp_ulysses_degree ({sp_ulysses_degree}) * sp_ring_degree ({sp_ring_degree})"
-            )
-            tp_degree = 1
-        else:
-            raise ValueError("sp_ulysses_degree and sp_ring_degree must be specified together")
-        return {
-            "cfg_degree": cfg_degree,
-            "sp_ulysses_degree": sp_ulysses_degree,
-            "sp_ring_degree": sp_ring_degree,
-            "tp_degree": tp_degree,
-            "use_fsdp": use_fsdp,
-        }
-
     def enable_cpu_offload(self, offload_mode: str):
         valid_offload_mode = ("cpu_offload", "sequential_cpu_offload")
         if offload_mode not in valid_offload_mode:
@@ -326,14 +267,22 @@ class BasePipeline:
         for model_name in self.model_names:
             if model_name not in load_model_names:
                 model = getattr(self, model_name)
-                if model is not None and (p := next(model.parameters(), None)) is not None and p.device != torch.device("cpu"):
+                if (
+                    model is not None
+                    and (p := next(model.parameters(), None)) is not None
+                    and p.device != torch.device("cpu")
+                ):
                     param_cache = self._models_offload_params[model_name]
                     for name, param in model.named_parameters(recurse=True):
                         param.data = param_cache[name]
         # load the needed models to device
         for model_name in load_model_names:
             model = getattr(self, model_name)
-            if model is not None and (p := next(model.parameters(), None)) is not None and p.device != torch.device(self.device):
+            if (
+                model is not None
+                and (p := next(model.parameters(), None)) is not None
+                and p.device != torch.device(self.device)
+            ):
                 model.to(self.device)
         # fresh the cuda cache
         empty_cache()

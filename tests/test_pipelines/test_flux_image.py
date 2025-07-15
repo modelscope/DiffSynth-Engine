@@ -1,6 +1,7 @@
 import unittest
 from tests.common.test_case import ImageTestCase
-from diffsynth_engine.pipelines import FluxImagePipeline, FluxModelConfig
+from diffsynth_engine import FluxPipelineConfig
+from diffsynth_engine.pipelines import FluxImagePipeline
 from diffsynth_engine import fetch_model
 import torch
 
@@ -17,13 +18,18 @@ class TestFLUXImage(ImageTestCase):
                 "dit-fp8-00004-of-00004.safetensors",
             ],
         )
-        config = FluxModelConfig(
-            dit_path=model_path,
-            dit_dtype=torch.float8_e4m3fn,
+        config = FluxPipelineConfig(
+            model_path=model_path,
+            model_dtype=torch.float8_e4m3fn,
             t5_dtype=torch.float8_e4m3fn,
+            offload_mode="cpu_offload",
             # use_fp8_linear=True, # only support for hopper, ada, blackwell
         )
-        cls.pipe = FluxImagePipeline.from_pretrained(config, offload_mode="cpu_offload").eval()
+        cls.pipe = FluxImagePipeline.from_pretrained(config)
+
+    @classmethod
+    def tearDownClass(cls):
+        del cls.pipe
 
     def test_txt2img(self):
         image = self.pipe(
@@ -82,11 +88,15 @@ class TestFLUXGGUF(ImageTestCase):
     def setUpClass(cls):
         model_path = fetch_model("city96/FLUX.1-dev-gguf", path="flux1-dev-Q4_K_S.gguf")
         t5_path = fetch_model("city96/t5-v1_1-xxl-encoder-gguf", path="t5-v1_1-xxl-encoder-Q4_K_S.gguf")
-        config = FluxModelConfig(
-            dit_path=model_path,
+        config = FluxPipelineConfig(
+            model_path=model_path,
             t5_path=t5_path,
         )
-        cls.pipe = FluxImagePipeline.from_pretrained(config).eval()
+        cls.pipe = FluxImagePipeline.from_pretrained(config)
+
+    @classmethod
+    def tearDownClass(cls):
+        del cls.pipe
 
     def test_gguf_inference(self):
         image = self.pipe(

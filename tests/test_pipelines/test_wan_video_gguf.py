@@ -1,14 +1,15 @@
 import unittest
 
 from tests.common.test_case import VideoTestCase
-from diffsynth_engine.pipelines import WanVideoPipeline, WanModelConfig
+from diffsynth_engine import WanPipelineConfig
+from diffsynth_engine.pipelines import WanVideoPipeline
 from diffsynth_engine.utils.download import fetch_model
 
 
 class TestWanVideoGGUF(VideoTestCase):
     @classmethod
     def setUpClass(cls):
-        config = WanModelConfig(
+        config = WanPipelineConfig(
             model_path=fetch_model("city96/Wan2.1-T2V-14B-gguf", path="wan2.1-t2v-14b-Q4_1.gguf"),
             t5_path=fetch_model("city96/umt5-xxl-encoder-gguf", path="umt5-xxl-encoder-Q4_K_M.gguf"),
             vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),

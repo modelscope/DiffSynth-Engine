@@ -1,4 +1,4 @@
-from diffsynth_engine import fetch_model, FluxControlNet, ControlNetParams, FluxImagePipeline
+from diffsynth_engine import fetch_model, FluxPipelineConfig, FluxControlNet, ControlNetParams, FluxImagePipeline
 from typing import List, Tuple, Optional, Callable
 from PIL import Image
 import torch
@@ -12,9 +12,13 @@ class FluxOutpaintingTool:
         dtype: torch.dtype = torch.bfloat16,
         offload_mode: Optional[str] = None,
     ):
-        self.pipe = FluxImagePipeline.from_pretrained(
-            flux_model_path, device=device, offload_mode=offload_mode, dtype=dtype
+        config = FluxPipelineConfig(
+            model_path=flux_model_path,
+            model_dtype=dtype,
+            device=device,
+            offload_mode=offload_mode,
         )
+        self.pipe = FluxImagePipeline.from_pretrained(config)
         self.controlnet = FluxControlNet.from_pretrained(
             fetch_model(
                 "alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta", path="diffusion_pytorch_model.safetensors"

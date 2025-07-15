@@ -1,15 +1,12 @@
 import re
-import os
 import json
 import torch
 import torch.distributed as dist
 import math
 from einops import rearrange
-from enum import Enum
 from typing import Callable, Dict, List, Tuple, Optional, Union
 from tqdm import tqdm
 from PIL import Image
-from dataclasses import dataclass
 from diffsynth_engine.models.flux import (
     FluxTextEncoder1,
     FluxTextEncoder2,
@@ -20,6 +17,7 @@ from diffsynth_engine.models.flux import (
     flux_dit_config,
     flux_text_encoder_config,
 )
+from diffsynth_engine.configs import FluxPipelineConfig, ControlType
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
 from diffsynth_engine.pipelines.controlnet_helper import ControlNetParams, accumulate
@@ -416,48 +414,12 @@ def calculate_shift(
     return mu
 
 
-class ControlType(Enum):
-    normal = "normal"
-    bfl_control = "bfl_control"
-    bfl_fill = "bfl_fill"
-    bfl_kontext = "bfl_kontext"
-
-    def get_in_channel(self):
-        if self in [ControlType.normal, ControlType.bfl_kontext]:
-            return 64
-        elif self == ControlType.bfl_control:
-            return 128
-        elif self == ControlType.bfl_fill:
-            return 384
-
-
-@dataclass
-class FluxModelConfig:
-    dit_path: str | os.PathLike
-    clip_path: Optional[str | os.PathLike] = None
-    t5_path: Optional[str | os.PathLike] = None
-    vae_path: Optional[str | os.PathLike] = None
-
-    dit_dtype: torch.dtype = torch.bfloat16
-    clip_dtype: torch.dtype = torch.bfloat16
-    t5_dtype: torch.dtype = torch.bfloat16
-    vae_dtype: torch.dtype = torch.bfloat16
-
-    dit_attn_impl: Optional[str] = "auto"
-    use_fp8_linear: bool = False
-
-    sp_ulysses_degree: Optional[int] = None
-    sp_ring_degree: Optional[int] = None
-    tp_degree: Optional[int] = None
-    use_fsdp: bool = False
-
-
 class FluxImagePipeline(BasePipeline):
     lora_converter = FluxLoRAConverter()
 
     def __init__(
         self,
-        config: FluxModelConfig,
+        config: FluxPipelineConfig,
         tokenizer: CLIPTokenizer,
         tokenizer_2: T5TokenizerFast,
         text_encoder_1: FluxTextEncoder1,
@@ -465,23 +427,16 @@ class FluxImagePipeline(BasePipeline):
         dit: Union[FluxDiT, FluxDiTFBCache],
         vae_decoder: FluxVAEDecoder,
         vae_encoder: FluxVAEEncoder,
-        load_text_encoder: bool = True,
-        batch_cfg: bool = False,
-        vae_tiled: bool = False,
-        vae_tile_size: int = 256,
-        vae_tile_stride: int = 256,
-        control_type: ControlType = ControlType.normal,
-        device: str = "cuda",
-        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__(
-            vae_tiled=vae_tiled,
-            vae_tile_size=vae_tile_size,
-            vae_tile_stride=vae_tile_stride,
-            device=device,
-            dtype=dtype,
+            vae_tiled=config.vae_tiled,
+            vae_tile_size=config.vae_tile_size,
+            vae_tile_stride=config.vae_tile_stride,
+            device=config.device,
+            dtype=config.model_dtype,
         )
         self.config = config
+        # sampler
         self.noise_scheduler = RecifitedFlowScheduler(shift=3.0, use_dynamic_shifting=True)
         self.sampler = FlowMatchEulerSampler()
         # models
@@ -492,11 +447,8 @@ class FluxImagePipeline(BasePipeline):
         self.dit = dit
         self.vae_decoder = vae_decoder
         self.vae_encoder = vae_encoder
-        self.load_text_encoder = load_text_encoder
-        self.batch_cfg = batch_cfg
         self.ip_adapter = None
         self.redux = None
-        self.control_type = control_type
         self.model_names = [
             "text_encoder_1",
             "text_encoder_2",
@@ -506,140 +458,115 @@ class FluxImagePipeline(BasePipeline):
         ]
 
     @classmethod
-    def from_pretrained(
-        cls,
-        model_path_or_config: str | os.PathLike | FluxModelConfig,
-        load_text_encoder: bool = True,
-        batch_cfg: bool = False,
-        vae_tiled: bool = False,
-        vae_tile_size: int = 256,
-        vae_tile_stride: int = 256,
-        control_type: ControlType = ControlType.normal,
-        device: str = "cuda",
-        dtype: torch.dtype = torch.bfloat16,
-        offload_mode: str | None = None,
-        parallelism: int = 1,
-        use_cfg_parallel: bool = False,
-        use_fb_cache: bool = False,
-        fb_cache_relative_l1_threshold: float = 0.05,
-    ) -> "FluxImagePipeline":
-        model_config = (
-            model_path_or_config
-            if isinstance(model_path_or_config, FluxModelConfig)
-            else FluxModelConfig(dit_path=model_path_or_config, dit_dtype=dtype, t5_dtype=dtype)
-        )
-        if model_config.vae_path is None:
-            model_config.vae_path = fetch_model("muse/FLUX.1-dev-fp8", path="ae-bf16.safetensors")
+    def from_pretrained(cls, model_path_or_config: str | FluxPipelineConfig) -> "FluxImagePipeline":
+        if isinstance(model_path_or_config, str):
+            config = FluxPipelineConfig(model_path=model_path_or_config)
+        else:
+            config = model_path_or_config
 
-        if model_config.clip_path is None and load_text_encoder:
-            model_config.clip_path = fetch_model("muse/FLUX.1-dev-fp8", path="clip-bf16.safetensors")
-        if model_config.t5_path is None and load_text_encoder:
-            model_config.t5_path = fetch_model(
+        if config.vae_path is None:
+            config.vae_path = fetch_model("muse/FLUX.1-dev-fp8", path="ae-bf16.safetensors")
+        if config.clip_path is None and config.load_text_encoder:
+            config.clip_path = fetch_model("muse/FLUX.1-dev-fp8", path="clip-bf16.safetensors")
+        if config.t5_path is None and config.load_text_encoder:
+            config.t5_path = fetch_model(
                 "muse/FLUX.1-dev-fp8", path=["t5-fp8-00001-of-00002.safetensors", "t5-fp8-00002-of-00002.safetensors"]
             )
 
-        logger.info(f"loading state dict from {model_config.dit_path} ...")
-        dit_state_dict = cls.load_model_checkpoint(model_config.dit_path, device="cpu", dtype=model_config.dit_dtype)
-        logger.info(f"loading state dict from {model_config.vae_path} ...")
-        vae_state_dict = cls.load_model_checkpoint(model_config.vae_path, device="cpu", dtype=model_config.vae_dtype)
-        if load_text_encoder:
-            logger.info(f"loading state dict from {model_config.clip_path} ...")
-            clip_state_dict = cls.load_model_checkpoint(
-                model_config.clip_path, device="cpu", dtype=model_config.clip_dtype
-            )
-            logger.info(f"loading state dict from {model_config.t5_path} ...")
-            t5_state_dict = cls.load_model_checkpoint(model_config.t5_path, device="cpu", dtype=model_config.t5_dtype)
+        logger.info(f"loading state dict from {config.model_path} ...")
+        dit_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
+        logger.info(f"loading state dict from {config.vae_path} ...")
+        vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
+        if config.load_text_encoder:
+            logger.info(f"loading state dict from {config.clip_path} ...")
+            clip_state_dict = cls.load_model_checkpoint(config.clip_path, device="cpu", dtype=config.clip_dtype)
+            logger.info(f"loading state dict from {config.t5_path} ...")
+            t5_state_dict = cls.load_model_checkpoint(config.t5_path, device="cpu", dtype=config.t5_dtype)
 
-        init_device = "cpu" if parallelism > 1 or offload_mode is not None else device
-        if load_text_encoder:
+        init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
+        if config.load_text_encoder:
             tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
             tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
             with LoRAContext():
                 text_encoder_1 = FluxTextEncoder1.from_state_dict(
-                    clip_state_dict, device=init_device, dtype=model_config.clip_dtype
+                    clip_state_dict, device=init_device, dtype=config.clip_dtype
                 )
-            text_encoder_2 = FluxTextEncoder2.from_state_dict(
-                t5_state_dict, device=init_device, dtype=model_config.t5_dtype
-            )
+            text_encoder_2 = FluxTextEncoder2.from_state_dict(t5_state_dict, device=init_device, dtype=config.t5_dtype)
 
-        vae_decoder = FluxVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
-        vae_encoder = FluxVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
+        vae_decoder = FluxVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=config.vae_dtype)
+        vae_encoder = FluxVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=config.vae_dtype)
 
         with LoRAContext():
-            if use_fb_cache:
+            attn_kwargs = {
+                "attn_impl": config.dit_attn_impl,
+                "sparge_smooth_k": config.sparge_smooth_k,
+                "sparge_cdfthreshd": config.sparge_cdfthreshd,
+                "sparge_simthreshd1": config.sparge_simthreshd1,
+                "sparge_pvthreshd": config.sparge_pvthreshd,
+            }
+            if config.use_fbcache:
                 dit = FluxDiTFBCache.from_state_dict(
                     dit_state_dict,
                     device=init_device,
-                    dtype=model_config.dit_dtype,
-                    in_channel=control_type.get_in_channel(),
-                    attn_impl=model_config.dit_attn_impl,
-                    relative_l1_threshold=fb_cache_relative_l1_threshold,
+                    dtype=config.model_dtype,
+                    in_channel=config.control_type.get_in_channel(),
+                    attn_kwargs=attn_kwargs,
+                    relative_l1_threshold=config.fbcache_relative_l1_threshold,
                 )
             else:
                 dit = FluxDiT.from_state_dict(
                     dit_state_dict,
                     device=init_device,
-                    dtype=model_config.dit_dtype,
-                    in_channel=control_type.get_in_channel(),
-                    attn_impl=model_config.dit_attn_impl,
+                    dtype=config.model_dtype,
+                    in_channel=config.control_type.get_in_channel(),
+                    attn_kwargs=attn_kwargs,
                 )
-            if model_config.use_fp8_linear:
+            if config.use_fp8_linear:
                 enable_fp8_linear(dit)
 
         pipe = cls(
-            config=model_config,
-            tokenizer=tokenizer if load_text_encoder else None,
-            tokenizer_2=tokenizer_2 if load_text_encoder else None,
-            text_encoder_1=text_encoder_1 if load_text_encoder else None,
-            text_encoder_2=text_encoder_2 if load_text_encoder else None,
+            config=config,
+            tokenizer=tokenizer if config.load_text_encoder else None,
+            tokenizer_2=tokenizer_2 if config.load_text_encoder else None,
+            text_encoder_1=text_encoder_1 if config.load_text_encoder else None,
+            text_encoder_2=text_encoder_2 if config.load_text_encoder else None,
             dit=dit,
             vae_decoder=vae_decoder,
             vae_encoder=vae_encoder,
-            load_text_encoder=load_text_encoder,
-            batch_cfg=True if parallelism > 1 and use_cfg_parallel else batch_cfg,
-            vae_tiled=vae_tiled,
-            vae_tile_size=vae_tile_size,
-            vae_tile_stride=vae_tile_stride,
-            control_type=control_type,
-            device=device,
-            dtype=model_config.dit_dtype,
         )
-        if offload_mode is not None:
-            pipe.enable_cpu_offload(offload_mode)
-        if model_config.dit_dtype == torch.float8_e4m3fn:
-            pipe.dtype = torch.bfloat16  # running dtype
+        pipe.eval()
+
+        if config.offload_mode is not None:
+            pipe.enable_cpu_offload(config.offload_mode)
+
+        if config.model_dtype == torch.float8_e4m3fn:
+            pipe.dtype = torch.bfloat16  # compute dtype
             pipe.enable_fp8_autocast(
-                model_names=["dit"], compute_dtype=pipe.dtype, use_fp8_linear=model_config.use_fp8_linear
+                model_names=["dit"], compute_dtype=pipe.dtype, use_fp8_linear=config.use_fp8_linear
             )
 
-        if model_config.t5_dtype == torch.float8_e4m3fn:
-            pipe.dtype = torch.bfloat16  # running dtype
+        if config.t5_dtype == torch.float8_e4m3fn:
+            pipe.dtype = torch.bfloat16  # compute dtype
             pipe.enable_fp8_autocast(
-                model_names=["text_encoder_2"], compute_dtype=pipe.dtype, use_fp8_linear=model_config.use_fp8_linear
+                model_names=["text_encoder_2"], compute_dtype=pipe.dtype, use_fp8_linear=config.use_fp8_linear
             )
 
-        if parallelism > 1:
-            parallel_config = cls.init_parallel_config(parallelism, use_cfg_parallel, model_config)
-            cfg_degree = parallel_config["cfg_degree"]
-            sp_ulysses_degree = parallel_config["sp_ulysses_degree"]
-            sp_ring_degree = parallel_config["sp_ring_degree"]
-            tp_degree = parallel_config["tp_degree"]
-            use_fsdp = parallel_config["use_fsdp"]
+        if config.parallelism > 1:
             return ParallelWrapper(
                 pipe,
-                cfg_degree=cfg_degree,
-                sp_ulysses_degree=sp_ulysses_degree,
-                sp_ring_degree=sp_ring_degree,
-                tp_degree=tp_degree,
-                use_fsdp=use_fsdp,
+                cfg_degree=config.cfg_degree,
+                sp_ulysses_degree=config.sp_ulysses_degree,
+                sp_ring_degree=config.sp_ring_degree,
+                tp_degree=config.tp_degree,
+                use_fsdp=config.use_fsdp,
                 device="cuda",
             )
         return pipe
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
-        assert self.config.tp_degree is None, (
+        assert self.config.tp_degree is None or self.config.tp_degree == 1, (
             "load LoRA is not allowed when tensor parallel is enabled; "
-            "set tp_degree=None during pipeline initialization"
+            "set tp_degree=None or tp_degree=1 during pipeline initialization"
         )
         assert not (self.config.use_fsdp and fused), (
             "load fused LoRA is not allowed when fully sharded data parallel is enabled; "
@@ -791,9 +718,9 @@ class FluxImagePipeline(BasePipeline):
         total_step: int,
     ):
         origin_latents_shape = latents.shape
-        if self.control_type != ControlType.normal:
+        if self.config.control_type != ControlType.normal:
             controlnet_param = controlnet_params[0]
-            if self.control_type == ControlType.bfl_kontext:
+            if self.config.control_type == ControlType.bfl_kontext:
                 latents = torch.cat((latents, controlnet_param.image * controlnet_param.scale), dim=2)
                 image_ids = image_ids.repeat(1, 2, 1)
                 image_ids[:, image_ids.shape[1] // 2 :, 0] += 1
@@ -828,7 +755,7 @@ class FluxImagePipeline(BasePipeline):
             controlnet_double_block_output=double_block_output,
             controlnet_single_block_output=single_block_output,
         )
-        if self.control_type == ControlType.bfl_kontext:
+        if self.config.control_type == ControlType.bfl_kontext:
             noise_pred = noise_pred[:, :, : origin_latents_shape[2], : origin_latents_shape[3]]
         return noise_pred
 
@@ -877,7 +804,7 @@ class FluxImagePipeline(BasePipeline):
             image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
             latent = self.encode_image(image)
         else:
-            if self.control_type == ControlType.normal:
+            if self.config.control_type == ControlType.normal:
                 image = image.resize((width, height))
                 mask = mask.resize((width, height))
                 image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
@@ -888,7 +815,7 @@ class FluxImagePipeline(BasePipeline):
                 mask = torch.nn.functional.interpolate(mask, size=(latent.shape[2], latent.shape[3]))
                 mask = 1 - mask
                 latent = torch.cat([latent, mask], dim=1)
-            elif self.control_type == ControlType.bfl_fill:
+            elif self.config.control_type == ControlType.bfl_fill:
                 image = image.resize((width, height))
                 mask = mask.resize((width, height))
                 image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
@@ -898,7 +825,7 @@ class FluxImagePipeline(BasePipeline):
                 mask = rearrange(mask, "b 1 (h ph) (w pw) -> b (ph pw) h w", ph=8, pw=8)
                 latent = torch.cat((image, mask), dim=1)
             else:
-                raise ValueError(f"Unsupported mask latent prepare for controlnet type: {self.control_type}")
+                raise ValueError(f"Unsupported mask latent prepare for controlnet type: {self.config.control_type}")
         return latent
 
     def prepare_controlnet_params(self, controlnet_params: List[ControlNetParams], h, w):
@@ -996,7 +923,7 @@ class FluxImagePipeline(BasePipeline):
             self.dit.refresh_cache_status(num_inference_steps)
         if not isinstance(controlnet_params, list):
             controlnet_params = [controlnet_params]
-        if self.control_type != ControlType.normal:
+        if self.config.control_type != ControlType.normal:
             assert controlnet_params and len(controlnet_params) == 1, "bfl_controlnet must have one controlnet"
 
         if input_image is not None:
@@ -1033,7 +960,7 @@ class FluxImagePipeline(BasePipeline):
         if self.ip_adapter is not None and self.redux is not None:
             raise Exception("ip-adapter and flux redux cannot be used at the same time")
         elif self.ip_adapter is not None:
-            image_emb = self.ip_adapter(ref_image)
+            image_emb = self.ip_adapter.encode_image(ref_image)
         elif self.redux is not None:
             image_prompt_embeds = self.redux(ref_image)
             positive_prompt_emb = torch.cat([positive_prompt_emb, image_prompt_embeds], dim=1)
@@ -1063,7 +990,7 @@ class FluxImagePipeline(BasePipeline):
                 controlnet_params=controlnet_params,
                 current_step=i,
                 total_step=len(timesteps),
-                batch_cfg=self.batch_cfg,
+                batch_cfg=self.config.batch_cfg,
             )
             # Denoise
             latents = self.sampler.step(latents, noise_pred, i)

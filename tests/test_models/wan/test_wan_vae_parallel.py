@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from diffsynth_engine.utils.loader import load_file
-from diffsynth_engine.utils.parallel import ParallelModel
+from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.models.wan.wan_vae import WanVideoVAE
 from diffsynth_engine import fetch_model
 from tests.common.test_case import VideoTestCase
@@ -14,8 +14,8 @@ class TestWanVAEParallel(VideoTestCase):
     def setUpClass(cls):
         cls._vae_model_path = fetch_model("muse/wan2.1-vae", path="vae.safetensors")
         loaded_state_dict = load_file(cls._vae_model_path)
-        vae = WanVideoVAE.from_state_dict(loaded_state_dict, parallelism=4)
-        cls.vae = ParallelModel(vae, cfg_degree=1, sp_ulysses_degree=4, sp_ring_degree=1, tp_degree=1)
+        vae = WanVideoVAE.from_state_dict(loaded_state_dict)
+        cls.vae = ParallelWrapper(vae, cfg_degree=1, sp_ulysses_degree=4, sp_ring_degree=1, tp_degree=1)
         cls._input_video = cls.get_input_video("astronaut_320_320.mp4")
 
     @classmethod

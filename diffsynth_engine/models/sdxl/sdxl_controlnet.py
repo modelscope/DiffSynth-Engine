@@ -1,5 +1,5 @@
 import torch
-from typing import Optional, Dict
+from typing import Dict
 from diffsynth_engine.models.basic.unet_helper import (
     ResnetBlock,
     AttentionBlock,
@@ -180,7 +180,6 @@ class SDXLControlNetUnion(PreTrainedModel):
 
     def __init__(
         self,
-        attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):

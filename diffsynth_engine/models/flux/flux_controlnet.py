@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import Optional, Dict
+from typing import Any, Dict, Optional
 from einops import rearrange
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.flux.flux_dit import (
@@ -87,7 +87,7 @@ class FluxControlNet(PreTrainedModel):
     def __init__(
         self,
         condition_channels: int = 64,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -104,7 +104,10 @@ class FluxControlNet(PreTrainedModel):
         self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
         self.controlnet_x_embedder = nn.Linear(condition_channels, 3072)
         self.blocks = nn.ModuleList(
-            [FluxDoubleTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(6)]
+            [
+                FluxDoubleTransformerBlock(3072, 24, attn_kwargs=attn_kwargs, device=device, dtype=dtype)
+                for _ in range(6)
+            ]
         )
         # controlnet projection
         self.blocks_proj = nn.ModuleList(
@@ -154,7 +157,7 @@ class FluxControlNet(PreTrainedModel):
         state_dict: Dict[str, torch.Tensor],
         device: str,
         dtype: torch.dtype,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
         if "controlnet_x_embedder.weight" in state_dict:
             condition_channels = state_dict["controlnet_x_embedder.weight"].shape[1]
@@ -163,7 +166,7 @@ class FluxControlNet(PreTrainedModel):
 
         with no_init_weights():
             model = torch.nn.utils.skip_init(
-                cls, condition_channels=condition_channels, attn_impl=attn_impl, device=device, dtype=dtype
+                cls, condition_channels=condition_channels, attn_kwargs=attn_kwargs, device=device, dtype=dtype
             )
         model.load_state_dict(state_dict)
         model.to(device=device, dtype=dtype, non_blocking=True)

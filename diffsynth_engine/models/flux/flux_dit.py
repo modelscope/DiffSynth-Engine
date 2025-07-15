@@ -2,7 +2,7 @@ import json
 import torch
 import torch.nn as nn
 import numpy as np
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from einops import rearrange
 
 from diffsynth_engine.models.basic.transformer_helper import (
@@ -177,7 +177,7 @@ class FluxDoubleAttention(nn.Module):
         dim_b,
         num_heads,
         head_dim,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -195,7 +195,7 @@ class FluxDoubleAttention(nn.Module):
 
         self.a_to_out = nn.Linear(dim_a, dim_a, device=device, dtype=dtype)
         self.b_to_out = nn.Linear(dim_b, dim_b, device=device, dtype=dtype)
-        self.attn_impl = attn_impl
+        self.attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
 
     def attention_callback(self, attn_out_a, attn_out_b, x_a, x_b, q_a, q_b, k_a, k_b, v_a, v_b, rope_emb, image_emb):
         return attn_out_a, attn_out_b
@@ -207,7 +207,7 @@ class FluxDoubleAttention(nn.Module):
         k = torch.cat([self.norm_k_b(k_b), self.norm_k_a(k_a)], dim=1)
         v = torch.cat([v_b, v_a], dim=1)
         q, k = apply_rope(q, k, rope_emb)
-        attn_out = attention_ops.attention(q, k, v, attn_impl=self.attn_impl)
+        attn_out = attention_ops.attention(q, k, v, **self.attn_kwargs)
         attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
         text_out, image_out = attn_out[:, : text.shape[1]], attn_out[:, text.shape[1] :]
         image_out, text_out = self.attention_callback(
@@ -232,13 +232,13 @@ class FluxDoubleTransformerBlock(nn.Module):
         self,
         dim,
         num_heads,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
         self.attn = FluxDoubleAttention(
-            dim, dim, num_heads, dim // num_heads, attn_impl=attn_impl, device=device, dtype=dtype
+            dim, dim, num_heads, dim // num_heads, attn_kwargs=attn_kwargs, device=device, dtype=dtype
         )
         # Image
         self.norm_msa_a = AdaLayerNormZero(dim, device=device, dtype=dtype)
@@ -278,7 +278,7 @@ class FluxSingleAttention(nn.Module):
         self,
         dim,
         num_heads,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -287,7 +287,7 @@ class FluxSingleAttention(nn.Module):
         self.to_qkv = nn.Linear(dim, dim * 3, device=device, dtype=dtype)
         self.norm_q_a = RMSNorm(dim // num_heads, eps=1e-6, device=device, dtype=dtype)
         self.norm_k_a = RMSNorm(dim // num_heads, eps=1e-6, device=device, dtype=dtype)
-        self.attn_impl = attn_impl
+        self.attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
 
     def attention_callback(self, attn_out, x, q, k, v, rope_emb, image_emb):
         return attn_out
@@ -295,7 +295,7 @@ class FluxSingleAttention(nn.Module):
     def forward(self, x, rope_emb, image_emb):
         q, k, v = rearrange(self.to_qkv(x), "b s (h d) -> b s h d", h=(3 * self.num_heads)).chunk(3, dim=2)
         q, k = apply_rope(self.norm_q_a(q), self.norm_k_a(k), rope_emb)
-        attn_out = attention_ops.attention(q, k, v, attn_impl=self.attn_impl)
+        attn_out = attention_ops.attention(q, k, v, **self.attn_kwargs)
         attn_out = rearrange(attn_out, "b s h d -> b s (h d)").to(q.dtype)
         return self.attention_callback(attn_out=attn_out, x=x, q=q, k=k, v=v, rope_emb=rope_emb, image_emb=image_emb)
 
@@ -305,14 +305,14 @@ class FluxSingleTransformerBlock(nn.Module):
         self,
         dim,
         num_heads,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
         self.dim = dim
         self.norm = AdaLayerNormZero(dim, device=device, dtype=dtype)
-        self.attn = FluxSingleAttention(dim, num_heads, attn_impl=attn_impl, device=device, dtype=dtype)
+        self.attn = FluxSingleAttention(dim, num_heads, attn_kwargs=attn_kwargs, device=device, dtype=dtype)
         self.mlp = nn.Sequential(
             nn.Linear(dim, dim * 4),
             nn.GELU(approximate="tanh"),
@@ -333,7 +333,7 @@ class FluxDiT(PreTrainedModel):
     def __init__(
         self,
         in_channel: int = 64,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -351,10 +351,16 @@ class FluxDiT(PreTrainedModel):
         self.x_embedder = nn.Linear(in_channel, 3072, device=device, dtype=dtype)
 
         self.blocks = nn.ModuleList(
-            [FluxDoubleTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(19)]
+            [
+                FluxDoubleTransformerBlock(3072, 24, attn_kwargs=attn_kwargs, device=device, dtype=dtype)
+                for _ in range(19)
+            ]
         )
         self.single_blocks = nn.ModuleList(
-            [FluxSingleTransformerBlock(3072, 24, attn_impl=attn_impl, device=device, dtype=dtype) for _ in range(38)]
+            [
+                FluxSingleTransformerBlock(3072, 24, attn_kwargs=attn_kwargs, device=device, dtype=dtype)
+                for _ in range(38)
+            ]
         )
         self.final_norm_out = AdaLayerNorm(3072, device=device, dtype=dtype)
         self.final_proj_out = nn.Linear(3072, 64, device=device, dtype=dtype)
@@ -495,7 +501,7 @@ class FluxDiT(PreTrainedModel):
         device: str,
         dtype: torch.dtype,
         in_channel: int = 64,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
@@ -503,7 +509,7 @@ class FluxDiT(PreTrainedModel):
                 device=device,
                 dtype=dtype,
                 in_channel=in_channel,
-                attn_impl=attn_impl,
+                attn_kwargs=attn_kwargs,
             )
             model = model.requires_grad_(False)  # for loading gguf
         model.load_state_dict(state_dict, assign=True)

@@ -1,4 +1,3 @@
-import os
 import re
 import torch
 import numpy as np
@@ -6,8 +5,8 @@ from einops import repeat
 from typing import Callable, Dict, Optional, List
 from tqdm import tqdm
 from PIL import Image, ImageOps
-from dataclasses import dataclass
 
+from diffsynth_engine.configs import SDXLPipelineConfig
 from diffsynth_engine.models.base import split_suffix
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.models.basic.timestep import TemporalTimesteps
@@ -102,25 +101,12 @@ class SDXLLoRAConverter(LoRAStateDictConverter):
         raise ValueError(f"Unsupported key: {key}")
 
 
-@dataclass
-class SDXLModelConfig:
-    unet_path: str | os.PathLike
-    clip_l_path: Optional[str | os.PathLike] = None
-    clip_g_path: Optional[str | os.PathLike] = None
-    vae_path: Optional[str | os.PathLike] = None
-
-    unet_dtype: torch.dtype = torch.float16
-    clip_l_dtype: torch.dtype = torch.float16
-    clip_g_dtype: torch.dtype = torch.float16
-    vae_dtype: torch.dtype = torch.float32
-
-
 class SDXLImagePipeline(BasePipeline):
     lora_converter = SDXLLoRAConverter()
 
     def __init__(
         self,
-        config: SDXLModelConfig,
+        config: SDXLPipelineConfig,
         tokenizer: CLIPTokenizer,
         tokenizer_2: CLIPTokenizer,
         text_encoder: SDXLTextEncoder,
@@ -128,21 +114,16 @@ class SDXLImagePipeline(BasePipeline):
         unet: SDXLUNet,
         vae_decoder: SDXLVAEDecoder,
         vae_encoder: SDXLVAEEncoder,
-        batch_cfg: bool = True,
-        vae_tiled: bool = False,
-        vae_tile_size: int = 256,
-        vae_tile_stride: int = 256,
-        device: str = "cuda",
-        dtype: torch.dtype = torch.float16,
     ):
         super().__init__(
-            vae_tiled=vae_tiled,
-            vae_tile_size=vae_tile_size,
-            vae_tile_stride=vae_tile_stride,
-            device=device,
-            dtype=dtype,
+            vae_tiled=config.vae_tiled,
+            vae_tile_size=config.vae_tile_size,
+            vae_tile_stride=config.vae_tile_stride,
+            device=config.device,
+            dtype=config.model_dtype,
         )
         self.config = config
+        # sampler
         self.noise_scheduler = ScaledLinearScheduler()
         self.sampler = EulerSampler()
         # models
@@ -154,71 +135,62 @@ class SDXLImagePipeline(BasePipeline):
         self.vae_decoder = vae_decoder
         self.vae_encoder = vae_encoder
         self.add_time_proj = TemporalTimesteps(
-            num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0, device=device, dtype=dtype
+            num_channels=256,
+            flip_sin_to_cos=True,
+            downscale_freq_shift=0,
+            device=config.device,
+            dtype=config.model_dtype,
         )
-        self.batch_cfg = batch_cfg
         self.model_names = ["text_encoder", "text_encoder_2", "unet", "vae_decoder", "vae_encoder"]
 
     @classmethod
-    def from_pretrained(
-        cls,
-        model_path_or_config: str | os.PathLike | SDXLModelConfig,
-        batch_cfg: bool = True,
-        vae_tiled: bool = False,
-        vae_tile_size: int = 256,
-        vae_tile_stride: int = 256,
-        device: str = "cuda",
-        dtype: torch.dtype = torch.float16,
-        offload_mode: str | None = None,
-    ) -> "SDXLImagePipeline":
+    def from_pretrained(cls, model_path_or_config: SDXLPipelineConfig) -> "SDXLImagePipeline":
         if isinstance(model_path_or_config, str):
-            model_config = SDXLModelConfig(
-                unet_path=model_path_or_config, unet_dtype=dtype, clip_l_dtype=dtype, clip_g_dtype=dtype
-            )
+            config = SDXLPipelineConfig(model_path=model_path_or_config)
         else:
-            model_config = model_path_or_config
+            config = model_path_or_config
 
-        logger.info(f"loading state dict from {model_config.unet_path} ...")
-        unet_state_dict = cls.load_model_checkpoint(model_config.unet_path, device="cpu", dtype=dtype)
+        logger.info(f"loading state dict from {config.model_path} ...")
+        unet_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
 
-        if model_config.vae_path is not None:
-            logger.info(f"loading state dict from {model_config.vae_path} ...")
-            vae_state_dict = cls.load_model_checkpoint(model_config.vae_path, device="cpu", dtype=dtype)
+        if config.vae_path is not None:
+            logger.info(f"loading state dict from {config.vae_path} ...")
+            vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
         else:
             vae_state_dict = unet_state_dict
 
-        if model_config.clip_l_path is not None:
-            logger.info(f"loading state dict from {model_config.clip_l_path} ...")
-            clip_l_state_dict = cls.load_model_checkpoint(model_config.clip_l_path, device="cpu", dtype=dtype)
+        if config.clip_l_path is not None:
+            logger.info(f"loading state dict from {config.clip_l_path} ...")
+            clip_l_state_dict = cls.load_model_checkpoint(config.clip_l_path, device="cpu", dtype=config.clip_l_dtype)
         else:
             clip_l_state_dict = unet_state_dict
 
-        if model_config.clip_g_path is not None:
-            logger.info(f"loading state dict from {model_config.clip_g_path} ...")
-            clip_g_state_dict = cls.load_model_checkpoint(model_config.clip_g_path, device="cpu", dtype=dtype)
+        if config.clip_g_path is not None:
+            logger.info(f"loading state dict from {config.clip_g_path} ...")
+            clip_g_state_dict = cls.load_model_checkpoint(config.clip_g_path, device="cpu", dtype=config.clip_g_dtype)
         else:
             clip_g_state_dict = unet_state_dict
 
-        init_device = "cpu" if offload_mode else device
+        init_device = "cpu" if config.offload_mode else config.device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
             text_encoder = SDXLTextEncoder.from_state_dict(
-                clip_l_state_dict, device=init_device, dtype=model_config.clip_l_dtype
+                clip_l_state_dict, device=init_device, dtype=config.clip_l_dtype
             )
             text_encoder_2 = SDXLTextEncoder2.from_state_dict(
-                clip_g_state_dict, device=init_device, dtype=model_config.clip_g_dtype
+                clip_g_state_dict, device=init_device, dtype=config.clip_g_dtype
             )
-            unet = SDXLUNet.from_state_dict(unet_state_dict, device=init_device, dtype=model_config.unet_dtype)
+            unet = SDXLUNet.from_state_dict(unet_state_dict, device=init_device, dtype=config.model_dtype)
         vae_decoder = SDXLVAEDecoder.from_state_dict(
-            vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa"
+            vae_state_dict, device=init_device, dtype=config.vae_dtype, attn_impl="sdpa"
         )
         vae_encoder = SDXLVAEEncoder.from_state_dict(
-            vae_state_dict, device=init_device, dtype=model_config.vae_dtype, attn_impl="sdpa"
+            vae_state_dict, device=init_device, dtype=config.vae_dtype, attn_impl="sdpa"
         )
 
         pipe = cls(
-            config=model_config,
+            config=config,
             tokenizer=tokenizer,
             tokenizer_2=tokenizer_2,
             text_encoder=text_encoder,
@@ -226,15 +198,11 @@ class SDXLImagePipeline(BasePipeline):
             unet=unet,
             vae_decoder=vae_decoder,
             vae_encoder=vae_encoder,
-            batch_cfg=batch_cfg,
-            vae_tiled=vae_tiled,
-            vae_tile_size=vae_tile_size,
-            vae_tile_stride=vae_tile_stride,
-            device=device,
-            dtype=dtype,
         )
-        if offload_mode is not None:
-            pipe.enable_cpu_offload(offload_mode)
+        pipe.eval()
+
+        if config.offload_mode is not None:
+            pipe.enable_cpu_offload(config.offload_mode)
         return pipe
 
     @classmethod
@@ -517,7 +485,7 @@ class SDXLImagePipeline(BasePipeline):
                 controlnet_params=controlnet_params,
                 current_step=i,
                 total_step=len(timesteps),
-                batch_cfg=self.batch_cfg,
+                batch_cfg=self.config.batch_cfg,
             )
             # Denoise
             latents = self.sampler.step(latents, noise_pred, i)

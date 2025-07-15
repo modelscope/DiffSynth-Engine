@@ -1,4 +1,11 @@
-from diffsynth_engine import ControlNetParams, FluxControlNet, FluxImagePipeline, FluxRedux, fetch_model
+from diffsynth_engine import (
+    FluxPipelineConfig,
+    ControlNetParams,
+    FluxControlNet,
+    FluxImagePipeline,
+    FluxRedux,
+    fetch_model,
+)
 from typing import List, Tuple, Optional, Callable
 from PIL import Image
 import torch
@@ -18,9 +25,14 @@ class FluxReplaceByControlTool:
         dtype: torch.dtype = torch.bfloat16,
         offload_mode: Optional[str] = None,
     ):
-        self.pipe: FluxImagePipeline = FluxImagePipeline.from_pretrained(
-            flux_model_path, load_text_encoder=load_text_encoder, device=device, offload_mode=offload_mode, dtype=dtype
+        config = FluxPipelineConfig(
+            model_path=flux_model_path,
+            model_dtype=dtype,
+            load_text_encoder=load_text_encoder,
+            device=device,
+            offload_mode=offload_mode,
         )
+        self.pipe: FluxImagePipeline = FluxImagePipeline.from_pretrained(config)
         redux_model_path = fetch_model("muse/flux1-redux-dev", path="flux1-redux-dev.safetensors", revision="v1")
         flux_redux = FluxRedux.from_pretrained(redux_model_path, device=device)
         self.pipe.load_redux(flux_redux)

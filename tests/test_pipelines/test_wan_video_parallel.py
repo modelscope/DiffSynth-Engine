@@ -1,19 +1,22 @@
 import unittest
 
 from tests.common.test_case import VideoTestCase
-from diffsynth_engine.pipelines import WanVideoPipeline, WanModelConfig
+from diffsynth_engine import WanPipelineConfig
+from diffsynth_engine.pipelines import WanVideoPipeline
 from diffsynth_engine.utils.download import fetch_model
 
 
-class TestWanVideoTP(VideoTestCase):
+class TestWanVideoParallel(VideoTestCase):
     @classmethod
     def setUpClass(cls):
-        config = WanModelConfig(
+        config = WanPipelineConfig(
             model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
             t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
             vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
+            parallelism=4,
+            use_cfg_parallel=True,
         )
-        cls.pipe = WanVideoPipeline.from_pretrained(config, parallelism=4, use_cfg_parallel=True)
+        cls.pipe = WanVideoPipeline.from_pretrained(config)
 
     @classmethod
     def tearDownClass(cls):

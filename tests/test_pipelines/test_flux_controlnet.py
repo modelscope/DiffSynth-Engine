@@ -1,7 +1,7 @@
 import unittest
 
 from tests.common.test_case import ImageTestCase
-from diffsynth_engine import FluxImagePipeline, FluxControlNet, ControlNetParams, fetch_model
+from diffsynth_engine import FluxPipelineConfig, FluxImagePipeline, FluxControlNet, ControlNetParams, fetch_model
 import torch
 
 
@@ -9,7 +9,12 @@ class TestFluxControlNet(ImageTestCase):
     @classmethod
     def setUpClass(cls):
         model_path = fetch_model("muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors")
-        cls.pipe = FluxImagePipeline.from_pretrained(model_path).eval()
+        config = FluxPipelineConfig(model_path=model_path)
+        cls.pipe = FluxImagePipeline.from_pretrained(config)
+
+    @classmethod
+    def tearDownClass(cls):
+        del cls.pipe
 
     def test_union_control(self):
         canny_image = self.get_input_image("canny.png")

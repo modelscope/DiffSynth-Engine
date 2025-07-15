@@ -29,7 +29,7 @@ class TestFluxTextEncoder(TestCase):
         ).eval()
         # use eager attention to aligned with T5
         for encoder in cls.text_encoder_2.encoders:
-            encoder.attn.attn_implementation = "eager"
+            encoder.attn.attn_impl = "eager"
         cls.texts = ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"]
 
     def test_encoder_1(self):

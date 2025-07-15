@@ -1,12 +1,14 @@
+from .configs import (
+    SDPipelineConfig,
+    SDXLPipelineConfig,
+    FluxPipelineConfig,
+    WanPipelineConfig,
+)
 from .pipelines import (
     FluxImagePipeline,
     SDXLImagePipeline,
     SDImagePipeline,
     WanVideoPipeline,
-    FluxModelConfig,
-    SDXLModelConfig,
-    SDModelConfig,
-    WanModelConfig,
     ControlNetParams,
 )
 from .models.flux import FluxControlNet, FluxIPAdapter, FluxRedux
@@ -23,6 +25,10 @@ from .tools import (
 )
 
 __all__ = [
+    "SDPipelineConfig",
+    "SDXLPipelineConfig",
+    "FluxPipelineConfig",
+    "WanPipelineConfig",
     "FluxImagePipeline",
     "FluxControlNet",
     "FluxIPAdapter",
@@ -32,10 +38,6 @@ __all__ = [
     "SDXLImagePipeline",
     "SDImagePipeline",
     "WanVideoPipeline",
-    "FluxModelConfig",
-    "SDXLModelConfig",
-    "SDModelConfig",
-    "WanModelConfig",
     "FluxInpaintingTool",
     "FluxOutpaintingTool",
     "FluxIPAdapterRefTool",

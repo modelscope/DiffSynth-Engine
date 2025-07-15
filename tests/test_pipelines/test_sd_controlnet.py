@@ -1,8 +1,8 @@
 import unittest
+import torch
 
 from tests.common.test_case import ImageTestCase
 from diffsynth_engine import SDImagePipeline, SDControlNet, ControlNetParams, fetch_model
-import torch
 
 
 class TestSDControlNet(ImageTestCase):

@@ -2,11 +2,11 @@ import torch
 import torch.distributed as dist
 import numpy as np
 from einops import rearrange
-from dataclasses import dataclass
 from typing import Callable, List, Tuple, Optional
 from tqdm import tqdm
 from PIL import Image
 
+from diffsynth_engine.configs import WanPipelineConfig
 from diffsynth_engine.algorithm.noise_scheduler.flow_match import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.models.wan.wan_dit import WanDiT
@@ -18,31 +18,12 @@ from diffsynth_engine.tokenizers import WanT5Tokenizer
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_model
+from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
 
 
 logger = logging.get_logger(__name__)
-
-
-@dataclass
-class WanModelConfig:
-    model_path: Optional[str] = None
-    vae_path: Optional[str] = None
-    t5_path: Optional[str] = None
-    image_encoder_path: Optional[str] = None
-
-    vae_dtype: torch.dtype = torch.float32
-    dit_dtype: torch.dtype = torch.bfloat16
-    t5_dtype: torch.dtype = torch.bfloat16
-    image_encoder_dtype: torch.dtype = torch.bfloat16
-
-    dit_attn_impl: Optional[str] = "auto"
-
-    sp_ulysses_degree: Optional[int] = None
-    sp_ring_degree: Optional[int] = None
-    tp_degree: Optional[int] = None
-    use_fsdp: bool = False
 
 
 class WanLoRAConverter(LoRAStateDictConverter):
@@ -129,42 +110,40 @@ class WanVideoPipeline(BasePipeline):
 
     def __init__(
         self,
-        config: WanModelConfig,
+        config: WanPipelineConfig,
         tokenizer: WanT5Tokenizer,
         text_encoder: WanTextEncoder,
         dit: WanDiT,
         vae: WanVideoVAE,
         image_encoder: WanImageEncoder,
-        shift: float = 5.0,
-        batch_cfg: bool = False,
-        vae_tiled: bool = True,
-        vae_tile_size: Tuple[int, int] = (34, 34),
-        vae_tile_stride: Tuple[int, int] = (18, 16),
-        device="cuda",
-        dtype=torch.bfloat16,
     ):
         super().__init__(
-            vae_tiled=vae_tiled,
-            vae_tile_size=vae_tile_size,
-            vae_tile_stride=vae_tile_stride,
-            device=device,
-            dtype=dtype,
+            vae_tiled=config.vae_tiled,
+            vae_tile_size=config.vae_tile_size,
+            vae_tile_stride=config.vae_tile_stride,
+            device=config.device,
+            dtype=config.model_dtype,
         )
         self.config = config
-        self.noise_scheduler = RecifitedFlowScheduler(shift=shift, sigma_min=0.001, sigma_max=0.999)
+        # sampler
+        self.noise_scheduler = RecifitedFlowScheduler(
+            shift=config.shift if config.shift is not None else 5.0,
+            sigma_min=0.001,
+            sigma_max=0.999,
+        )
         self.sampler = FlowMatchEulerSampler()
+        # models
         self.tokenizer = tokenizer
         self.text_encoder = text_encoder
         self.dit = dit
         self.vae = vae
         self.image_encoder = image_encoder
-        self.batch_cfg = batch_cfg
         self.model_names = ["text_encoder", "dit", "vae", "image_encoder"]
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
-        assert self.config.tp_degree is None, (
+        assert self.config.tp_degree is None or self.config.tp_degree == 1, (
             "load LoRA is not allowed when tensor parallel is enabled; "
-            "set tp_degree=None during pipeline initialization"
+            "set tp_degree=None or tp_degree=1 during pipeline initialization"
         )
         assert not (self.config.use_fsdp and fused), (
             "load fused LoRA is not allowed when fully sharded data parallel is enabled; "
@@ -228,7 +207,7 @@ class WanVideoPipeline(BasePipeline):
             tile_size=self.vae_tile_size,
             tile_stride=self.vae_tile_stride,
         )
-        latents = latents.to(dtype=self.config.dit_dtype, device=self.device)
+        latents = latents.to(dtype=self.config.model_dtype, device=self.device)
         return latents
 
     def decode_video(self, latents, progress_callback=None) -> List[torch.Tensor]:
@@ -241,7 +220,7 @@ class WanVideoPipeline(BasePipeline):
             tile_stride=self.vae_tile_stride,
             progress_callback=progress_callback,
         )
-        videos = [video.to(dtype=self.config.dit_dtype, device=self.device) for video in videos]
+        videos = [video.to(dtype=self.config.model_dtype, device=self.device) for video in videos]
         return videos
 
     def predict_noise_with_cfg(
@@ -301,7 +280,7 @@ class WanVideoPipeline(BasePipeline):
             return noise_pred
 
     def predict_noise(self, latents, image_clip_feature, image_y, timestep, context):
-        latents = latents.to(dtype=self.config.dit_dtype, device=self.device)
+        latents = latents.to(dtype=self.config.model_dtype, device=self.device)
 
         noise_pred = self.dit(
             x=latents,
@@ -386,7 +365,7 @@ class WanVideoPipeline(BasePipeline):
         self.load_models_to_device(["dit"])
         hide_progress = dist.is_initialized() and dist.get_rank() != 0
         for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
-            timestep = timestep.unsqueeze(0).to(dtype=self.config.dit_dtype, device=self.device)
+            timestep = timestep.unsqueeze(0).to(dtype=self.config.model_dtype, device=self.device)
             # Classifier-free guidance
             noise_pred = self.predict_noise_with_cfg(
                 latents=latents,
@@ -396,7 +375,7 @@ class WanVideoPipeline(BasePipeline):
                 image_clip_feature=image_clip_feature,
                 image_y=image_y,
                 cfg_scale=cfg_scale,
-                batch_cfg=self.batch_cfg,
+                batch_cfg=self.config.batch_cfg,
             )
             # Scheduler
             latents = self.sampler.step(latents, noise_pred, i)
@@ -410,58 +389,43 @@ class WanVideoPipeline(BasePipeline):
         return frames
 
     @classmethod
-    def from_pretrained(
-        cls,
-        model_path_or_config: str | WanModelConfig,
-        shift: float | None = None,
-        batch_cfg: bool = False,
-        vae_tiled: bool = True,
-        vae_tile_size: Tuple[int, int] = (34, 34),
-        vae_tile_stride: Tuple[int, int] = (18, 16),
-        device: str = "cuda",
-        dtype: torch.dtype = torch.bfloat16,
-        offload_mode: str | None = None,
-        parallelism: int = 1,
-        use_cfg_parallel: bool = False,
-    ) -> "WanVideoPipeline":
+    def from_pretrained(cls, model_path_or_config: WanPipelineConfig) -> "WanVideoPipeline":
         if isinstance(model_path_or_config, str):
-            model_config = WanModelConfig(model_path=model_path_or_config)
+            config = WanPipelineConfig(model_path=model_path_or_config)
         else:
-            model_config = model_path_or_config
+            config = model_path_or_config
 
-        if model_config.model_path is None:
-            model_config.model_path = fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors")
-        if model_config.t5_path is None:
-            model_config.t5_path = fetch_model("muse/wan2.1-umt5", path="umt5.safetensors")
-        if model_config.vae_path is None:
-            model_config.vae_path = fetch_model("muse/wan2.1-vae", path="vae.safetensors")
+        if config.t5_path is None:
+            config.t5_path = fetch_model("muse/wan2.1-umt5", path="umt5.safetensors")
+        if config.vae_path is None:
+            config.vae_path = fetch_model("muse/wan2.1-vae", path="vae.safetensors")
 
-        logger.info(f"loading state dict from {model_config.model_path} ...")
-        dit_state_dict = cls.load_model_checkpoint(model_config.model_path, device="cpu", dtype=model_config.dit_dtype)
+        logger.info(f"loading state dict from {config.model_path} ...")
+        dit_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
 
-        logger.info(f"loading state dict from {model_config.t5_path} ...")
-        t5_state_dict = cls.load_model_checkpoint(model_config.t5_path, device="cpu", dtype=model_config.t5_dtype)
+        logger.info(f"loading state dict from {config.t5_path} ...")
+        t5_state_dict = cls.load_model_checkpoint(config.t5_path, device="cpu", dtype=config.t5_dtype)
 
-        logger.info(f"loading state dict from {model_config.vae_path} ...")
-        vae_state_dict = cls.load_model_checkpoint(model_config.vae_path, device="cpu", dtype=model_config.vae_dtype)
+        logger.info(f"loading state dict from {config.vae_path} ...")
+        vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
 
-        init_device = "cpu" if parallelism > 1 or offload_mode is not None else device
+        init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
-        text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=model_config.t5_dtype)
-        vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
+        text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=config.t5_dtype)
+        vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=config.vae_dtype)
 
         image_encoder = None
-        if model_config.image_encoder_path is not None:
-            logger.info(f"loading state dict from {model_config.image_encoder_path} ...")
+        if config.image_encoder_path is not None:
+            logger.info(f"loading state dict from {config.image_encoder_path} ...")
             image_encoder_state_dict = cls.load_model_checkpoint(
-                model_config.image_encoder_path,
+                config.image_encoder_path,
                 device="cpu",
-                dtype=model_config.image_encoder_dtype,
+                dtype=config.image_encoder_dtype,
             )
             image_encoder = WanImageEncoder.from_state_dict(
                 image_encoder_state_dict,
                 device=init_device,
-                dtype=model_config.image_encoder_dtype,
+                dtype=config.image_encoder_dtype,
             )
 
         # determine wan video model type by dit params
@@ -476,50 +440,47 @@ class WanVideoPipeline(BasePipeline):
             model_type = "1.3b-t2v"
 
         # shift for different model_type
-        shift = SHIFT_FACTORS[model_type] if shift is None else shift
+        config.shift = SHIFT_FACTORS[model_type] if config.shift is None else config.shift
 
         with LoRAContext():
+            attn_kwargs = {
+                "attn_impl": config.dit_attn_impl,
+                "sparge_smooth_k": config.sparge_smooth_k,
+                "sparge_cdfthreshd": config.sparge_cdfthreshd,
+                "sparge_simthreshd1": config.sparge_simthreshd1,
+                "sparge_pvthreshd": config.sparge_pvthreshd,
+            }
             dit = WanDiT.from_state_dict(
                 dit_state_dict,
                 model_type=model_type,
                 device=init_device,
-                dtype=model_config.dit_dtype,
-                attn_impl=model_config.dit_attn_impl,
+                dtype=config.model_dtype,
+                attn_kwargs=attn_kwargs,
             )
+            if config.use_fp8_linear:
+                enable_fp8_linear(dit)
 
         pipe = cls(
-            config=model_config,
+            config=config,
             tokenizer=tokenizer,
             text_encoder=text_encoder,
             dit=dit,
             vae=vae,
             image_encoder=image_encoder,
-            shift=shift,
-            batch_cfg=True if parallelism > 1 and use_cfg_parallel else batch_cfg,
-            vae_tiled=vae_tiled,
-            vae_tile_size=vae_tile_size,
-            vae_tile_stride=vae_tile_stride,
-            device=device,
-            dtype=dtype,
         )
         pipe.eval()
-        if offload_mode is not None:
-            pipe.enable_cpu_offload(offload_mode)
 
-        if parallelism > 1:
-            parallel_config = cls.init_parallel_config(parallelism, use_cfg_parallel, model_config)
-            cfg_degree = parallel_config["cfg_degree"]
-            sp_ulysses_degree = parallel_config["sp_ulysses_degree"]
-            sp_ring_degree = parallel_config["sp_ring_degree"]
-            tp_degree = parallel_config["tp_degree"]
-            use_fsdp = parallel_config["use_fsdp"]
+        if config.offload_mode is not None:
+            pipe.enable_cpu_offload(config.offload_mode)
+
+        if config.parallelism > 1:
             return ParallelWrapper(
                 pipe,
-                cfg_degree=cfg_degree,
-                sp_ulysses_degree=sp_ulysses_degree,
-                sp_ring_degree=sp_ring_degree,
-                tp_degree=tp_degree,
-                use_fsdp=use_fsdp,
+                cfg_degree=config.cfg_degree,
+                sp_ulysses_degree=config.sp_ulysses_degree,
+                sp_ring_degree=config.sp_ring_degree,
+                tp_degree=config.tp_degree,
+                use_fsdp=config.use_fsdp,
                 device="cuda",
             )
         return pipe

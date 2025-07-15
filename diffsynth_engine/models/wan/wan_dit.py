@@ -2,7 +2,7 @@ import math
 import json
 import torch
 import torch.nn as nn
-from typing import Tuple, Optional
+from typing import Any, Dict, Tuple, Optional
 from einops import rearrange
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
@@ -69,7 +69,7 @@ class SelfAttention(nn.Module):
         dim: int,
         num_heads: int,
         eps: float = 1e-6,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -82,7 +82,7 @@ class SelfAttention(nn.Module):
         self.o = nn.Linear(dim, dim, device=device, dtype=dtype)
         self.norm_q = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
         self.norm_k = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
-        self.attn_impl = attn_impl
+        self.attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
 
     def forward(self, x, freqs):
         q, k, v = self.norm_q(self.q(x)), self.norm_k(self.k(x)), self.v(x)
@@ -94,7 +94,7 @@ class SelfAttention(nn.Module):
             q=rope_apply(q, freqs),
             k=rope_apply(k, freqs),
             v=v,
-            attn_impl=self.attn_impl,
+            **self.attn_kwargs,
         )
         x = x.flatten(2)
         return self.o(x)
@@ -107,7 +107,7 @@ class CrossAttention(nn.Module):
         num_heads: int,
         eps: float = 1e-6,
         has_image_input: bool = False,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -126,7 +126,7 @@ class CrossAttention(nn.Module):
             self.k_img = nn.Linear(dim, dim, device=device, dtype=dtype)
             self.v_img = nn.Linear(dim, dim, device=device, dtype=dtype)
             self.norm_k_img = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
-        self.attn_impl = attn_impl
+        self.attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
 
     def forward(self, x: torch.Tensor, y: torch.Tensor):
         if self.has_image_input:
@@ -140,12 +140,12 @@ class CrossAttention(nn.Module):
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
 
-        x = attention_ops.attention(q, k, v, attn_impl=self.attn_impl).flatten(2)
+        x = attention_ops.attention(q, k, v, **self.attn_kwargs).flatten(2)
         if self.has_image_input:
             k_img, v_img = self.norm_k_img(self.k_img(img)), self.v_img(img)
             k_img = rearrange(k_img, "b s (n d) -> b s n d", n=num_heads)
             v_img = rearrange(v_img, "b s (n d) -> b s n d", n=num_heads)
-            y = attention_ops.attention(q, k_img, v_img, attn_impl=self.attn_impl).flatten(2)
+            y = attention_ops.attention(q, k_img, v_img, **self.attn_kwargs).flatten(2)
             x = x + y
         return self.o(x)
 
@@ -158,7 +158,7 @@ class DiTBlock(nn.Module):
         num_heads: int,
         ffn_dim: int,
         eps: float = 1e-6,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -166,9 +166,9 @@ class DiTBlock(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
         self.ffn_dim = ffn_dim
-        self.self_attn = SelfAttention(dim, num_heads, eps, attn_impl=attn_impl, device=device, dtype=dtype)
+        self.self_attn = SelfAttention(dim, num_heads, eps, attn_kwargs=attn_kwargs, device=device, dtype=dtype)
         self.cross_attn = CrossAttention(
-            dim, num_heads, eps, has_image_input=has_image_input, attn_impl=attn_impl, device=device, dtype=dtype
+            dim, num_heads, eps, has_image_input=has_image_input, attn_kwargs=attn_kwargs, device=device, dtype=dtype
         )
         self.norm1 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False, device=device, dtype=dtype)
         self.norm2 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False, device=device, dtype=dtype)
@@ -265,7 +265,7 @@ class WanDiT(PreTrainedModel):
         num_layers: int,
         has_image_input: bool,
         flf_pos_emb: bool = False,
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cpu",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -296,7 +296,7 @@ class WanDiT(PreTrainedModel):
         )
         self.blocks = nn.ModuleList(
             [
-                DiTBlock(has_image_input, dim, num_heads, ffn_dim, eps, attn_impl, device=device, dtype=dtype)
+                DiTBlock(has_image_input, dim, num_heads, ffn_dim, eps, attn_kwargs, device=device, dtype=dtype)
                 for _ in range(num_layers)
             ]
         )
@@ -376,7 +376,7 @@ class WanDiT(PreTrainedModel):
         device,
         dtype,
         model_type="1.3b-t2v",
-        attn_impl: Optional[str] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         assign=True,
     ):
         if model_type == "1.3b-t2v":
@@ -390,7 +390,7 @@ class WanDiT(PreTrainedModel):
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype, attn_impl=attn_impl)
+            model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype, attn_kwargs=attn_kwargs)
             model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=assign)
         model.to(device=device, dtype=dtype)
