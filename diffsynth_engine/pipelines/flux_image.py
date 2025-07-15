@@ -604,7 +604,8 @@ class FluxImagePipeline(BasePipeline):
             device=device,
             dtype=model_config.dit_dtype,
         )
-        pipe.enable_cpu_offload(offload_mode)
+        if offload_mode is not None:
+            pipe.enable_cpu_offload(offload_mode)
         if model_config.dit_dtype == torch.float8_e4m3fn:
             pipe.dtype = torch.bfloat16  # running dtype
             pipe.enable_fp8_autocast(
