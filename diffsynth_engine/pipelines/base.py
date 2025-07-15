@@ -43,7 +43,7 @@ class BasePipeline:
         self.dtype = dtype
         self.offload_mode = None
         self.model_names = []
-        self.models_offload_params = {}
+        self._models_offload_params = {}
 
     @classmethod
     def from_pretrained(
@@ -289,10 +289,10 @@ class BasePipeline:
             model = getattr(self, model_name)
             if model is not None:
                 model.to("cpu")
-                self.models_offload_params[model_name] = {}
+                self._models_offload_params[model_name] = {}
                 for name, param in model.named_parameters(recurse=True):
                     param.data = param.data.pin_memory()
-                    self.models_offload_params[model_name][name] = param.data
+                    self._models_offload_params[model_name][name] = param.data
         self.offload_mode = "cpu_offload"
 
     def _enable_sequential_cpu_offload(self):
@@ -327,7 +327,7 @@ class BasePipeline:
             if model_name not in load_model_names:
                 model = getattr(self, model_name)
                 if model is not None and (p := next(model.parameters(), None)) is not None and p.device != torch.device("cpu"):
-                    param_cache = self.models_offload_params[model_name]
+                    param_cache = self._models_offload_params[model_name]
                     for name, param in model.named_parameters(recurse=True):
                         param.data = param_cache[name]
         # load the needed models to device
