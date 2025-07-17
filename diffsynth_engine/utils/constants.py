@@ -1,5 +1,4 @@
 import os
-import torch
 
 PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO_ROOT = os.path.dirname(PACKAGE_ROOT)
@@ -34,11 +33,3 @@ KB = 1024
 MB = 1024 * KB
 GB = 1024 * MB
 TB = 1024 * GB
-
-# data type
-# AMD only support e4m3fnuz
-# https://onnx.ai/onnx/technical/float8.html
-if torch.version.hip and "gfx94" in torch.cuda.get_device_properties(0).gcnArchName:
-    DTYPE_FP8 = torch.float8_e4m3fnuz
-else:
-    DTYPE_FP8 = torch.float8_e4m3fn

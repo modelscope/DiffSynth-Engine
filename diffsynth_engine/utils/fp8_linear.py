@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from contextlib import contextmanager
-from diffsynth_engine.utils.constants import DTYPE_FP8
+from diffsynth_engine.utils.platform import DTYPE_FP8
 
 
 def enable_fp8_linear(module: nn.Module):
