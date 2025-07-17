@@ -109,7 +109,7 @@ def attention(
         "sparge_attn",
     ]
     if attn_impl is None or attn_impl == "auto":
-        if FLASH_ATTN_3_AVAILABLE:
+        if FLASH_ATTN_3_AVAILABLE and q.shape[-1] <= 256:
             return flash_attn3(q, k, v, softmax_scale=scale)
         elif XFORMERS_AVAILABLE:
             return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
