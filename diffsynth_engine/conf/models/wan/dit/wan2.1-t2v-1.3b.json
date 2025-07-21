@@ -1,5 +1,4 @@
 {
-    "has_image_input": false,
     "patch_size": [1, 2, 2],
     "in_dim": 16,
     "dim": 1536,

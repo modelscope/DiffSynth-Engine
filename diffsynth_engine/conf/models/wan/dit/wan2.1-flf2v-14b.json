@@ -1,0 +1,16 @@
+{
+    "has_clip_feature": true,
+    "has_vae_feature": true,
+    "flf_pos_emb": true,
+    "patch_size": [1, 2, 2],
+    "in_dim": 36,
+    "dim": 5120,
+    "ffn_dim": 13824,
+    "freq_dim": 256,
+    "text_dim": 4096,
+    "out_dim": 16,
+    "num_heads": 40,
+    "num_layers": 40,
+    "eps": 1e-6,
+    "shift": 16.0
+}

@@ -25,6 +25,6 @@ if __name__ == "__main__":
         height=832,
         seed=42,
     )
-    save_video(video, "wan_t2v_lora.mp4", fps=15)
+    save_video(video, "wan_t2v_lora.mp4", fps=pipe.config.fps)
 
     del pipe

@@ -8,10 +8,23 @@ from diffsynth_engine.utils.video import save_video
 
 if __name__ == "__main__":
     config = WanPipelineConfig.basic_config(
-        model_path=fetch_model("MusePublic/wan2.1-i2v-14b-480p-bf16", path="dit.safetensors"),
-        image_encoder_path=fetch_model(
-            "muse/open-clip-xlm-roberta-large-vit-huge-14",
-            path="open-clip-xlm-roberta-large-vit-huge-14.safetensors",
+        model_path=fetch_model(
+            "Wan-AI/Wan2.2-I2V-A14B",
+            revision="bf16",
+            path=[
+                "high_noise_model/diffusion_pytorch_model-00001-of-00006-bf16.safetensors",
+                "high_noise_model/diffusion_pytorch_model-00002-of-00006-bf16.safetensors",
+                "high_noise_model/diffusion_pytorch_model-00003-of-00006-bf16.safetensors",
+                "high_noise_model/diffusion_pytorch_model-00004-of-00006-bf16.safetensors",
+                "high_noise_model/diffusion_pytorch_model-00005-of-00006-bf16.safetensors",
+                "high_noise_model/diffusion_pytorch_model-00006-of-00006-bf16.safetensors",
+                "low_noise_model/diffusion_pytorch_model-00001-of-00006-bf16.safetensors",
+                "low_noise_model/diffusion_pytorch_model-00002-of-00006-bf16.safetensors",
+                "low_noise_model/diffusion_pytorch_model-00003-of-00006-bf16.safetensors",
+                "low_noise_model/diffusion_pytorch_model-00004-of-00006-bf16.safetensors",
+                "low_noise_model/diffusion_pytorch_model-00005-of-00006-bf16.safetensors",
+                "low_noise_model/diffusion_pytorch_model-00006-of-00006-bf16.safetensors",
+            ],
         ),
         parallelism=4,
         offload_mode="cpu_offload",
@@ -25,9 +38,9 @@ if __name__ == "__main__":
         input_image=image,
         num_frames=81,
         width=480,
-        height=480,
+        height=832,
         seed=42,
     )
-    save_video(video, "wan_i2v.mp4", fps=15)
+    save_video(video, "wan_i2v.mp4", fps=pipe.config.fps)
 
     del pipe

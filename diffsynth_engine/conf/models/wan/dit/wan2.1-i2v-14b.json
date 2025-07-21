@@ -1,5 +1,6 @@
 {
-    "has_image_input": true,
+    "has_clip_feature": true,
+    "has_vae_feature": true,
     "patch_size": [1, 2, 2],
     "in_dim": 36,
     "dim": 5120,

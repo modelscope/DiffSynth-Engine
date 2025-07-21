@@ -336,6 +336,9 @@ class ParallelWrapper:
             except RuntimeError as e:
                 raise RuntimeError("Failed to set start method to spawn:", e)
         super().__init__()
+        self.config = module.config if isinstance(module, BasePipeline) else None
+        self._module_name = module.__class__.__name__
+
         self.world_size = cfg_degree * sp_ulysses_degree * sp_ring_degree * tp_degree
         self.queue_in = mp.Queue()
         self.queue_out = mp.Queue()
@@ -357,7 +360,6 @@ class ParallelWrapper:
             nprocs=self.world_size,
             join=False,
         )
-        self._module_name = module.__class__.__name__
 
     def __call__(self, *args, **kwargs):
         data = ["__call__", args, kwargs]

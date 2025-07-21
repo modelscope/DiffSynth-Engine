@@ -1,0 +1,14 @@
+{
+    "fuse_image_latents": true,
+    "patch_size": [1, 2, 2],
+    "in_dim": 48,
+    "dim": 3072,
+    "ffn_dim": 14336,
+    "freq_dim": 256,
+    "text_dim": 4096,
+    "out_dim": 48,
+    "num_heads": 24,
+    "num_layers": 30,
+    "eps": 1e-6,
+    "fps": 24
+}

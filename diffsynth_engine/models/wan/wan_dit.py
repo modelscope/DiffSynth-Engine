@@ -10,10 +10,13 @@ from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import (
-    WAN_DIT_1_3B_T2V_CONFIG_FILE,
-    WAN_DIT_14B_I2V_CONFIG_FILE,
-    WAN_DIT_14B_T2V_CONFIG_FILE,
-    WAN_DIT_14B_FLF2V_CONFIG_FILE,
+    WAN2_1_DIT_T2V_1_3B_CONFIG_FILE,
+    WAN2_1_DIT_I2V_14B_CONFIG_FILE,
+    WAN2_1_DIT_T2V_14B_CONFIG_FILE,
+    WAN2_1_DIT_FLF2V_14B_CONFIG_FILE,
+    WAN2_2_DIT_TI2V_5B_CONFIG_FILE,
+    WAN2_2_DIT_I2V_A14B_CONFIG_FILE,
+    WAN2_2_DIT_T2V_A14B_CONFIG_FILE,
 )
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.parallel import (
@@ -182,7 +185,9 @@ class DiTBlock(nn.Module):
 
     def forward(self, x, context, t_mod, freqs):
         # msa: multi-head self-attention  mlp: multi-layer perceptron
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (self.modulation + t_mod).chunk(6, dim=1)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = [
+            t.squeeze(1) for t in (self.modulation + t_mod).chunk(6, dim=1)
+        ]
         input_x = modulate(self.norm1(x), shift_msa, scale_msa)
         x = x + gate_msa * self.self_attn(input_x, freqs)
         x = x + self.cross_attn(self.norm3(x), context)
@@ -237,7 +242,7 @@ class Head(nn.Module):
         self.modulation = nn.Parameter(torch.randn(1, 2, dim, device=device, dtype=dtype) / dim**0.5)
 
     def forward(self, x, t_mod):
-        shift, scale = (self.modulation + t_mod).chunk(2, dim=1)
+        shift, scale = [t.squeeze(1) for t in (self.modulation + t_mod.unsqueeze(1)).chunk(2, dim=1)]
         x = self.head(self.norm(x) * (1 + scale) + shift)
         return x
 
@@ -263,17 +268,22 @@ class WanDiT(PreTrainedModel):
         patch_size: Tuple[int, int, int],
         num_heads: int,
         num_layers: int,
-        has_image_input: bool,
+        has_clip_feature: bool = False,
+        has_vae_feature: bool = False,
+        fuse_image_latents: bool = False,
         flf_pos_emb: bool = False,
         attn_kwargs: Optional[Dict[str, Any]] = None,
-        device: str = "cpu",
+        device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
 
+        self.in_dim = in_dim
         self.dim = dim
         self.freq_dim = freq_dim
-        self.has_image_input = has_image_input
+        self.has_clip_feature = has_clip_feature
+        self.has_vae_feature = has_vae_feature
+        self.fuse_image_latents = fuse_image_latents
         self.patch_size = patch_size
 
         self.patch_embedding = nn.Conv3d(
@@ -296,7 +306,7 @@ class WanDiT(PreTrainedModel):
         )
         self.blocks = nn.ModuleList(
             [
-                DiTBlock(has_image_input, dim, num_heads, ffn_dim, eps, attn_kwargs, device=device, dtype=dtype)
+                DiTBlock(has_clip_feature, dim, num_heads, ffn_dim, eps, attn_kwargs, device=device, dtype=dtype)
                 for _ in range(num_layers)
             ]
         )
@@ -305,7 +315,7 @@ class WanDiT(PreTrainedModel):
         head_dim = dim // num_heads
         self.freqs = precompute_freqs_cis_3d(head_dim)
 
-        if has_image_input:
+        if has_clip_feature:
             self.img_emb = MLP(1280, dim, flf_pos_emb, device=device, dtype=dtype)  # clip_feature_dim = 1280
 
     def patchify(self, x: torch.Tensor):
@@ -342,10 +352,11 @@ class WanDiT(PreTrainedModel):
             t = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep))
             t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
             context = self.text_embedding(context)
-            if self.has_image_input:
+            if self.has_vae_feature:
                 x = torch.cat([x, y], dim=1)  # (b, c_x + c_y, f, h, w)
-                clip_embdding = self.img_emb(clip_feature)
-                context = torch.cat([clip_embdding, context], dim=1)  # (b, s1 + s2, d)
+            if self.has_clip_feature:
+                clip_embedding = self.img_emb(clip_feature)
+                context = torch.cat([clip_embedding, context], dim=1)  # (b, s1 + s2, d)
             x, (f, h, w) = self.patchify(x)
             freqs = (
                 torch.cat(
@@ -360,7 +371,7 @@ class WanDiT(PreTrainedModel):
                 .to(x.device)
             )
 
-            with sequence_parallel((x, freqs), seq_dims=(1, 0)):
+            with sequence_parallel((x, t, t_mod, freqs), seq_dims=(1, 0, 0, 0)):
                 for block in self.blocks:
                     x = block(x, context, t_mod, freqs)
                 x = self.head(x, t)
@@ -369,26 +380,36 @@ class WanDiT(PreTrainedModel):
             (x,) = cfg_parallel_unshard((x,), use_cfg=use_cfg)
             return x
 
+    @staticmethod
+    def get_model_config(model_type: str):
+        if model_type == "wan2.1-t2v-1.3b":
+            config = json.load(open(WAN2_1_DIT_T2V_1_3B_CONFIG_FILE, "r"))
+        elif model_type == "wan2.1-t2v-14b":
+            config = json.load(open(WAN2_1_DIT_T2V_14B_CONFIG_FILE, "r"))
+        elif model_type == "wan2.1-i2v-14b":
+            config = json.load(open(WAN2_1_DIT_I2V_14B_CONFIG_FILE, "r"))
+        elif model_type == "wan2.1-flf2v-14b":
+            config = json.load(open(WAN2_1_DIT_FLF2V_14B_CONFIG_FILE, "r"))
+        elif model_type == "wan2.2-ti2v-5b":
+            config = json.load(open(WAN2_2_DIT_TI2V_5B_CONFIG_FILE, "r"))
+        elif model_type == "wan2.2-t2v-a14b":
+            config = json.load(open(WAN2_2_DIT_T2V_A14B_CONFIG_FILE, "r"))
+        elif model_type == "wan2.2-i2v-a14b":
+            config = json.load(open(WAN2_2_DIT_I2V_A14B_CONFIG_FILE, "r"))
+        else:
+            raise ValueError(f"Unsupported model type: {model_type}")
+        return config
+
     @classmethod
     def from_state_dict(
         cls,
         state_dict,
         device,
         dtype,
-        model_type="1.3b-t2v",
+        config,
         attn_kwargs: Optional[Dict[str, Any]] = None,
         assign=True,
     ):
-        if model_type == "1.3b-t2v":
-            config = json.load(open(WAN_DIT_1_3B_T2V_CONFIG_FILE, "r"))
-        elif model_type == "14b-t2v":
-            config = json.load(open(WAN_DIT_14B_T2V_CONFIG_FILE, "r"))
-        elif model_type == "14b-i2v":
-            config = json.load(open(WAN_DIT_14B_I2V_CONFIG_FILE, "r"))
-        elif model_type == "14b-flf2v":
-            config = json.load(open(WAN_DIT_14B_FLF2V_CONFIG_FILE, "r"))
-        else:
-            raise ValueError(f"Unsupported model type: {model_type}")
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype, attn_kwargs=attn_kwargs)
             model = model.requires_grad_(False)

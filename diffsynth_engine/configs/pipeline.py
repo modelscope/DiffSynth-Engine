@@ -139,7 +139,12 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
     vae_dtype: torch.dtype = torch.bfloat16
     image_encoder_dtype: torch.dtype = torch.bfloat16
 
-    shift: Optional[float] = field(default=None, init=False)  # RecifitedFlowScheduler shift factor, set by model type
+    # default params set by model type
+    boundary: Optional[float] = field(default=None, init=False)  # boundary
+    shift: Optional[float] = field(default=None, init=False)  # RecifitedFlowScheduler shift factor
+    cfg_scale: Optional[float | Tuple[float, float]] = field(default=None, init=False)  # default CFG scale
+    num_inference_steps: Optional[int] = field(default=None, init=False)  # default inference steps
+    fps: Optional[int] = field(default=None, init=False)  # default FPS
 
     # override BaseConfig
     vae_tiled: bool = True

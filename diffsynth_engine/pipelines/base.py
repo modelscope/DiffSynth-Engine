@@ -1,8 +1,10 @@
 import os
 import torch
 import numpy as np
+from einops import rearrange
 from typing import Dict, List, Tuple
 from PIL import Image
+
 from diffsynth_engine.configs import BaseConfig
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload
 from diffsynth_engine.utils.fp8_linear import enable_fp8_autocast
@@ -140,9 +142,18 @@ class BasePipeline:
         return [BasePipeline.preprocess_image(image) for image in images]
 
     @staticmethod
-    def vae_output_to_image(vae_output: torch.Tensor) -> Image.Image:
-        image = vae_output[0].cpu().float().permute(1, 2, 0).numpy()
-        image = Image.fromarray(((image / 2 + 0.5).clip(0, 1) * 255).astype("uint8"))
+    def vae_output_to_image(vae_output: torch.Tensor) -> Image.Image | List[Image.Image]:
+        vae_output = vae_output[0]
+        if vae_output.ndim == 4:
+            vae_output = rearrange(vae_output, "c t h w -> t h w c")
+        else:
+            vae_output = rearrange(vae_output, "c h w -> h w c")
+
+        image = ((vae_output.float() / 2 + 0.5).clip(0, 1) * 255).cpu().numpy().astype("uint8")
+        if image.ndim == 4:
+            image = [Image.fromarray(img) for img in image]
+        else:
+            image = Image.fromarray(image)
         return image
 
     @staticmethod

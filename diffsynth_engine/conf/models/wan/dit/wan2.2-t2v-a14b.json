@@ -1,8 +1,6 @@
 {
-    "has_image_input": true,
-    "flf_pos_emb": true,
     "patch_size": [1, 2, 2],
-    "in_dim": 36,
+    "in_dim": 16,
     "dim": 5120,
     "ffn_dim": 13824,
     "freq_dim": 256,
@@ -10,5 +8,9 @@
     "out_dim": 16,
     "num_heads": 40,
     "num_layers": 40,
-    "eps": 1e-6
+    "eps": 1e-6,
+    "boundary": 0.875,
+    "shift": 12.0,
+    "cfg_scale": [3.0, 4.0],
+    "num_inference_steps": 40
 }

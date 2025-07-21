@@ -1,3 +1,4 @@
+import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,6 +8,7 @@ from tqdm import tqdm
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
+from diffsynth_engine.utils.constants import WAN2_1_VAE_CONFIG_FILE, WAN2_2_VAE_CONFIG_FILE
 
 CACHE_T = 2
 
@@ -77,7 +79,7 @@ class Upsample(nn.Upsample):
 
 
 class Resample(nn.Module):
-    def __init__(self, dim, mode):
+    def __init__(self, dim, mode, keep_channels=False):
         assert mode in ("none", "upsample2d", "upsample3d", "downsample2d", "downsample3d")
         super().__init__()
         self.dim = dim
@@ -86,11 +88,13 @@ class Resample(nn.Module):
         # layers
         if mode == "upsample2d":
             self.resample = nn.Sequential(
-                Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"), nn.Conv2d(dim, dim // 2, 3, padding=1)
+                Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
+                nn.Conv2d(dim, dim if keep_channels else dim // 2, 3, padding=1),
             )
         elif mode == "upsample3d":
             self.resample = nn.Sequential(
-                Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"), nn.Conv2d(dim, dim // 2, 3, padding=1)
+                Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
+                nn.Conv2d(dim, dim if keep_channels else dim // 2, 3, padding=1),
             )
             self.time_conv = CausalConv3d(dim, dim * 2, (3, 1, 1), padding=(1, 0, 0))
 
@@ -218,47 +222,259 @@ class AttentionBlock(nn.Module):
         return x + identity
 
 
+def patchify(x, patch_size):
+    if patch_size == 1:
+        return x
+    if x.dim() == 4:
+        x = rearrange(x, "b c (h q) (w r) -> b (c r q) h w", q=patch_size, r=patch_size)
+    elif x.dim() == 5:
+        x = rearrange(
+            x,
+            "b c f (h q) (w r) -> b (c r q) f h w",
+            q=patch_size,
+            r=patch_size,
+        )
+    else:
+        raise ValueError(f"Invalid input shape: {x.shape}")
+
+    return x
+
+
+def unpatchify(x, patch_size):
+    if patch_size == 1:
+        return x
+
+    if x.dim() == 4:
+        x = rearrange(x, "b (c r q) h w -> b c (h q) (w r)", q=patch_size, r=patch_size)
+    elif x.dim() == 5:
+        x = rearrange(
+            x,
+            "b (c r q) f h w -> b c f (h q) (w r)",
+            q=patch_size,
+            r=patch_size,
+        )
+    return x
+
+
+class AvgDown3D(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        factor_t,
+        factor_s=1,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.factor_t = factor_t
+        self.factor_s = factor_s
+        self.factor = self.factor_t * self.factor_s * self.factor_s
+
+        assert in_channels * self.factor % out_channels == 0
+        self.group_size = in_channels * self.factor // out_channels
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        pad_t = (self.factor_t - x.shape[2] % self.factor_t) % self.factor_t
+        pad = (0, 0, 0, 0, pad_t, 0)
+        x = F.pad(x, pad)
+        B, C, T, H, W = x.shape
+        x = x.view(
+            B,
+            C,
+            T // self.factor_t,
+            self.factor_t,
+            H // self.factor_s,
+            self.factor_s,
+            W // self.factor_s,
+            self.factor_s,
+        )
+        x = x.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
+        x = x.view(
+            B,
+            C * self.factor,
+            T // self.factor_t,
+            H // self.factor_s,
+            W // self.factor_s,
+        )
+        x = x.view(
+            B,
+            self.out_channels,
+            self.group_size,
+            T // self.factor_t,
+            H // self.factor_s,
+            W // self.factor_s,
+        )
+        x = x.mean(dim=2)
+        return x
+
+
+class DupUp3D(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        factor_t,
+        factor_s=1,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.factor_t = factor_t
+        self.factor_s = factor_s
+        self.factor = self.factor_t * self.factor_s * self.factor_s
+
+        assert out_channels * self.factor % in_channels == 0
+        self.repeats = out_channels * self.factor // in_channels
+
+    def forward(self, x: torch.Tensor, first_chunk=False) -> torch.Tensor:
+        x = x.repeat_interleave(self.repeats, dim=1)
+        x = x.view(
+            x.size(0),
+            self.out_channels,
+            self.factor_t,
+            self.factor_s,
+            self.factor_s,
+            x.size(2),
+            x.size(3),
+            x.size(4),
+        )
+        x = x.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+        x = x.view(
+            x.size(0),
+            self.out_channels,
+            x.size(2) * self.factor_t,
+            x.size(4) * self.factor_s,
+            x.size(6) * self.factor_s,
+        )
+        if first_chunk:
+            x = x[:, :, self.factor_t - 1 :, :, :]
+        return x
+
+
+class Down_ResidualBlock(nn.Module):
+    def __init__(self, in_dim, out_dim, dropout, mult, temperal_downsample=False, down_flag=False):
+        super().__init__()
+
+        # Shortcut path with downsample
+        self.avg_shortcut = AvgDown3D(
+            in_dim,
+            out_dim,
+            factor_t=2 if temperal_downsample else 1,
+            factor_s=2 if down_flag else 1,
+        )
+
+        # Main path with residual blocks and downsample
+        downsamples = []
+        for _ in range(mult):
+            downsamples.append(ResidualBlock(in_dim, out_dim, dropout))
+            in_dim = out_dim
+
+        # Add the final downsample block
+        if down_flag:
+            mode = "downsample3d" if temperal_downsample else "downsample2d"
+            downsamples.append(Resample(out_dim, mode=mode))
+
+        self.downsamples = nn.Sequential(*downsamples)
+
+    def forward(self, x, feat_cache=None):
+        x_copy = x.clone()
+        for module in self.downsamples:
+            x = module(x, feat_cache)
+
+        return x + self.avg_shortcut(x_copy)
+
+
+class Up_ResidualBlock(nn.Module):
+    def __init__(self, in_dim, out_dim, dropout, mult, temperal_upsample=False, up_flag=False):
+        super().__init__()
+        # Shortcut path with upsample
+        if up_flag:
+            self.avg_shortcut = DupUp3D(
+                in_dim,
+                out_dim,
+                factor_t=2 if temperal_upsample else 1,
+                factor_s=2 if up_flag else 1,
+            )
+        else:
+            self.avg_shortcut = None
+
+        # Main path with residual blocks and upsample
+        upsamples = []
+        for _ in range(mult):
+            upsamples.append(ResidualBlock(in_dim, out_dim, dropout))
+            in_dim = out_dim
+
+        # Add the final upsample block
+        if up_flag:
+            mode = "upsample3d" if temperal_upsample else "upsample2d"
+            upsamples.append(Resample(out_dim, mode=mode, keep_channels=True))
+
+        self.upsamples = nn.Sequential(*upsamples)
+
+    def forward(self, x, feat_cache=None, first_chunk=False):
+        x_main = x.clone()
+        for module in self.upsamples:
+            x_main = module(x_main, feat_cache)
+        if self.avg_shortcut is not None:
+            x_shortcut = self.avg_shortcut(x, first_chunk)
+            return x_main + x_shortcut
+        else:
+            return x_main
+
+
 class Encoder3d(nn.Module):
     def __init__(
         self,
+        in_channels=3,
         dim=128,
         z_dim=4,
         dim_mult=[1, 2, 4, 4],
         num_res_blocks=2,
-        attn_scales=[],
-        temperal_downsample=[True, True, False],
+        temperal_downsample=[False, True, True],
         dropout=0.0,
     ):
         super().__init__()
+        self.in_channels = in_channels
         self.dim = dim
         self.z_dim = z_dim
         self.dim_mult = dim_mult
         self.num_res_blocks = num_res_blocks
-        self.attn_scales = attn_scales
         self.temperal_downsample = temperal_downsample
 
         # dimensions
         dims = [dim * u for u in [1] + dim_mult]
-        scale = 1.0
 
         # init block
-        self.conv1 = CausalConv3d(3, dims[0], 3, padding=1)
+        self.conv1 = CausalConv3d(in_channels, dims[0], 3, padding=1)
 
         # downsample blocks
         downsamples = []
+        use_down_residual_block = in_channels == 12
         for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
-            # residual (+attention) blocks
-            for _ in range(num_res_blocks):
-                downsamples.append(ResidualBlock(in_dim, out_dim, dropout))
-                if scale in attn_scales:
-                    downsamples.append(AttentionBlock(out_dim))
-                in_dim = out_dim
+            if use_down_residual_block:
+                t_down_flag = temperal_downsample[i] if i < len(temperal_downsample) else False
+                downsamples.append(
+                    Down_ResidualBlock(
+                        in_dim=in_dim,
+                        out_dim=out_dim,
+                        dropout=dropout,
+                        mult=num_res_blocks,
+                        temperal_downsample=t_down_flag,
+                        down_flag=i != len(dim_mult) - 1,
+                    )
+                )
+            else:
+                # residual (+attention) blocks
+                for _ in range(num_res_blocks):
+                    downsamples.append(ResidualBlock(in_dim, out_dim, dropout))
+                    in_dim = out_dim
 
-            # downsample block
-            if i != len(dim_mult) - 1:
-                mode = "downsample3d" if temperal_downsample[i] else "downsample2d"
-                downsamples.append(Resample(out_dim, mode=mode))
-                scale /= 2.0
+                # downsample block
+                if i != len(dim_mult) - 1:
+                    mode = "downsample3d" if temperal_downsample[i] else "downsample2d"
+                    downsamples.append(Resample(out_dim, mode=mode))
         self.downsamples = nn.Sequential(*downsamples)
 
         # middle blocks
@@ -315,25 +531,24 @@ class Encoder3d(nn.Module):
 class Decoder3d(nn.Module):
     def __init__(
         self,
+        out_channels=3,
         dim=128,
         z_dim=4,
         dim_mult=[1, 2, 4, 4],
         num_res_blocks=2,
-        attn_scales=[],
-        temperal_upsample=[False, True, True],
+        temperal_upsample=[True, True, False],
         dropout=0.0,
     ):
         super().__init__()
+        self.out_channels = out_channels
         self.dim = dim
         self.z_dim = z_dim
         self.dim_mult = dim_mult
         self.num_res_blocks = num_res_blocks
-        self.attn_scales = attn_scales
         self.temperal_upsample = temperal_upsample
 
         # dimensions
         dims = [dim * u for u in [dim_mult[-1]] + dim_mult[::-1]]
-        scale = 1.0 / 2 ** (len(dim_mult) - 2)
 
         # init block
         self.conv1 = CausalConv3d(z_dim, dims[0], 3, padding=1)
@@ -345,27 +560,40 @@ class Decoder3d(nn.Module):
 
         # upsample blocks
         upsamples = []
+        use_up_residual_block = out_channels == 12
         for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
-            # residual (+attention) blocks
-            if i == 1 or i == 2 or i == 3:
-                in_dim = in_dim // 2
-            for _ in range(num_res_blocks + 1):
-                upsamples.append(ResidualBlock(in_dim, out_dim, dropout))
-                if scale in attn_scales:
-                    upsamples.append(AttentionBlock(out_dim))
-                in_dim = out_dim
+            if use_up_residual_block:
+                t_up_flag = temperal_upsample[i] if i < len(temperal_upsample) else False
+                upsamples.append(
+                    Up_ResidualBlock(
+                        in_dim=in_dim,
+                        out_dim=out_dim,
+                        dropout=dropout,
+                        mult=num_res_blocks + 1,
+                        temperal_upsample=t_up_flag,
+                        up_flag=i != len(dim_mult) - 1,
+                    )
+                )
+            else:
+                # residual (+attention) blocks
+                if i == 1 or i == 2 or i == 3:
+                    in_dim = in_dim // 2
+                for _ in range(num_res_blocks + 1):
+                    upsamples.append(ResidualBlock(in_dim, out_dim, dropout))
+                    in_dim = out_dim
 
-            # upsample block
-            if i != len(dim_mult) - 1:
-                mode = "upsample3d" if temperal_upsample[i] else "upsample2d"
-                upsamples.append(Resample(out_dim, mode=mode))
-                scale *= 2.0
+                # upsample block
+                if i != len(dim_mult) - 1:
+                    mode = "upsample3d" if temperal_upsample[i] else "upsample2d"
+                    upsamples.append(Resample(out_dim, mode=mode))
         self.upsamples = nn.Sequential(*upsamples)
 
         # output blocks
-        self.head = nn.Sequential(RMS_norm(out_dim, images=False), nn.SiLU(), CausalConv3d(out_dim, 3, 3, padding=1))
+        self.head = nn.Sequential(
+            RMS_norm(out_dim, images=False), nn.SiLU(), CausalConv3d(out_dim, out_channels, 3, padding=1)
+        )
 
-    def forward(self, x, feat_cache=None):
+    def forward(self, x, feat_cache=None, first_chunk=False):
         ## conv1
         if feat_cache is not None:
             key = id(self.conv1)
@@ -387,7 +615,9 @@ class Decoder3d(nn.Module):
 
         ## upsamples
         for layer in self.upsamples:
-            if feat_cache is not None:
+            if check_is_instance(layer, Up_ResidualBlock) and feat_cache is not None:
+                x = layer(x, feat_cache, first_chunk)
+            elif feat_cache is not None:
                 x = layer(x, feat_cache)
             else:
                 x = layer(x)
@@ -410,30 +640,36 @@ class Decoder3d(nn.Module):
 class VideoVAE(nn.Module):
     def __init__(
         self,
-        dim=96,
+        in_channels=3,
+        out_channels=3,
+        encoder_dim=96,
+        decoder_dim=96,
         z_dim=16,
         dim_mult=[1, 2, 4, 4],
         num_res_blocks=2,
-        attn_scales=[],
         temperal_downsample=[False, True, True],
         dropout=0.0,
     ):
         super().__init__()
-        self.dim = dim
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.encoder_dim = encoder_dim
+        self.decoder_dim = decoder_dim
         self.z_dim = z_dim
         self.dim_mult = dim_mult
         self.num_res_blocks = num_res_blocks
-        self.attn_scales = attn_scales
         self.temperal_downsample = temperal_downsample
         self.temperal_upsample = temperal_downsample[::-1]
 
         # modules
         self.encoder = Encoder3d(
-            dim, z_dim * 2, dim_mult, num_res_blocks, attn_scales, self.temperal_downsample, dropout
+            in_channels, encoder_dim, z_dim * 2, dim_mult, num_res_blocks, self.temperal_downsample, dropout
         )
         self.conv1 = CausalConv3d(z_dim * 2, z_dim * 2, 1)
         self.conv2 = CausalConv3d(z_dim, z_dim, 1)
-        self.decoder = Decoder3d(dim, z_dim, dim_mult, num_res_blocks, attn_scales, self.temperal_upsample, dropout)
+        self.decoder = Decoder3d(
+            out_channels, decoder_dim, z_dim, dim_mult, num_res_blocks, self.temperal_upsample, dropout
+        )
 
     def forward(self, x):
         mu, log_var = self.encode(x)
@@ -443,6 +679,7 @@ class VideoVAE(nn.Module):
 
     def encode(self, x, scale):
         feat_cache = {}
+        x = patchify(x, patch_size=2 if self.in_channels == 12 else 1)
         t = x.shape[2]
         iter_ = 1 + (t - 1) // 4
 
@@ -477,10 +714,11 @@ class VideoVAE(nn.Module):
         x = self.conv2(z)
         for i in range(iter_):
             if i == 0:
-                out = self.decoder(x[:, :, i : i + 1, :, :], feat_cache=feat_cache)
+                out = self.decoder(x[:, :, i : i + 1, :, :], feat_cache=feat_cache, first_chunk=True)
             else:
                 out_ = self.decoder(x[:, :, i : i + 1, :, :], feat_cache=feat_cache)
                 out = torch.cat([out, out_], 2)  # may add tensor offload
+        out = unpatchify(out, patch_size=2 if self.out_channels == 12 else 1)
         return out
 
     def reparameterize(self, mu, log_var):
@@ -515,10 +753,26 @@ class WanVideoVAEStateDictConverter(StateDictConverter):
 class WanVideoVAE(PreTrainedModel):
     converter = WanVideoVAEStateDictConverter()
 
-    def __init__(self, z_dim=16, device: str = "cuda:0", dtype: torch.dtype = torch.float32):
+    def __init__(
+        self,
+        in_channels=3,
+        out_channels=3,
+        encoder_dim=96,
+        decoder_dim=96,
+        z_dim=16,
+        dim_mult=[1, 2, 4, 4],
+        num_res_blocks=2,
+        temperal_downsample=[False, True, True],
+        dropout=0.0,
+        patch_size=1,
+        mean=None,
+        std=None,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
+    ):
         super().__init__()
 
-        mean = [
+        mean = mean or [
             -0.7571,
             -0.7089,
             -0.9113,
@@ -536,7 +790,7 @@ class WanVideoVAE(PreTrainedModel):
             0.2503,
             -0.2921,
         ]
-        std = [
+        std = std or [
             2.8184,
             1.4541,
             2.3275,
@@ -559,13 +813,35 @@ class WanVideoVAE(PreTrainedModel):
         self.scale = [self.mean, 1.0 / self.std]
 
         # init model
-        self.model = VideoVAE(z_dim=z_dim).eval().requires_grad_(False)
-        self.upsampling_factor = 8
+        self.model = (
+            VideoVAE(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                encoder_dim=encoder_dim,
+                decoder_dim=decoder_dim,
+                z_dim=z_dim,
+                dim_mult=dim_mult,
+                num_res_blocks=num_res_blocks,
+                temperal_downsample=temperal_downsample,
+                dropout=dropout,
+            )
+            .eval()
+            .requires_grad_(False)
+        )
+        self.z_dim = z_dim
+        self.patch_size = patch_size
+        self.upsampling_factor = 8 * patch_size
 
     @classmethod
-    def from_state_dict(cls, state_dict, device="cuda:0", dtype=torch.float32) -> "WanVideoVAE":
+    def from_state_dict(cls, state_dict, device="cuda:0", dtype=torch.float32, model_type="") -> "WanVideoVAE":
+        if model_type == "wan2.1-vae":
+            config = json.load(open(WAN2_1_VAE_CONFIG_FILE, "r"))
+        elif model_type == "wan2.2-vae":
+            config = json.load(open(WAN2_2_VAE_CONFIG_FILE, "r"))
+        else:
+            raise ValueError(f"Unsupported model type: {model_type}")
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
+            model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
@@ -690,13 +966,13 @@ class WanVideoVAE(PreTrainedModel):
             device=data_device,
         )
         values = torch.zeros(
-            (1, 16, out_T, H // self.upsampling_factor, W // self.upsampling_factor),
+            (1, self.z_dim, out_T, H // self.upsampling_factor, W // self.upsampling_factor),
             dtype=video.dtype,
             device=data_device,
         )
 
-        hide_progress_bar = dist.is_initialized() and dist.get_rank() != 0
-        for i, (h, h_, w, w_) in enumerate(tqdm(tasks, desc="VAE ENCODING", disable=hide_progress_bar)):
+        hide_progress = dist.is_initialized() and dist.get_rank() != 0
+        for i, (h, h_, w, w_) in enumerate(tqdm(tasks, desc="VAE ENCODING", disable=hide_progress)):
             if dist.is_initialized() and (i % dist.get_world_size() != dist.get_rank()):
                 continue
             hidden_states_batch = video[:, :, :, h:h_, w:w_].to(computation_device)
@@ -727,9 +1003,9 @@ class WanVideoVAE(PreTrainedModel):
                 target_h : target_h + hidden_states_batch.shape[3],
                 target_w : target_w + hidden_states_batch.shape[4],
             ] += mask
-            if progress_callback is not None and not hide_progress_bar:
+            if progress_callback is not None and not hide_progress:
                 progress_callback(i + 1, len(tasks), "VAE ENCODING")
-        if progress_callback is not None and not hide_progress_bar:
+        if progress_callback is not None and not hide_progress:
             progress_callback(len(tasks), len(tasks), "VAE ENCODING")
         if dist.is_initialized():
             dist.all_reduce(values)
@@ -778,6 +1054,10 @@ class WanVideoVAE(PreTrainedModel):
         for i, hidden_state in enumerate(hidden_states):
             hidden_state = hidden_state.unsqueeze(0)
             if tiled:
+                assert tile_size[0] % self.patch_size == 0 and tile_size[1] % self.patch_size == 0
+                assert tile_stride[0] % self.patch_size == 0 and tile_stride[1] % self.patch_size == 0
+                tile_size = (tile_size[0] // self.patch_size, tile_size[1] // self.patch_size)
+                tile_stride = (tile_stride[0] // self.patch_size, tile_stride[1] // self.patch_size)
                 video = self.tiled_decode(
                     hidden_state, device, tile_size, tile_stride, progress_callback=progress_callback
                 )

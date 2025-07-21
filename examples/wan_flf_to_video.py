@@ -31,6 +31,6 @@ if __name__ == "__main__":
         cfg_scale=5.5,
         seed=42,
     )
-    save_video(video, "wan_flf2v.mp4", fps=15)
+    save_video(video, "wan_flf2v.mp4", fps=pipe.config.fps)
 
     del pipe

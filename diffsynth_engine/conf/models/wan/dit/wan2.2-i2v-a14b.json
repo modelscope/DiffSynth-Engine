@@ -1,7 +1,7 @@
 {
-    "has_image_input": false,
+    "has_vae_feature": true,
     "patch_size": [1, 2, 2],
-    "in_dim": 16,
+    "in_dim": 36,
     "dim": 5120,
     "ffn_dim": 13824,
     "freq_dim": 256,
@@ -9,5 +9,8 @@
     "out_dim": 16,
     "num_heads": 40,
     "num_layers": 40,
-    "eps": 1e-6
+    "eps": 1e-6,
+    "boundary": 0.900,
+    "cfg_scale": [3.5, 3.5],
+    "num_inference_steps": 40
 }

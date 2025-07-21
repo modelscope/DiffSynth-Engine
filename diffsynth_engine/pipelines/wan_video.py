@@ -1,7 +1,5 @@
 import torch
 import torch.distributed as dist
-import numpy as np
-from einops import rearrange
 from typing import Callable, List, Tuple, Optional
 from tqdm import tqdm
 from PIL import Image
@@ -97,14 +95,6 @@ class WanLoRAConverter(LoRAStateDictConverter):
         return state_dict
 
 
-SHIFT_FACTORS = {
-    "1.3b-t2v": 5.0,
-    "14b-t2v": 5.0,
-    "14b-i2v": 5.0,
-    "14b-flf2v": 16.0,
-}
-
-
 class WanVideoPipeline(BasePipeline):
     lora_converter = WanLoRAConverter()
 
@@ -114,6 +104,7 @@ class WanVideoPipeline(BasePipeline):
         tokenizer: WanT5Tokenizer,
         text_encoder: WanTextEncoder,
         dit: WanDiT,
+        dit2: WanDiT | None,
         vae: WanVideoVAE,
         image_encoder: WanImageEncoder,
     ):
@@ -125,6 +116,7 @@ class WanVideoPipeline(BasePipeline):
             dtype=config.model_dtype,
         )
         self.config = config
+        self.upsampling_factor = vae.upsampling_factor
         # sampler
         self.noise_scheduler = RecifitedFlowScheduler(
             shift=config.shift if config.shift is not None else 5.0,
@@ -135,10 +127,11 @@ class WanVideoPipeline(BasePipeline):
         # models
         self.tokenizer = tokenizer
         self.text_encoder = text_encoder
-        self.dit = dit
+        self.dit = dit  # high noise model
+        self.dit2 = dit2  # low noise model
         self.vae = vae
         self.image_encoder = image_encoder
-        self.model_names = ["text_encoder", "dit", "vae", "image_encoder"]
+        self.model_names = ["text_encoder", "dit", "dit2", "vae", "image_encoder"]
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.config.tp_degree is None or self.config.tp_degree == 1, (
@@ -166,40 +159,62 @@ class WanVideoPipeline(BasePipeline):
         prompt_emb = prompt_emb.masked_fill(mask.unsqueeze(-1).expand_as(prompt_emb) == 0, 0)
         return prompt_emb
 
-    def encode_image(self, images: Image.Image | List[Image.Image], num_frames, height, width):
+    def encode_clip_feature(self, images: Image.Image | List[Image.Image], height, width):
+        if not images or not self.dit.has_clip_feature:
+            return None
+
+        self.load_models_to_device(["image_encoder"])
         if isinstance(images, Image.Image):
             images = [images]
-        images = [
-            self.preprocess_image(image.resize((width, height), Image.Resampling.LANCZOS)).to(
-                device=self.device, dtype=self.config.image_encoder_dtype
-            )
-            for image in images
-        ]
+        images = [self.preprocess_image(img.resize((width, height), Image.Resampling.LANCZOS)) for img in images]
+        images = [img.to(device=self.device, dtype=self.config.image_encoder_dtype) for img in images]
         clip_context = self.image_encoder.encode_image(images).to(self.dtype)
+        return clip_context
 
+    def encode_vae_feature(self, images: Image.Image | List[Image.Image], num_frames, height, width):
+        if not images or not self.dit.has_vae_feature:
+            return None
+
+        self.load_models_to_device(["vae"])
+        if isinstance(images, Image.Image):
+            images = [images]
+        images = [self.preprocess_image(img.resize((width, height), Image.Resampling.LANCZOS)) for img in images]
         indices = torch.linspace(0, num_frames - 1, len(images), dtype=torch.long)
-        msk = torch.zeros(1, num_frames, height // 8, width // 8, device=self.device, dtype=self.config.vae_dtype)
+        msk = torch.zeros(
+            1,
+            num_frames,
+            height // self.upsampling_factor,
+            width // self.upsampling_factor,
+            device=self.device,
+            dtype=self.config.vae_dtype,
+        )
         msk[:, indices] = 1
         msk = torch.concat([torch.repeat_interleave(msk[:, 0:1], repeats=4, dim=1), msk[:, 1:]], dim=1)
-        msk = msk.view(1, msk.shape[1] // 4, 4, height // 8, width // 8)
+        msk = msk.view(1, msk.shape[1] // 4, 4, height // self.upsampling_factor, width // self.upsampling_factor)
         msk = msk.transpose(1, 2).squeeze(0)
 
         video = torch.zeros(3, num_frames, height, width).to(device=self.device, dtype=self.config.vae_dtype)
-        video[:, indices] = torch.concat([image.transpose(0, 1) for image in images], dim=1).to(
-            dtype=self.config.vae_dtype
+        video[:, indices] = torch.concat([img.transpose(0, 1) for img in images], dim=1).to(
+            device=self.device, dtype=self.config.vae_dtype
         )
         y = self.vae.encode([video], device=self.device)[0]
         y = torch.concat([msk, y]).to(dtype=self.dtype)
-        return clip_context, y.unsqueeze(0)
+        return y.unsqueeze(0)
 
-    def tensor2video(self, frames):
-        frames = rearrange(frames, "C T H W -> T H W C")
-        frames = ((frames.float() + 1) * 127.5).clip(0, 255).cpu().numpy().astype(np.uint8)
-        frames = [Image.fromarray(frame) for frame in frames]
-        return frames
+    def encode_image_latents(self, images: Image.Image | List[Image.Image], height, width):
+        if not images or not self.dit.fuse_image_latents:
+            return
 
-    def encode_video(self, videos: torch.Tensor):
-        videos = videos.to(dtype=self.config.vae_dtype, device=self.device)
+        self.load_models_to_device(["vae"])
+        if isinstance(images, Image.Image):
+            images = [images]
+        frames = [self.preprocess_image(img.resize((width, height), Image.Resampling.LANCZOS)) for img in images]
+        video = torch.stack(frames, dim=2).squeeze(0)
+        latents = self.encode_video([video]).to(dtype=self.dtype, device=self.device)
+        return latents
+
+    def encode_video(self, videos: List[torch.Tensor]) -> torch.Tensor:
+        videos = [video.to(dtype=self.config.vae_dtype, device=self.device) for video in videos]
         latents = self.vae.encode(
             videos,
             device=self.device,
@@ -210,7 +225,7 @@ class WanVideoPipeline(BasePipeline):
         latents = latents.to(dtype=self.config.model_dtype, device=self.device)
         return latents
 
-    def decode_video(self, latents, progress_callback=None) -> List[torch.Tensor]:
+    def decode_video(self, latents: torch.Tensor, progress_callback=None) -> List[torch.Tensor]:
         latents = latents.to(dtype=self.config.vae_dtype, device=self.device)
         videos = self.vae.decode(
             latents,
@@ -225,6 +240,7 @@ class WanVideoPipeline(BasePipeline):
 
     def predict_noise_with_cfg(
         self,
+        model: WanDiT,
         latents: torch.Tensor,
         image_clip_feature: torch.Tensor,
         image_y: torch.Tensor,
@@ -236,6 +252,7 @@ class WanVideoPipeline(BasePipeline):
     ):
         if cfg_scale <= 1.0:
             return self.predict_noise(
+                model=model,
                 latents=latents,
                 image_clip_feature=image_clip_feature,
                 image_y=image_y,
@@ -245,6 +262,7 @@ class WanVideoPipeline(BasePipeline):
         if not batch_cfg:
             # cfg by predict noise one by one
             positive_noise_pred = self.predict_noise(
+                model=model,
                 latents=latents,
                 image_clip_feature=image_clip_feature,
                 image_y=image_y,
@@ -252,6 +270,7 @@ class WanVideoPipeline(BasePipeline):
                 context=positive_prompt_emb,
             )
             negative_noise_pred = self.predict_noise(
+                model=model,
                 latents=latents,
                 image_clip_feature=image_clip_feature,
                 image_y=image_y,
@@ -270,6 +289,7 @@ class WanVideoPipeline(BasePipeline):
             if image_clip_feature is not None:
                 image_clip_feature = torch.cat([image_clip_feature, image_clip_feature], dim=0)
             positive_noise_pred, negative_noise_pred = self.predict_noise(
+                model=model,
                 latents=latents,
                 image_clip_feature=image_clip_feature,
                 image_y=image_y,
@@ -279,10 +299,10 @@ class WanVideoPipeline(BasePipeline):
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
 
-    def predict_noise(self, latents, image_clip_feature, image_y, timestep, context):
+    def predict_noise(self, model, latents, image_clip_feature, image_y, timestep, context):
         latents = latents.to(dtype=self.config.model_dtype, device=self.device)
 
-        noise_pred = self.dit(
+        noise_pred = model(
             x=latents,
             timestep=timestep,
             context=context,
@@ -298,17 +318,23 @@ class WanVideoPipeline(BasePipeline):
         denoising_strength,
         num_inference_steps,
     ):
-        if input_video is not None:
+        height, width = latents.shape[-2:]
+        height, width = height * self.upsampling_factor, width * self.upsampling_factor
+        if input_video is not None:  # video to video
             total_steps = num_inference_steps
             sigmas, timesteps = self.noise_scheduler.schedule(total_steps)
             t_start = max(total_steps - int(num_inference_steps * denoising_strength), 1)
             sigma_start, sigmas = sigmas[t_start - 1], sigmas[t_start - 1 :]
             timesteps = timesteps[t_start - 1 :]
 
+            self.load_models_to_device(["vae"])
             noise = latents
-            input_video = self.preprocess_images(input_video)
-            input_video = torch.stack(input_video, dim=2)
-            latents = self.encode_video(input_video).to(dtype=latents.dtype, device=latents.device)
+            frames = [
+                self.preprocess_image(frame.resize((width, height), Image.Resampling.LANCZOS)) for frame in input_video
+            ]
+            video = torch.stack(frames, dim=2).squeeze(0)
+            video = video.to(dtype=self.config.vae_dtype, device=self.device)
+            latents = self.encode_video([video]).to(dtype=latents.dtype, device=latents.device)
             init_latents = latents.clone()
             latents = self.sampler.add_noise(latents, noise, sigma_start)
         else:
@@ -329,18 +355,29 @@ class WanVideoPipeline(BasePipeline):
         height=480,
         width=832,
         num_frames=81,
-        cfg_scale=5.0,
-        num_inference_steps=50,
+        cfg_scale=None,
+        num_inference_steps=None,
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
         assert height % 16 == 0 and width % 16 == 0, "height and width must be divisible by 16"
         assert (num_frames - 1) % 4 == 0, "num_frames must be 4X+1"
+        cfg_scale = self.config.cfg_scale if cfg_scale is None else cfg_scale
+        num_inference_steps = self.config.num_inference_steps if num_inference_steps is None else num_inference_steps
 
         # Initialize noise
         if dist.is_initialized() and seed is None:
             raise ValueError("must provide a seed when parallelism is enabled")
         noise = self.generate_noise(
-            (1, 16, (num_frames - 1) // 4 + 1, height // 8, width // 8), seed=seed, device="cpu", dtype=torch.float32
+            (
+                1,
+                self.vae.z_dim,
+                (num_frames - 1) // 4 + 1,
+                height // self.upsampling_factor,
+                width // self.upsampling_factor,
+            ),
+            seed=seed,
+            device="cpu",
+            dtype=torch.float32,
         ).to(self.device)
         init_latents, latents, sigmas, timesteps = self.prepare_latents(
             noise,
@@ -348,33 +385,49 @@ class WanVideoPipeline(BasePipeline):
             denoising_strength,
             num_inference_steps,
         )
-        self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas)
+        mask = torch.ones((1, 1, *latents.shape[2:]), dtype=latents.dtype, device=latents.device)
+
         # Encode prompts
         self.load_models_to_device(["text_encoder"])
         prompt_emb_posi = self.encode_prompt(prompt)
-        prompt_emb_nega = None if cfg_scale <= 1.0 else self.encode_prompt(negative_prompt)
+        prompt_emb_nega = self.encode_prompt(negative_prompt)
 
         # Encode image
-        if input_image is not None and self.image_encoder is not None:
-            self.load_models_to_device(["image_encoder", "vae"])
-            image_clip_feature, image_y = self.encode_image(input_image, num_frames, height, width)
-        else:
-            image_clip_feature, image_y = None, None
+        image_clip_feature = self.encode_clip_feature(input_image, height, width)
+        image_y = self.encode_vae_feature(input_image, num_frames, height, width)
+        image_latents = self.encode_image_latents(input_image, height, width)
+        if image_latents is not None:
+            latents[:, :, : image_latents.shape[2], :, :] = image_latents
+            init_latents = latents.clone()
+            mask[:, :, : image_latents.shape[2], :, :] = 0
+
+        # Initialize sampler
+        self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas, mask=mask)
 
         # Denoise
-        self.load_models_to_device(["dit"])
         hide_progress = dist.is_initialized() and dist.get_rank() != 0
         for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
-            timestep = timestep.unsqueeze(0).to(dtype=self.config.model_dtype, device=self.device)
+            if timestep.item() / 1000 >= self.config.boundary:
+                self.load_models_to_device(["dit"])
+                model = self.dit
+                cfg_scale_ = cfg_scale if isinstance(cfg_scale, float) else cfg_scale[1]
+            else:
+                self.load_models_to_device(["dit2"])
+                model = self.dit2
+                cfg_scale_ = cfg_scale if isinstance(cfg_scale, float) else cfg_scale[0]
+
+            timestep = timestep * mask[:, :, :, ::2, ::2].flatten()  # seq_len
+            timestep = timestep.to(dtype=self.config.model_dtype, device=self.device)
             # Classifier-free guidance
             noise_pred = self.predict_noise_with_cfg(
+                model=model,
                 latents=latents,
                 timestep=timestep,
                 positive_prompt_emb=prompt_emb_posi,
                 negative_prompt_emb=prompt_emb_nega,
                 image_clip_feature=image_clip_feature,
                 image_y=image_y,
-                cfg_scale=cfg_scale,
+                cfg_scale=cfg_scale_,
                 batch_cfg=self.config.batch_cfg,
             )
             # Scheduler
@@ -385,7 +438,7 @@ class WanVideoPipeline(BasePipeline):
         # Decode
         self.load_models_to_device(["vae"])
         frames = self.decode_video(latents, progress_callback=progress_callback)
-        frames = self.tensor2video(frames[0])
+        frames = self.vae_output_to_image(frames)
         return frames
 
     @classmethod
@@ -395,24 +448,76 @@ class WanVideoPipeline(BasePipeline):
         else:
             config = model_path_or_config
 
+        dit_state_dict, dit2_state_dict = None, None
+        if isinstance(config.model_path, list):
+            high_noise_model_ckpt = [path for path in config.model_path if "high_noise_model" in path]
+            low_noise_model_ckpt = [path for path in config.model_path if "low_noise_model" in path]
+            if high_noise_model_ckpt and low_noise_model_ckpt:
+                logger.info(f"loading high noise model state dict from {high_noise_model_ckpt} ...")
+                dit_state_dict = cls.load_model_checkpoint(
+                    high_noise_model_ckpt, device="cpu", dtype=config.model_dtype
+                )
+                logger.info(f"loading low noise model state dict from {low_noise_model_ckpt} ...")
+                dit2_state_dict = cls.load_model_checkpoint(
+                    low_noise_model_ckpt, device="cpu", dtype=config.model_dtype
+                )
+        if dit_state_dict is None:
+            logger.info(f"loading dit state dict from {config.model_path} ...")
+            dit_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
+
+        # determine wan dit type by model params
+        dit_type = None
+        if dit2_state_dict is not None and dit2_state_dict["patch_embedding.weight"].shape[1] == 36:
+            dit_type = "wan2.2-i2v-a14b"
+        elif dit2_state_dict is not None and dit2_state_dict["patch_embedding.weight"].shape[1] == 16:
+            dit_type = "wan2.2-t2v-a14b"
+        elif dit_state_dict["patch_embedding.weight"].shape[1] == 48:
+            dit_type = "wan2.2-ti2v-5b"
+        elif "img_emb.emb_pos" in dit_state_dict:
+            dit_type = "wan2.1-flf2v-14b"
+        elif "img_emb.proj.0.weight" in dit_state_dict:
+            dit_type = "wan2.1-i2v-14b"
+        elif "blocks.39.self_attn.norm_q.weight" in dit_state_dict:
+            dit_type = "wan2.1-t2v-14b"
+        else:
+            dit_type = "wan2.1-t2v-1.3b"
+
         if config.t5_path is None:
             config.t5_path = fetch_model("muse/wan2.1-umt5", path="umt5.safetensors")
         if config.vae_path is None:
-            config.vae_path = fetch_model("muse/wan2.1-vae", path="vae.safetensors")
+            config.vae_path = (
+                fetch_model("muse/wan2.2-vae", path="vae.safetensors")
+                if dit_type == "wan2.2-ti2v-5b"
+                else fetch_model("muse/wan2.1-vae", path="vae.safetensors")
+            )
 
-        logger.info(f"loading state dict from {config.model_path} ...")
-        dit_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
-
-        logger.info(f"loading state dict from {config.t5_path} ...")
+        logger.info(f"loading t5 state dict from {config.t5_path} ...")
         t5_state_dict = cls.load_model_checkpoint(config.t5_path, device="cpu", dtype=config.t5_dtype)
 
-        logger.info(f"loading state dict from {config.vae_path} ...")
+        logger.info(f"loading vae state dict from {config.vae_path} ...")
         vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
+
+        # determine wan vae type by model params
+        vae_type = None
+        if vae_state_dict["encoder.conv1.weight"].shape[1] == 12:  # in_channels
+            vae_type = "wan2.2-vae"
+        else:
+            vae_type = "wan2.1-vae"
+
+        # default params by model type
+        model_config: dict = WanDiT.get_model_config(dit_type)
+        config.boundary = model_config.pop("boundary", -1.0)
+        config.shift = model_config.pop("shift", 5.0)
+        config.cfg_scale = model_config.pop("cfg_scale", 5.0)
+        config.num_inference_steps = model_config.pop("num_inference_steps", 50)
+        config.fps = model_config.pop("fps", 16)
 
         init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
         text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=config.t5_dtype)
-        vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=config.vae_dtype)
+        vae = WanVideoVAE.from_state_dict(
+            vae_state_dict, device=init_device, dtype=config.vae_dtype, model_type=vae_type
+        )
 
         image_encoder = None
         if config.image_encoder_path is not None:
@@ -428,20 +533,6 @@ class WanVideoPipeline(BasePipeline):
                 dtype=config.image_encoder_dtype,
             )
 
-        # determine wan video model type by dit params
-        model_type = None
-        if "img_emb.emb_pos" in dit_state_dict:
-            model_type = "14b-flf2v"
-        elif "img_emb.proj.0.weight" in dit_state_dict:
-            model_type = "14b-i2v"
-        elif "blocks.39.self_attn.norm_q.weight" in dit_state_dict:
-            model_type = "14b-t2v"
-        else:
-            model_type = "1.3b-t2v"
-
-        # shift for different model_type
-        config.shift = SHIFT_FACTORS[model_type] if config.shift is None else config.shift
-
         with LoRAContext():
             attn_kwargs = {
                 "attn_impl": config.dit_attn_impl,
@@ -452,7 +543,7 @@ class WanVideoPipeline(BasePipeline):
             }
             dit = WanDiT.from_state_dict(
                 dit_state_dict,
-                model_type=model_type,
+                config=model_config,
                 device=init_device,
                 dtype=config.model_dtype,
                 attn_kwargs=attn_kwargs,
@@ -460,11 +551,24 @@ class WanVideoPipeline(BasePipeline):
             if config.use_fp8_linear:
                 enable_fp8_linear(dit)
 
+            dit2 = None
+            if dit2_state_dict is not None:
+                dit2 = WanDiT.from_state_dict(
+                    dit2_state_dict,
+                    config=model_config,
+                    device=init_device,
+                    dtype=config.model_dtype,
+                    attn_kwargs=attn_kwargs,
+                )
+                if config.use_fp8_linear:
+                    enable_fp8_linear(dit2)
+
         pipe = cls(
             config=config,
             tokenizer=tokenizer,
             text_encoder=text_encoder,
             dit=dit,
+            dit2=dit2,
             vae=vae,
             image_encoder=image_encoder,
         )
