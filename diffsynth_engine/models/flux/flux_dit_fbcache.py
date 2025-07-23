@@ -188,7 +188,7 @@ class FluxDiTFBCache(FluxDiT):
         dtype: torch.dtype,
         in_channel: int = 64,
         attn_kwargs: Optional[Dict[str, Any]] = None,
-        fb_cache_relative_l1_threshold: float = 0.05,
+        relative_l1_threshold: float = 0.05,
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
@@ -197,7 +197,7 @@ class FluxDiTFBCache(FluxDiT):
                 dtype=dtype,
                 in_channel=in_channel,
                 attn_kwargs=attn_kwargs,
-                fb_cache_relative_l1_threshold=fb_cache_relative_l1_threshold,
+                relative_l1_threshold=relative_l1_threshold,
             )
             model = model.requires_grad_(False)  # for loading gguf
         model.load_state_dict(state_dict, assign=True)
