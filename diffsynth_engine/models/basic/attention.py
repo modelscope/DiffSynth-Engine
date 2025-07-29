@@ -130,10 +130,14 @@ def attention(
         "sage_attn",
         "sparge_attn",
     ]
+    flash_attn3_satisfied = q.shape[-1] <= 256
     if attn_impl is None or attn_impl == "auto":
         if FLASH_ATTN_3_AVAILABLE:
-            return flash_attn3(q, k, v, softmax_scale=scale)
-        elif XFORMERS_AVAILABLE:
+            if flash_attn3_satisfied:
+                return flash_attn3(q, k, v, softmax_scale=scale)
+            else:
+                logger.warning(f"head_dim={q.shape[-1]} > 256, not satisfy flash_attn_3 prerequisite")
+        if XFORMERS_AVAILABLE:
             return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         elif SDPA_AVAILABLE:
             return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
@@ -145,6 +149,8 @@ def attention(
         if attn_impl == "eager":
             return eager_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         elif attn_impl == "flash_attn_3":
+            if not flash_attn3_satisfied:
+                raise RuntimeError(f"find head_dim={q.shape[-1]} > 256, but flash_attn_3 only supports head dimension at most 256")
             return flash_attn3(q, k, v, softmax_scale=scale)
         elif attn_impl == "flash_attn_2":
             return flash_attn2(q, k, v, softmax_scale=scale)
@@ -240,18 +246,27 @@ def long_context_attention(
         "sage_attn",
         "sparge_attn",
     ]
+    flash_attn3_satisfied = q.shape[-1] <= 256
     if attn_impl is None or attn_impl == "auto":
+        attn_func = None
         if FLASH_ATTN_3_AVAILABLE:
-            attn_func = LongContextAttention(attn_type=AttnType.FA3)
-        elif SDPA_AVAILABLE:
-            attn_func = LongContextAttention(attn_type=AttnType.TORCH)
-        elif FLASH_ATTN_2_AVAILABLE:
-            attn_func = LongContextAttention(attn_type=AttnType.FA)
-        else:
-            raise ValueError("No available long context attention implementation")
+            if not flash_attn3_satisfied:
+                logger.warning(f"head_dim={q.shape[-1]} > 256, not satisfy flash_attn_3 prerequisite")
+            else:
+                attn_func = LongContextAttention(attn_type=AttnType.FA3)
+        if attn_func is None: 
+            if SDPA_AVAILABLE:
+                attn_func = LongContextAttention(attn_type=AttnType.TORCH)
+            elif FLASH_ATTN_2_AVAILABLE:
+                attn_func = LongContextAttention(attn_type=AttnType.FA)
+            else:
+                raise ValueError("No available long context attention implementation")
     else:
         if attn_impl == "flash_attn_3":
-            attn_func = LongContextAttention(attn_type=AttnType.FA3)
+            if flash_attn3_satisfied:
+                attn_func = LongContextAttention(attn_type=AttnType.FA3)
+            else:
+                raise RuntimeError(f"find head_dim={q.shape[-1]} > 256, but flash_attn_3 only supports head dimension at most 256")
         elif attn_impl == "flash_attn_2":
             attn_func = LongContextAttention(attn_type=AttnType.FA)
         elif attn_impl == "sdpa":
