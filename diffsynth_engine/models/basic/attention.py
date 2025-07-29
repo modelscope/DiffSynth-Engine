@@ -250,10 +250,10 @@ def long_context_attention(
     if attn_impl is None or attn_impl == "auto":
         attn_func = None
         if FLASH_ATTN_3_AVAILABLE:
-            if not flash_attn3_satisfied:
-                logger.warning(f"head_dim={q.shape[-1]} > 256, not satisfy flash_attn_3 prerequisite")
-            else:
+            if flash_attn3_satisfied:
                 attn_func = LongContextAttention(attn_type=AttnType.FA3)
+            else:
+                logger.warning(f"head_dim={q.shape[-1]} > 256, not satisfy flash_attn_3 prerequisite")
         if attn_func is None: 
             if SDPA_AVAILABLE:
                 attn_func = LongContextAttention(attn_type=AttnType.TORCH)
