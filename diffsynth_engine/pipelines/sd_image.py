@@ -6,12 +6,12 @@ from typing import Callable, Dict, Optional, List
 from tqdm import tqdm
 from PIL import Image, ImageOps
 
-from diffsynth_engine.configs import SDPipelineConfig
+from diffsynth_engine.configs import SDPipelineConfig, ControlNetParams
 from diffsynth_engine.models.base import split_suffix
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.models.sd import SDTextEncoder, SDVAEDecoder, SDVAEEncoder, SDUNet, sd_unet_config
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
-from diffsynth_engine.pipelines.controlnet_helper import ControlNetParams, accumulate
+from diffsynth_engine.pipelines.utils import accumulate
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler
 from diffsynth_engine.algorithm.sampler import EulerSampler

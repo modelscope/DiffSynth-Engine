@@ -8,7 +8,7 @@ from .pipeline import (
     FluxPipelineConfig,
     WanPipelineConfig,
 )
-from .controlnet import ControlType
+from .controlnet import ControlType, ControlNetParams
 
 __all__ = [
     "BaseConfig",
@@ -20,4 +20,5 @@ __all__ = [
     "FluxPipelineConfig",
     "WanPipelineConfig",
     "ControlType",
+    "ControlNetParams",
 ]

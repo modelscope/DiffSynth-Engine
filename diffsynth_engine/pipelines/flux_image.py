@@ -17,10 +17,10 @@ from diffsynth_engine.models.flux import (
     flux_dit_config,
     flux_text_encoder_config,
 )
-from diffsynth_engine.configs import FluxPipelineConfig, ControlType
+from diffsynth_engine.configs import FluxPipelineConfig, ControlType, ControlNetParams
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
-from diffsynth_engine.pipelines.controlnet_helper import ControlNetParams, accumulate
+from diffsynth_engine.pipelines.utils import accumulate
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler

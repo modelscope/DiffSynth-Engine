@@ -1,9 +1,8 @@
 import unittest
 
 from tests.common.test_case import ImageTestCase
-from diffsynth_engine.configs import FluxPipelineConfig
+from diffsynth_engine.configs import FluxPipelineConfig, ControlType, ControlNetParams
 from diffsynth_engine.pipelines import FluxImagePipeline
-from diffsynth_engine.pipelines.flux_image import ControlType, ControlNetParams
 from diffsynth_engine.processor.canny_processor import CannyProcessor
 from diffsynth_engine.processor.depth_processor import DepthProcessor
 

@@ -1,15 +1,9 @@
-from .configs import (
-    SDPipelineConfig,
-    SDXLPipelineConfig,
-    FluxPipelineConfig,
-    WanPipelineConfig,
-)
+from .configs import SDPipelineConfig, SDXLPipelineConfig, FluxPipelineConfig, WanPipelineConfig, ControlNetParams
 from .pipelines import (
     FluxImagePipeline,
     SDXLImagePipeline,
     SDImagePipeline,
     WanVideoPipeline,
-    ControlNetParams,
 )
 from .models.flux import FluxControlNet, FluxIPAdapter, FluxRedux
 from .models.sd import SDControlNet
