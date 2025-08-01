@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import torch.distributed as dist
 from einops import rearrange, repeat
 from tqdm import tqdm
+from typing import Any, Dict
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
@@ -832,14 +833,28 @@ class WanVideoVAE(PreTrainedModel):
         self.patch_size = patch_size
         self.upsampling_factor = 8 * patch_size
 
-    @classmethod
-    def from_state_dict(cls, state_dict, device="cuda:0", dtype=torch.float32, model_type="") -> "WanVideoVAE":
-        if model_type == "wan2.1-vae":
-            config = json.load(open(WAN2_1_VAE_CONFIG_FILE, "r"))
-        elif model_type == "wan2.2-vae":
-            config = json.load(open(WAN2_2_VAE_CONFIG_FILE, "r"))
-        else:
+    @staticmethod
+    def get_model_config(model_type: str) -> dict:
+        MODEL_CONFIG_FILES = {
+            "wan2.1-vae": WAN2_1_VAE_CONFIG_FILE,
+            "wan2.2-vae": WAN2_2_VAE_CONFIG_FILE,
+        }
+        if model_type not in MODEL_CONFIG_FILES:
             raise ValueError(f"Unsupported model type: {model_type}")
+
+        config_file = MODEL_CONFIG_FILES[model_type]
+        with open(config_file, "r") as f:
+            config = json.load(f)
+        return config
+
+    @classmethod
+    def from_state_dict(
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        config: Dict[str, Any],
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
+    ) -> "WanVideoVAE":
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype)
         model.load_state_dict(state_dict, assign=True)

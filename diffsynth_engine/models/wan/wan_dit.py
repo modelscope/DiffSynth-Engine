@@ -349,8 +349,8 @@ class WanDiT(PreTrainedModel):
             gguf_inference(),
             cfg_parallel((x, context, timestep, clip_feature, y), use_cfg=use_cfg),
         ):
-            t = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep))
-            t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
+            t = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep))  # (s, d)
+            t_mod = self.time_projection(t).unflatten(1, (6, self.dim))  # (s, 6, d)
             context = self.text_embedding(context)
             if self.has_vae_feature:
                 x = torch.cat([x, y], dim=1)  # (b, c_x + c_y, f, h, w)
@@ -382,33 +382,32 @@ class WanDiT(PreTrainedModel):
 
     @staticmethod
     def get_model_config(model_type: str):
-        if model_type == "wan2.1-t2v-1.3b":
-            config = json.load(open(WAN2_1_DIT_T2V_1_3B_CONFIG_FILE, "r"))
-        elif model_type == "wan2.1-t2v-14b":
-            config = json.load(open(WAN2_1_DIT_T2V_14B_CONFIG_FILE, "r"))
-        elif model_type == "wan2.1-i2v-14b":
-            config = json.load(open(WAN2_1_DIT_I2V_14B_CONFIG_FILE, "r"))
-        elif model_type == "wan2.1-flf2v-14b":
-            config = json.load(open(WAN2_1_DIT_FLF2V_14B_CONFIG_FILE, "r"))
-        elif model_type == "wan2.2-ti2v-5b":
-            config = json.load(open(WAN2_2_DIT_TI2V_5B_CONFIG_FILE, "r"))
-        elif model_type == "wan2.2-t2v-a14b":
-            config = json.load(open(WAN2_2_DIT_T2V_A14B_CONFIG_FILE, "r"))
-        elif model_type == "wan2.2-i2v-a14b":
-            config = json.load(open(WAN2_2_DIT_I2V_A14B_CONFIG_FILE, "r"))
-        else:
+        MODEL_CONFIG_FILES = {
+            "wan2.1-t2v-1.3b": WAN2_1_DIT_T2V_1_3B_CONFIG_FILE,
+            "wan2.1-t2v-14b": WAN2_1_DIT_T2V_14B_CONFIG_FILE,
+            "wan2.1-i2v-14b": WAN2_1_DIT_I2V_14B_CONFIG_FILE,
+            "wan2.1-flf2v-14b": WAN2_1_DIT_FLF2V_14B_CONFIG_FILE,
+            "wan2.2-ti2v-5b": WAN2_2_DIT_TI2V_5B_CONFIG_FILE,
+            "wan2.2-t2v-a14b": WAN2_2_DIT_T2V_A14B_CONFIG_FILE,
+            "wan2.2-i2v-a14b": WAN2_2_DIT_I2V_A14B_CONFIG_FILE,
+        }
+        if model_type not in MODEL_CONFIG_FILES:
             raise ValueError(f"Unsupported model type: {model_type}")
+
+        config_file = MODEL_CONFIG_FILES[model_type]
+        with open(config_file, "r") as f:
+            config = json.load(f)
         return config
 
     @classmethod
     def from_state_dict(
         cls,
-        state_dict,
-        device,
-        dtype,
-        config,
+        state_dict: Dict[str, torch.Tensor],
+        config: Dict[str, Any],
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
         attn_kwargs: Optional[Dict[str, Any]] = None,
-        assign=True,
+        assign: bool = True,
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype, attn_kwargs=attn_kwargs)

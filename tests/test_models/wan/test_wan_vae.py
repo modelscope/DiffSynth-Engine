@@ -13,7 +13,8 @@ class TestWanVAE(VideoTestCase):
     def setUpClass(cls):
         cls._vae_model_path = fetch_model("muse/wan2.1-vae", path="vae.safetensors")
         loaded_state_dict = load_file(cls._vae_model_path)
-        cls.vae = WanVideoVAE.from_state_dict(loaded_state_dict)
+        config = WanVideoVAE.get_model_config("wan2.1-vae")
+        cls.vae = WanVideoVAE.from_state_dict(loaded_state_dict, config)
         cls._input_video = cls.get_input_video("astronaut_320_320.mp4")
 
     def test_encode(self):

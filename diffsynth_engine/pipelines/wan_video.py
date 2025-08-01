@@ -498,13 +498,12 @@ class WanVideoPipeline(BasePipeline):
         vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
 
         # determine wan vae type by model params
-        vae_type = None
+        vae_type = "wan2.1-vae"
         if vae_state_dict["encoder.conv1.weight"].shape[1] == 12:  # in_channels
             vae_type = "wan2.2-vae"
-        else:
-            vae_type = "wan2.1-vae"
 
-        # default params by model type
+        # default params from model config
+        vae_config: dict = WanVideoVAE.get_model_config(vae_type)
         model_config: dict = WanDiT.get_model_config(dit_type)
         config.boundary = model_config.pop("boundary", -1.0)
         config.shift = model_config.pop("shift", 5.0)
@@ -515,9 +514,7 @@ class WanVideoPipeline(BasePipeline):
         init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
         text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=config.t5_dtype)
-        vae = WanVideoVAE.from_state_dict(
-            vae_state_dict, device=init_device, dtype=config.vae_dtype, model_type=vae_type
-        )
+        vae = WanVideoVAE.from_state_dict(vae_state_dict, config=vae_config, device=init_device, dtype=config.vae_dtype)
 
         image_encoder = None
         if config.image_encoder_path is not None:
