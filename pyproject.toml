@@ -38,6 +38,7 @@ dependencies = [
 dev = [
     "diffusers == 0.31.0",
     "transformers == 4.45.2",
+    "accelerate",
     "build",
     "ruff",
     "scikit-image",

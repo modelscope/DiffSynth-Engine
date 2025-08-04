@@ -5,7 +5,7 @@ from einops import rearrange
 from typing import Dict, List, Tuple
 from PIL import Image
 
-from diffsynth_engine.configs import BaseConfig
+from diffsynth_engine.configs import BaseConfig, BaseStateDicts
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload
 from diffsynth_engine.utils.fp8_linear import enable_fp8_autocast
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
@@ -46,9 +46,7 @@ class BasePipeline:
         raise NotImplementedError()
 
     @classmethod
-    def from_state_dict(
-        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda", dtype: torch.dtype = torch.float16
-    ) -> "BasePipeline":
+    def from_state_dict(cls, state_dicts: BaseStateDicts, pipeline_config: BaseConfig) -> "BasePipeline":
         raise NotImplementedError()
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
@@ -100,6 +98,12 @@ class BasePipeline:
                 state_dict.update(**load_gguf_checkpoint(path, device=device, dtype=dtype))
             else:
                 raise ValueError(f"{path} is not a .safetensors or .gguf file")
+        return state_dict
+
+    @staticmethod
+    def convert(state_dict: Dict[str, torch.Tensor], dtype: torch.dtype):
+        for key, value in state_dict.items():
+            state_dict[key] = value.to(dtype)
         return state_dict
 
     @staticmethod
@@ -290,3 +294,6 @@ class BasePipeline:
                 model.to(self.device)
         # fresh the cuda cache
         empty_cache()
+
+    def compile(self):
+        raise NotImplementedError(f"{self.__class__.__name__} does not support compile")

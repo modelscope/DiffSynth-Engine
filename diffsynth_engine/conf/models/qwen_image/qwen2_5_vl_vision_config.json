@@ -1,0 +1,19 @@
+{
+    "in_channels": 3,
+    "hidden_size": 1280,
+    "intermediate_size": 3420,
+    "out_hidden_size": 3584,
+    "num_heads": 16,
+    "depth": 32,
+    "patch_size": 14,
+    "temporal_patch_size": 2,
+    "spatial_merge_size": 2,
+    "tokens_per_second": 2,
+    "window_size": 112,
+    "fullatt_block_indexes": [
+        7,
+        15,
+        23,
+        31
+    ]
+}

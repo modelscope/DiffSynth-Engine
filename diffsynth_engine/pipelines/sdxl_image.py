@@ -6,7 +6,7 @@ from typing import Callable, Dict, Optional, List
 from tqdm import tqdm
 from PIL import Image, ImageOps
 
-from diffsynth_engine.configs import SDXLPipelineConfig, ControlNetParams
+from diffsynth_engine.configs import SDXLPipelineConfig, ControlNetParams, SDXLStateDicts
 from diffsynth_engine.models.base import split_suffix
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.models.basic.timestep import TemporalTimesteps
@@ -206,9 +206,7 @@ class SDXLImagePipeline(BasePipeline):
         return pipe
 
     @classmethod
-    def from_state_dict(
-        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda", dtype: torch.dtype = torch.float16
-    ) -> "SDXLImagePipeline":
+    def from_state_dict(cls, state_dicts: SDXLStateDicts, pipeline_config: SDXLPipelineConfig) -> "SDXLImagePipeline":
         raise NotImplementedError()
 
     def denoising_model(self):

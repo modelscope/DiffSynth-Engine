@@ -9,9 +9,12 @@ from typing import Any, Dict
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
-from diffsynth_engine.utils.constants import WAN2_1_VAE_CONFIG_FILE, WAN2_2_VAE_CONFIG_FILE
+from diffsynth_engine.utils.constants import WAN2_1_VAE_CONFIG_FILE, WAN2_2_VAE_CONFIG_FILE, WAN_VAE_CONFIG_FILE
 
 CACHE_T = 2
+
+with open(WAN_VAE_CONFIG_FILE, "r") as f:
+    config = json.load(f)
 
 
 def check_is_instance(model, module_class):
@@ -737,7 +740,14 @@ class VideoVAE(nn.Module):
 
 class WanVideoVAEStateDictConverter(StateDictConverter):
     def from_diffusers(self, state_dict):
-        return state_dict
+        rename_dict = config["diffusers"]["rename_dict"]
+        state_dict_ = {}
+        for name, param in state_dict.items():
+            name_ = f"model.{name}"
+            if name_ in rename_dict:
+                name_ = rename_dict[name_]
+            state_dict_[name_] = param
+        return state_dict_
 
     def from_civitai(self, state_dict):
         state_dict_ = {}
@@ -748,7 +758,10 @@ class WanVideoVAEStateDictConverter(StateDictConverter):
         return state_dict_
 
     def convert(self, state_dict):
-        return self.from_civitai(state_dict)
+        if "post_quant_conv.bias" in state_dict:
+            return self.from_diffusers(state_dict)
+        else:
+            return self.from_civitai(state_dict)
 
 
 class WanVideoVAE(PreTrainedModel):

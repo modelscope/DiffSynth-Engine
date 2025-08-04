@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import math
 
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
@@ -82,3 +83,35 @@ class RMSNorm(nn.Module):
         if self.elementwise_affine:
             return norm_result * self.weight
         return norm_result
+
+
+class NewGELUActivation(nn.Module):
+    """
+    Implementation of the GELU activation function currently in Google BERT repo (identical to OpenAI GPT). Also see
+    the Gaussian Error Linear Units paper: https://arxiv.org/abs/1606.08415
+    """
+
+    def forward(self, input: "torch.Tensor") -> "torch.Tensor":
+        return 0.5 * input * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (input + 0.044715 * torch.pow(input, 3.0))))
+
+
+class ApproximateGELU(nn.Module):
+    r"""
+    The approximate form of the Gaussian Error Linear Unit (GELU). For more details, see section 2 of this
+    [paper](https://huggingface.co/papers/1606.08415).
+
+    Parameters:
+        dim_in (`int`): The number of channels in the input.
+        dim_out (`int`): The number of channels in the output.
+        bias (`bool`, defaults to True): Whether to use a bias in the linear layer.
+    """
+
+    def __init__(
+        self, dim_in: int, dim_out: int, bias: bool = True, device: str = "cuda:0", dtype: torch.dtype = torch.float16
+    ):
+        super().__init__()
+        self.proj = nn.Linear(dim_in, dim_out, bias=bias, device=device, dtype=dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.proj(x)
+        return x * torch.sigmoid(1.702 * x)

@@ -3,6 +3,7 @@ from .flux_image import FluxImagePipeline
 from .sdxl_image import SDXLImagePipeline
 from .sd_image import SDImagePipeline
 from .wan_video import WanVideoPipeline
+from .qwen_image import QwenImagePipeline
 
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "SDXLImagePipeline",
     "SDImagePipeline",
     "WanVideoPipeline",
+    "QwenImagePipeline",
 ]

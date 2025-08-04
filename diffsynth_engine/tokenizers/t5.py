@@ -164,7 +164,7 @@ class T5TokenizerFast(BaseTokenizer):
         Tokenize text and prepare for model inputs.
 
         Args:
-            text (`str`, `List[str]`, *optional*):
+            texts (`str`, `List[str]`):
                 The sequence or batch of sequences to be encoded.
 
             max_length (`int`, *optional*):

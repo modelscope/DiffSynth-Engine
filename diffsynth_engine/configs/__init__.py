@@ -7,6 +7,12 @@ from .pipeline import (
     SDXLPipelineConfig,
     FluxPipelineConfig,
     WanPipelineConfig,
+    QwenImagePipelineConfig,
+    BaseStateDicts,
+    SDStateDicts,
+    SDXLStateDicts,
+    FluxStateDicts,
+    QwenImageStateDicts,
 )
 from .controlnet import ControlType, ControlNetParams
 
@@ -19,6 +25,12 @@ __all__ = [
     "SDXLPipelineConfig",
     "FluxPipelineConfig",
     "WanPipelineConfig",
+    "QwenImagePipelineConfig",
     "ControlType",
     "ControlNetParams",
+    "BaseStateDicts",
+    "SDStateDicts",
+    "SDXLStateDicts",
+    "FluxStateDicts",
+    "QwenImageStateDicts",
 ]

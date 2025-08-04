@@ -3,6 +3,7 @@ from .configs import (
     SDXLPipelineConfig,
     FluxPipelineConfig,
     WanPipelineConfig,
+    QwenImagePipelineConfig,
     ControlNetParams,
     ControlType,
 )
@@ -11,6 +12,7 @@ from .pipelines import (
     SDXLImagePipeline,
     SDImagePipeline,
     WanVideoPipeline,
+    QwenImagePipeline,
 )
 from .models.flux import FluxControlNet, FluxIPAdapter, FluxRedux
 from .models.sd import SDControlNet
@@ -31,6 +33,7 @@ __all__ = [
     "FluxPipelineConfig",
     "WanPipelineConfig",
     "FluxImagePipeline",
+    "QwenImagePipelineConfig",
     "FluxControlNet",
     "FluxIPAdapter",
     "FluxRedux",
@@ -39,6 +42,7 @@ __all__ = [
     "SDXLImagePipeline",
     "SDImagePipeline",
     "WanVideoPipeline",
+    "QwenImagePipeline",
     "FluxInpaintingTool",
     "FluxOutpaintingTool",
     "FluxIPAdapterRefTool",
