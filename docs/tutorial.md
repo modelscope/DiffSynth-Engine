@@ -71,15 +71,18 @@ Diffusion models come in a wide variety of architectures. Each model is loaded a
 | SD1.5              | [DreamShaper](https://www.modelscope.cn/models/MusePublic/DreamShaper_SD_1_5) | `SDImagePipeline`     |
 | SDXL               | [RealVisXL](https://www.modelscope.cn/models/MusePublic/42_ckpt_SD_XL) | `SDXLImagePipeline`   |
 | FLUX               | [MajicFlus](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0) | `FluxImagePipeline`   |
+| Qwen-Image         | [Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image) | `QwenImagePipeline` |
 | Wan2.1             | [Wan2.1-T2V-1.3B](https://modelscope.cn/models/Wan-AI/Wan2.1-T2V-1.3B) | `WanVideoPipeline`    |
+| Wan2.2             | [Wan2.2-TI2V-5B](https://modelscope.cn/models/Wan-AI/Wan2.2-TI2V-5B) | `WanVideoPipeline` |
 | SD1.5 LoRA         | [Detail Tweaker](https://www.modelscope.cn/models/MusePublic/Detail_Tweaker_LoRA_xijietiaozheng_LoRA_SD_1_5) | `SDImagePipeline`     |
 | SDXL LoRA          | [Aesthetic Anime](https://www.modelscope.cn/models/MusePublic/100_lora_SD_XL) | `SDXLImagePipeline`   |
 | FLUX LoRA          | [ArtAug](https://www.modelscope.cn/models/DiffSynth-Studio/ArtAug-lora-FLUX.1dev-v1) | `FluxImagePipeline`   |
+| Qwen-Image LoRA    | [QwenCapybara](https://www.modelscope.cn/models/MusePublic/QwenCapybara) | `QwenImagePipeline` |
 | Wan2.1 LoRA        | [Highres-fix](https://modelscope.cn/models/DiffSynth-Studio/Wan2.1-1.3b-lora-highresfix-v1) | `WanVideoPipeline`    |
 
-Among these, SD1.5, SDXL, and FLUX are base models for image generation, while Wan2.1 is a base model for video generation. Base models can generate content independently. SD1.5 LoRA, SDXL LoRA, FLUX LoRA, and Wan2.1 LoRA are [LoRA](https://arxiv.org/abs/2106.09685) models. LoRA models are trained as "additional branches" on top of base models to enhance specific capabilities. They must be combined with a base model to be used for generation.
+Among these, SD1.5, SDXL, FLUX, and Qwen-Image are base models for image generation, while Wan2.x is a base model for video generation. Base models can generate content independently. SD1.5 LoRA, SDXL LoRA, FLUX LoRA, Qwen-Image LoRA and Wan2.1 LoRA are [LoRA](https://arxiv.org/abs/2106.09685) models. LoRA models are trained as "additional branches" on top of base models to enhance specific capabilities. They must be combined with a base model to be used for generation.
 
-We will continuously update DiffSynth-Engine to support more models.
+We will continuously update DiffSynth-Engine to support more models. (Wan2.2 LoRA is coming soon❗)
 
 ## Model Inference
 
@@ -87,13 +90,15 @@ After the model is downloaded, load the model with the corresponding pipeline an
 
 ### Image Generation
 
-The following code calls `FluxImagePipeline` to load the [MajicFlus](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0) model and generate an image. To load other types of models, replace `FluxImagePipeline` in the code with the corresponding pipeline.
+The following code calls `FluxImagePipeline` to load the [MajicFlus](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0) model and generate an image. To load other types of models, replace `FluxImagePipeline` and `FluxPipelineConfig` in the code with the corresponding pipeline and config.
 
 ```python
-from diffsynth_engine import fetch_model, FluxImagePipeline
+from diffsynth_engine import fetch_model, FluxImagePipeline, FluxPipelineConfig
 
 model_path = fetch_model("MAILAND/majicflus_v1", path="majicflus_v134.safetensors")
-pipe = FluxImagePipeline.from_pretrained(model_path, device='cuda:0')
+
+config = FluxPipelineConfig.basic_config(model_path=model_path, device='cuda:0')
+pipe = FluxImagePipeline.from_pretrained(config)
 image = pipe(prompt="a cat")
 image.save("image.png")
 ```
@@ -109,28 +114,24 @@ In the image generation pipeline `pipe`, we can use the following parameters for
 *   `cfg_scale`: The guidance scale for [Classifier-Free Guidance](https://arxiv.org/abs/2207.12598). A larger value usually results in stronger correlation between the text and the image but reduces the diversity of the generated content.
 *   `clip_skip`: The number of layers to skip in the [CLIP](https://arxiv.org/abs/2103.00020) text encoder. The more layers skipped, the lower the text-image correlation, but this can lead to interesting variations in the generated content.
 *   `input_image`: Input image, used for image-to-image generation.
-*   `mask_image`: Mask image, used for image inpainting.
 *   `denoising_strength`: The denoising strength. When set to 1, a full generation process is performed. When set to a value between 0 and 1, some information from the input image is preserved.
 *   `height`: Image height.
 *   `width`: Image width.
 *   `num_inference_steps`: The number of inference steps. Generally, more steps lead to longer computation time but higher image quality.
-*   `tiled`: Whether to enable tiled processing for the VAE. This option is disabled by default. Enabling it can reduce VRAM usage.
-*   `tile_size`: The window size for tiled VAE processing.
-*   `tile_stride`: The stride for tiled VAE processing.
 *   `seed`: The random seed. A fixed seed ensures reproducible results.
-*   `progress_bar_cmd`: The progress bar module. [`tqdm`](https://github.com/tqdm/tqdm) is enabled by default. To disable the progress bar, set it to `lambda x: x`.
 
 #### Loading LoRA
 
 We supports loading LoRA on top of the base model. For example, the following code loads a [Cheongsam LoRA](https://www.modelscope.cn/models/DonRat/MAJICFLUS_SuperChinesestyleheongsam) based on the [MajicFlus](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0) model to generate images of cheongsams, which the base model might struggle to create.
 
 ```python
-from diffsynth_engine import fetch_model, FluxImagePipeline
+from diffsynth_engine import fetch_model, FluxImagePipelin, FluxPipelineConfige
 
 model_path = fetch_model("MAILAND/majicflus_v1", path="majicflus_v134.safetensors")
 lora_path = fetch_model("DonRat/MAJICFLUS_SuperChinesestyleheongsam", path="麦橘超国风旗袍.safetensors")
 
-pipe = FluxImagePipeline.from_pretrained(model_path, device='cuda:0')
+config = FluxPipelineConfig.basic_config(model_path=model_path, device="cuda:0")
+pipe = FluxImagePipeline.from_pretrained(config)
 pipe.load_lora(path=lora_path, scale=1.0)
 image = pipe(prompt="a girl, qipao")
 image.save("image.png")
@@ -143,10 +144,12 @@ The `scale` parameter in the code controls the degree of influence the LoRA mode
 DiffSynth-Engine supports various levels of VRAM optimization, allowing models to run on GPUs with low VRAM. For example, at `bfloat16` precision and with no optimization options enabled, the FLUX model requires 35.84GB of VRAM for inference. By adding the parameter `offload_mode="cpu_offload"`, the VRAM requirement drops to 22.83GB. Furthermore, using `offload_mode="sequential_cpu_offload"` reduces the requirement to just 4.30GB, although this comes with an increase of inference time.
 
 ```python
-from diffsynth_engine import fetch_model, FluxImagePipeline
+from diffsynth_engine import fetch_model, FluxImagePipeline, FluxPipelineConfig
 
 model_path = fetch_model("MAILAND/majicflus_v1", path="majicflus_v134.safetensors")
-pipe = FluxImagePipeline.from_pretrained(model_path, offload_mode="sequential_cpu_offload")
+
+config = FluxPipelineConfig.basic_config(model_path=model_path, device="cuda:0", offload_mode="sequential_cpu_offload")
+pipe = FluxImagePipeline.from_pretrained(config)
 image = pipe(prompt="a cat")
 image.save("image.png")
 ```
@@ -156,16 +159,13 @@ image.save("image.png")
 DiffSynth-Engine also supports video generation. The following code loads the [Wan Video Generation Model](https://modelscope.cn/models/Wan-AI/Wan2.1-T2V-1.3B) and generates a video.
 
 ```python
-from diffsynth_engine.pipelines.wan_video import WanVideoPipeline, WanModelConfig
+from diffsynth_engine import fetch_model, WanVideoPipeline, WanPipelineConfig
 from diffsynth_engine.utils.video import save_video
-from diffsynth_engine import fetch_model
 
-config = WanModelConfig(
-    model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
-    vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
-    t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
-)
-pipe = WanVideoPipeline.from_pretrained(config, device="cuda")
+model_path = fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors")
+
+config = WanPipelineConfig.basic_config(model_path=model_path, device="cuda:0")
+pipe = WanVideoPipeline.from_pretrained(config)
 # The prompt translates to: "A lively puppy runs quickly on a green lawn. The puppy has brownish-yellow fur,
 # its two ears are perked up, and it looks focused and cheerful. Sunlight shines on it,
 # making its fur look especially soft and shiny."
@@ -187,9 +187,6 @@ In the video generation pipeline `pipe`, we can use the following parameters for
 *   `width`: Video frame width.
 *   `num_frames`: Number of video frames.
 *   `num_inference_steps`: The number of inference steps. Generally, more steps lead to longer computation time but higher video quality.
-*   `tiled`: Whether to enable tiled processing for the VAE. This option is disabled by default. Enabling it can reduce VRAM usage.
-*   `tile_size`: The window size for tiled VAE processing.
-*   `tile_stride`: The stride for tiled VAE processing.
 *   `seed`: The random seed. A fixed seed ensures reproducible results.
 
 #### Loading LoRA
@@ -197,17 +194,14 @@ In the video generation pipeline `pipe`, we can use the following parameters for
 We supports loading LoRA on top of the base model. For example, the following code loads a [High-Resolution Fix LoRA](https://modelscope.cn/models/DiffSynth-Studio/Wan2.1-1.3b-lora-highresfix-v1) on top of the [Wan2.1-T2V-1.3B](https://modelscope.cn/models/Wan-AI/Wan2.1-T2V-1.3B) model to improve the generation quality at high resolutions.
 
 ```python
-from diffsynth_engine.pipelines.wan_video import WanVideoPipeline, WanModelConfig
+from diffsynth_engine import fetch_model, WanVideoPipeline, WanPipelineConfig
 from diffsynth_engine.utils.video import save_video
-from diffsynth_engine import fetch_model
 
-config = WanModelConfig(
-    model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
-    vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
-    t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
-)
+model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors")
 lora_path = fetch_model("DiffSynth-Studio/Wan2.1-1.3b-lora-highresfix-v1", path="model.safetensors")
-pipe = WanVideoPipeline.from_pretrained(config, device="cuda")
+
+config = WanPipelineConfig.basic_config(model_path=model_path, device="cuda:0")
+pipe = WanVideoPipeline.from_pretrained(config)
 pipe.load_lora(path=lora_path, scale=1.0)
 # The prompt translates to: "A lively puppy runs quickly on a green lawn. The puppy has brownish-yellow fur,
 # its two ears are perked up, and it looks focused and cheerful. Sunlight shines on it,
@@ -220,19 +214,16 @@ The `scale` parameter in the code controls the degree of influence the LoRA mode
 
 #### Multi-GPU Parallelism
 
-We supports multi-GPU parallel inference of the Wan2.1 model for faster video generation. Add the parameters `parallelism=4` (the number of GPUs to use) and `use_cfg_parallel=True` into the code to enable parallelism.
+We supports multi-GPU parallel inference of the Wan2.1 model for faster video generation. Add the parameters `parallelism=4` (the number of GPUs to use) into the code to enable parallelism.
 
 ```python
-from diffsynth_engine.pipelines.wan_video import WanVideoPipeline, WanModelConfig
+from diffsynth_engine import fetch_model, WanVideoPipeline, WanPipelineConfig
 from diffsynth_engine.utils.video import save_video
-from diffsynth_engine import fetch_model
 
-config = WanModelConfig(
-    model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
-    vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
-    t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
-)
-pipe = WanVideoPipeline.from_pretrained(config, device="cuda", parallelism=4, use_cfg_parallel=True)
+model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors")
+
+config = WanPipelineConfig.basic_config(model_path=model_path, device="cuda", parallelism=4)
+pipe = WanVideoPipeline.from_pretrained(config)
 # The prompt translates to: "A lively puppy runs quickly on a green lawn. The puppy has brownish-yellow fur,
 # its two ears are perked up, and it looks focused and cheerful. Sunlight shines on it,
 # making its fur look especially soft and shiny."

@@ -66,20 +66,23 @@ model_path = fetch_model("Wan-AI/Wan2.1-T2V-14B", path="diffusion_pytorch_model*
 
 Diffusion 模型包含多种多样的模型结构，每种模型由对应的流水线进行加载和推理，目前我们支持的模型类型包括：
 
-| 模型结构   | 样例                                                         | 流水线              |
-| ---------- | ------------------------------------------------------------ | ------------------- |
-| SD1.5      | [DreamShaper](https://www.modelscope.cn/models/MusePublic/DreamShaper_SD_1_5) | `SDImagePipeline`   |
-| SDXL       | [RealVisXL](https://www.modelscope.cn/models/MusePublic/42_ckpt_SD_XL) | `SDXLImagePipeline` |
-| FLUX       | [麦橘超然](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0) | `FluxImagePipeline` |
-| Wan2.1     | [Wan2.1-T2V-1.3B](https://modelscope.cn/models/Wan-AI/Wan2.1-T2V-1.3B) | `WanVideoPipeline` |
-| SD1.5 LoRA | [Detail Tweaker](https://www.modelscope.cn/models/MusePublic/Detail_Tweaker_LoRA_xijietiaozheng_LoRA_SD_1_5) | `SDImagePipeline`   |
-| SDXL LoRA  | [Aesthetic Anime](https://www.modelscope.cn/models/MusePublic/100_lora_SD_XL) | `SDXLImagePipeline` |
-| FLUX LoRA  | [ArtAug](https://www.modelscope.cn/models/DiffSynth-Studio/ArtAug-lora-FLUX.1dev-v1) | `FluxImagePipeline` |
-| Wan2.1 LoRA| [Highres-fix](https://modelscope.cn/models/DiffSynth-Studio/Wan2.1-1.3b-lora-highresfix-v1) | `WanVideoPipeline` |
+| 模型结构         | 样例                                                         | 流水线              |
+| --------------- | ------------------------------------------------------------ | ------------------- |
+| SD1.5           | [DreamShaper](https://www.modelscope.cn/models/MusePublic/DreamShaper_SD_1_5) | `SDImagePipeline`   |
+| SDXL            | [RealVisXL](https://www.modelscope.cn/models/MusePublic/42_ckpt_SD_XL) | `SDXLImagePipeline` |
+| FLUX            | [麦橘超然](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0) | `FluxImagePipeline` |
+| Qwen-Image      | [Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image) | `QwenImagePipeline` |
+| Wan2.1          | [Wan2.1-T2V-1.3B](https://modelscope.cn/models/Wan-AI/Wan2.1-T2V-1.3B) | `WanVideoPipeline` |
+| Wan2.2          | [Wan2.2-TI2V-5B](https://modelscope.cn/models/Wan-AI/Wan2.2-TI2V-5B) | `WanVideoPipeline` |
+| SD1.5 LoRA      | [Detail Tweaker](https://www.modelscope.cn/models/MusePublic/Detail_Tweaker_LoRA_xijietiaozheng_LoRA_SD_1_5) | `SDImagePipeline`   |
+| SDXL LoRA       | [Aesthetic Anime](https://www.modelscope.cn/models/MusePublic/100_lora_SD_XL) | `SDXLImagePipeline` |
+| FLUX LoRA       | [ArtAug](https://www.modelscope.cn/models/DiffSynth-Studio/ArtAug-lora-FLUX.1dev-v1) | `FluxImagePipeline` |
+| Qwen-Image LoRA | [QwenCapybara](https://www.modelscope.cn/models/MusePublic/QwenCapybara) | `QwenImagePipeline` |
+| Wan2.1 LoRA     | [Highres-fix](https://modelscope.cn/models/DiffSynth-Studio/Wan2.1-1.3b-lora-highresfix-v1) | `WanVideoPipeline` |
 
-其中 SD1.5、SDXL、FLUX 为图像生成的基础模型，Wan2.1 是视频生成的基础模型，基础模型可以独立进行内容生成；SD1.5 LoRA、SDXL LoRA、FLUX LoRA、Wan2.1 LoRA 为 [LoRA](https://arxiv.org/abs/2106.09685) 模型，LoRA 模型是在基础模型上以“额外分支”的形式训练的，能够增强模型某方面的能力，需要与基础模型结合后才可用于图像生成。
+其中 SD1.5、SDXL、FLUX、Qwen-Image 为图像生成的基础模型，Wan2.x 是视频生成的基础模型，基础模型可以独立进行内容生成；SD1.5 LoRA、SDXL LoRA、FLUX LoRA、Qwen-Image LoRA、Wan2.1 LoRA 为 [LoRA](https://arxiv.org/abs/2106.09685) 模型，LoRA 模型是在基础模型上以“额外分支”的形式训练的，能够增强模型某方面的能力，需要与基础模型结合后才可用于图像生成。
 
-我们会持续更新 DiffSynth-Engine 以支持更多模型。
+我们会持续更新 DiffSynth-Engine 以支持更多模型。(即将支持Wan2.2 LoRA❗)
 
 ## 模型推理
 
@@ -87,13 +90,15 @@ Diffusion 模型包含多种多样的模型结构，每种模型由对应的流�
 
 ### 图像生成
 
-以下代码可以调用 `FluxImagePipeline` 加载[麦橘超然](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0)模型生成一张图。如果要加载其他结构的模型，请将代码中的 `FluxImagePipeline` 替换成对应的流水线模块。
+以下代码可以调用 `FluxImagePipeline` 加载[麦橘超然](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0)模型生成一张图。如果要加载其他结构的模型，请将代码中的 `FluxImagePipeline` 和 `FluxPipelineConfig` 替换成对应的流水线模块及配置。
 
 ```python
-from diffsynth_engine import fetch_model, FluxImagePipeline
+from diffsynth_engine import fetch_model, FluxImagePipeline, FluxPipelineConfig
 
 model_path = fetch_model("MAILAND/majicflus_v1", path="majicflus_v134.safetensors")
-pipe = FluxImagePipeline.from_pretrained(model_path, device='cuda:0')
+
+config = FluxPipelineConfig.basic_config(model_path=model_path, device='cuda:0')
+pipe = FluxImagePipeline.from_pretrained(config)
 image = pipe(prompt="a cat")
 image.save("image.png")
 ```
@@ -109,28 +114,24 @@ image.save("image.png")
 * `cfg_scale`：[Classifier-free guidance](https://arxiv.org/abs/2207.12598) 的引导系数，通常更大的引导系数可以达到更强的文图相关性，但会降低生成内容的多样性。
 * `clip_skip`：跳过 [CLIP](https://arxiv.org/abs/2103.00020) 文本编码器的层数，跳过的层数越多，生成的图像与文本的相关性越低，但生成的图像内容可能会出现奇妙的变化。
 * `input_image`：输入图像，用于图生图。
-* `mask_image`：蒙板图像，用于图像修复。
 * `denoising_strength`：去噪力度，当设置为 1 时，执行完整的生成过程，当设置为 0 到 1 之间的值时，会保留输入图像中的部分信息。
 * `height`：图像高度。
 * `width`：图像宽度。
 * `num_inference_steps`：推理步数，通常推理步数越多，计算时间越长，图像质量越高。
-* `tiled`：是否启用 VAE 的分区处理，该选项默认不启用，启用后可减少显存需求。
-* `tile_size`：VAE 分区处理时的窗口大小。
-* `tile_stride`：VAE 分区处理时的步长。
 * `seed`：随机种子，固定的随机种子可以使生成的内容固定。
-* `progress_bar_cmd`：进度条模块，默认启用 [`tqdm`](https://github.com/tqdm/tqdm)，如需关闭进度条，请将其设置为 `lambda x: x`。
 
 #### LoRA 加载
 
 对于 LoRA 模型，请在加载模型后，进一步加载 LoRA 模型。例如，以下代码可以在[麦橘超然](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0)的基础上加载[旗袍 LoRA](https://www.modelscope.cn/models/DonRat/MAJICFLUS_SuperChinesestyleheongsam)，进而生成基础模型难以生成的旗袍图片。
 
 ```python
-from diffsynth_engine import fetch_model, FluxImagePipeline
+from diffsynth_engine import fetch_model, FluxImagePipelin, FluxPipelineConfige
 
 model_path = fetch_model("MAILAND/majicflus_v1", path="majicflus_v134.safetensors")
 lora_path = fetch_model("DonRat/MAJICFLUS_SuperChinesestyleheongsam", path="麦橘超国风旗袍.safetensors")
 
-pipe = FluxImagePipeline.from_pretrained(model_path, device='cuda:0')
+config = FluxPipelineConfig.basic_config(model_path=model_path, device="cuda:0")
+pipe = FluxImagePipeline.from_pretrained(config)
 pipe.load_lora(path=lora_path, scale=1.0)
 image = pipe(prompt="a girl, qipao")
 image.save("image.png")
@@ -143,10 +144,12 @@ image.save("image.png")
 DiffSynth-Engine 支持不同粒度的显存优化，让模型能够在低显存GPU上运行。例如，在 `bfloat16` 精度且不开启任何显存优化选项的情况下，FLUX 模型需要 35.84GB 显存才能进行推理。添加参数 `offload_mode="cpu_offload"` 后，显存需求降低到 22.83GB；进一步使用参数 `offload_mode="sequential_cpu_offload"` 后，只需要 4.30GB 显存即可进行推理，但推理时间有一定的延长。
 
 ```python
-from diffsynth_engine import fetch_model, FluxImagePipeline
+from diffsynth_engine import fetch_model, FluxImagePipeline, FluxPipelineConfig
 
 model_path = fetch_model("MAILAND/majicflus_v1", path="majicflus_v134.safetensors")
-pipe = FluxImagePipeline.from_pretrained(model_path, offload_mode="sequential_cpu_offload")
+
+config = FluxPipelineConfig.basic_config(model_path=model_path, device="cuda:0", offload_mode="sequential_cpu_offload")
+pipe = FluxImagePipeline.from_pretrained(config)
 image = pipe(prompt="a cat")
 image.save("image.png")
 ```
@@ -156,16 +159,13 @@ image.save("image.png")
 DiffSynth-Engine 也支持视频生成，以下代码可以加载[通义万相视频生成模型](https://modelscope.cn/models/Wan-AI/Wan2.1-T2V-1.3B)并生成视频。
 
 ```python
-from diffsynth_engine.pipelines.wan_video import WanVideoPipeline, WanModelConfig
+from diffsynth_engine import fetch_model, WanVideoPipeline, WanPipelineConfig
 from diffsynth_engine.utils.video import save_video
-from diffsynth_engine import fetch_model
 
-config = WanModelConfig(
-    model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
-    vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
-    t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
-)
-pipe = WanVideoPipeline.from_pretrained(config, device="cuda")
+model_path = fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors")
+
+config = WanPipelineConfig.basic_config(model_path=model_path, device="cuda:0")
+pipe = WanVideoPipeline.from_pretrained(config)
 video = pipe(prompt="一只活泼的小狗在绿茵茵的草地上迅速奔跑。小狗毛色棕黄，两只耳朵立起，神情专注而欢快。阳光洒在它身上，使得毛发看上去格外柔软而闪亮。")
 save_video(video, "video.mp4")
 ```
@@ -184,9 +184,6 @@ save_video(video, "video.mp4")
 * `width`：视频帧宽度。
 * `num_frames`：视频帧数。
 * `num_inference_steps`：推理步数，通常推理步数越多，计算时间越长，图像质量越高。
-* `tiled`：是否启用 VAE 的分区处理，该选项默认不启用，启用后可减少显存需求。
-* `tile_size`：VAE 分区处理时的窗口大小。
-* `tile_stride`：VAE 分区处理时的步长。
 * `seed`：随机种子，固定的随机种子可以使生成的内容固定。
 
 #### LoRA 加载
@@ -194,17 +191,14 @@ save_video(video, "video.mp4")
 对于 LoRA 模型，请在加载模型后，进一步加载 LoRA 模型。例如，以下代码可以在[Wan2.1-T2V-1.3B](https://modelscope.cn/models/Wan-AI/Wan2.1-T2V-1.3B)的基础上加载[高分辨率修复 LoRA](https://modelscope.cn/models/DiffSynth-Studio/Wan2.1-1.3b-lora-highresfix-v1)，进而改善模型在高分辨率下的生成效果。
 
 ```python
-from diffsynth_engine.pipelines.wan_video import WanVideoPipeline, WanModelConfig
+from diffsynth_engine import fetch_model, WanVideoPipeline, WanPipelineConfig
 from diffsynth_engine.utils.video import save_video
-from diffsynth_engine import fetch_model
 
-config = WanModelConfig(
-    model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
-    vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
-    t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
-)
+model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors")
 lora_path = fetch_model("DiffSynth-Studio/Wan2.1-1.3b-lora-highresfix-v1", path="model.safetensors")
-pipe = WanVideoPipeline.from_pretrained(config, device="cuda")
+
+config = WanPipelineConfig.basic_config(model_path=model_path, device="cuda:0")
+pipe = WanVideoPipeline.from_pretrained(config)
 pipe.load_lora(path=lora_path, scale=1.0)
 video = pipe(prompt="一只活泼的小狗在绿茵茵的草地上迅速奔跑。小狗毛色棕黄，两只耳朵立起，神情专注而欢快。阳光洒在它身上，使得毛发看上去格外柔软而闪亮。")
 save_video(video, "video.mp4")
@@ -214,19 +208,16 @@ save_video(video, "video.mp4")
 
 #### 多卡并行
 
-考虑到视频生成模型庞大的计算量，我们为 Wan2.1 模型提供了多卡并行的支持，只需要在代码中增加参数 `parallelism=4`（使用的GPU数量）和 `use_cfg_parallel=True` 即可。
+考虑到视频生成模型庞大的计算量，我们为 Wan2.1 模型提供了多卡并行的支持，只需要在代码中增加参数 `parallelism=4`（使用的GPU数量）即可。
 
 ```python
-from diffsynth_engine.pipelines.wan_video import WanVideoPipeline, WanModelConfig
+from diffsynth_engine import fetch_model, WanVideoPipeline, WanPipelineConfig
 from diffsynth_engine.utils.video import save_video
-from diffsynth_engine import fetch_model
 
-config = WanModelConfig(
-    model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
-    vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
-    t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
-)
-pipe = WanVideoPipeline.from_pretrained(config, device="cuda", parallelism=4, use_cfg_parallel=True)
+model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors")
+
+config = WanPipelineConfig.basic_config(model_path=model_path, device="cuda", parallelism=4)
+pipe = WanVideoPipeline.from_pretrained(config)
 video = pipe(prompt="一只活泼的小狗在绿茵茵的草地上迅速奔跑。小狗毛色棕黄，两只耳朵立起，神情专注而欢快。阳光洒在它身上，使得毛发看上去格外柔软而闪亮。")
 save_video(video, "video.mp4")
 ```

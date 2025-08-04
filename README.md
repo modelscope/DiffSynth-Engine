@@ -23,6 +23,7 @@ and offloading strategies, enabling loading of larger diffusion models (e.g., Fl
 
 ## News
 
+- **[v0.4.1](https://github.com/modelscope/DiffSynth-Engine/releases/tag/v0.4.1)** | **August 4, 2025**: 🔥Supports [Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image), an image generation model excels at complex text rendering and creating images in a wide range of artistic styles.
 - **[v0.4.0](https://github.com/modelscope/DiffSynth-Engine/releases/tag/v0.4.0)** | **August 1, 2025**:
   - 🔥Supports [Wan2.2](https://modelscope.cn/collections/tongyiwanxiang-22--shipinshengcheng-2bb5b1adef2840) video generation model
   - ⚠️[**Breaking Change**] Improved `from_pretrained` method pipeline initialization
@@ -49,21 +50,24 @@ pip3 install -e .
 ### Usage
 Text to image
 ```python
-from diffsynth_engine import fetch_model, FluxImagePipeline
+from diffsynth_engine import fetch_model, FluxImagePipeline, FluxPipelineConfig
 
 model_path = fetch_model("muse/flux-with-vae", path="flux1-dev-with-vae.safetensors")
-pipe = FluxImagePipeline.from_pretrained(model_path, device='cuda:0')
+
+config = FluxPipelineConfig.basic_config(model_path=model_path, device="cuda:0")
+pipe = FluxImagePipeline.from_pretrained(config)
 image = pipe(prompt="a cat")
 image.save("image.png")
 ```
 Text to image with LoRA
 ```python
-from diffsynth_engine import fetch_model, FluxImagePipeline
+from diffsynth_engine import fetch_model, FluxImagePipeline, FluxPipelineConfig
 
 model_path = fetch_model("muse/flux-with-vae", path="flux1-dev-with-vae.safetensors")
 lora_path = fetch_model("DonRat/MAJICFLUS_SuperChinesestyleheongsam", path="麦橘超国风旗袍.safetensors")
 
-pipe = FluxImagePipeline.from_pretrained(model_path, device='cuda:0')
+config = FluxPipelineConfig.basic_config(model_path=model_path, device="cuda:0")
+pipe = FluxImagePipeline.from_pretrained(config)
 pipe.load_lora(path=lora_path, scale=1.0)
 image = pipe(prompt="a girl, qipao")
 image.save("image.png")
