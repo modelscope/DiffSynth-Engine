@@ -9,11 +9,11 @@ from typing import Any, Dict
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
-from diffsynth_engine.utils.constants import WAN2_1_VAE_CONFIG_FILE, WAN2_2_VAE_CONFIG_FILE, WAN_VAE_KEYMAP_FILE
+from diffsynth_engine.utils.constants import QWEN_IMAGE_VAE_KEYMAP_FILE
 
 CACHE_T = 2
 
-with open(WAN_VAE_KEYMAP_FILE, "r") as f:
+with open(QWEN_IMAGE_VAE_KEYMAP_FILE, "r") as f:
     config = json.load(f)
 
 
@@ -38,7 +38,7 @@ def block_causal_mask(x, block_size):
     return mask
 
 
-class CausalConv3d(nn.Conv3d):
+class QwenCausalConv3d(nn.Conv3d):
     """
     Causal 3d convolusion.
     """
@@ -59,7 +59,7 @@ class CausalConv3d(nn.Conv3d):
         return super().forward(x)
 
 
-class RMS_norm(nn.Module):
+class QwenRMS_norm(nn.Module):
     def __init__(self, dim, channel_first=True, images=True, bias=False):
         super().__init__()
         broadcastable_dims = (1, 1, 1) if not images else (1, 1)
@@ -100,13 +100,13 @@ class Resample(nn.Module):
                 Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
                 nn.Conv2d(dim, dim if keep_channels else dim // 2, 3, padding=1),
             )
-            self.time_conv = CausalConv3d(dim, dim * 2, (3, 1, 1), padding=(1, 0, 0))
+            self.time_conv = QwenCausalConv3d(dim, dim * 2, (3, 1, 1), padding=(1, 0, 0))
 
         elif mode == "downsample2d":
             self.resample = nn.Sequential(nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(dim, dim, 3, stride=(2, 2)))
         elif mode == "downsample3d":
             self.resample = nn.Sequential(nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(dim, dim, 3, stride=(2, 2)))
-            self.time_conv = CausalConv3d(dim, dim, (3, 1, 1), stride=(2, 1, 1), padding=(0, 0, 0))
+            self.time_conv = QwenCausalConv3d(dim, dim, (3, 1, 1), stride=(2, 1, 1), padding=(0, 0, 0))
 
         else:
             self.resample = nn.Identity()
@@ -160,20 +160,20 @@ class ResidualBlock(nn.Module):
 
         # layers
         self.residual = nn.Sequential(
-            RMS_norm(in_dim, images=False),
+            QwenRMS_norm(in_dim, images=False),
             nn.SiLU(),
-            CausalConv3d(in_dim, out_dim, 3, padding=1),
-            RMS_norm(out_dim, images=False),
+            QwenCausalConv3d(in_dim, out_dim, 3, padding=1),
+            QwenRMS_norm(out_dim, images=False),
             nn.SiLU(),
             nn.Dropout(dropout),
-            CausalConv3d(out_dim, out_dim, 3, padding=1),
+            QwenCausalConv3d(out_dim, out_dim, 3, padding=1),
         )
-        self.shortcut = CausalConv3d(in_dim, out_dim, 1) if in_dim != out_dim else nn.Identity()
+        self.shortcut = QwenCausalConv3d(in_dim, out_dim, 1) if in_dim != out_dim else nn.Identity()
 
     def forward(self, x, feat_cache=None):
         h = self.shortcut(x)
         for layer in self.residual:
-            if check_is_instance(layer, CausalConv3d) and feat_cache is not None:
+            if check_is_instance(layer, QwenCausalConv3d) and feat_cache is not None:
                 key = id(layer)
                 cache_x = x[:, :, -CACHE_T:, :, :].clone()
                 if cache_x.shape[2] < 2 and key in feat_cache:
@@ -196,7 +196,7 @@ class AttentionBlock(nn.Module):
         self.dim = dim
 
         # layers
-        self.norm = RMS_norm(dim)
+        self.norm = QwenRMS_norm(dim)
         self.to_qkv = nn.Conv2d(dim, dim * 3, 1)
         self.proj = nn.Conv2d(dim, dim, 1)
 
@@ -451,7 +451,7 @@ class Encoder3d(nn.Module):
         dims = [dim * u for u in [1] + dim_mult]
 
         # init block
-        self.conv1 = CausalConv3d(in_channels, dims[0], 3, padding=1)
+        self.conv1 = QwenCausalConv3d(in_channels, dims[0], 3, padding=1)
 
         # downsample blocks
         downsamples = []
@@ -488,7 +488,7 @@ class Encoder3d(nn.Module):
 
         # output blocks
         self.head = nn.Sequential(
-            RMS_norm(out_dim, images=False), nn.SiLU(), CausalConv3d(out_dim, z_dim, 3, padding=1)
+            QwenRMS_norm(out_dim, images=False), nn.SiLU(), QwenCausalConv3d(out_dim, z_dim, 3, padding=1)
         )
 
     def forward(self, x, feat_cache=None):
@@ -519,7 +519,7 @@ class Encoder3d(nn.Module):
 
         ## head
         for layer in self.head:
-            if check_is_instance(layer, CausalConv3d) and feat_cache is not None:
+            if check_is_instance(layer, QwenCausalConv3d) and feat_cache is not None:
                 key = id(layer)
                 cache_x = x[:, :, -CACHE_T:, :, :].clone()
                 if cache_x.shape[2] < 2 and key in feat_cache:
@@ -555,7 +555,7 @@ class Decoder3d(nn.Module):
         dims = [dim * u for u in [dim_mult[-1]] + dim_mult[::-1]]
 
         # init block
-        self.conv1 = CausalConv3d(z_dim, dims[0], 3, padding=1)
+        self.conv1 = QwenCausalConv3d(z_dim, dims[0], 3, padding=1)
 
         # middle blocks
         self.middle = nn.Sequential(
@@ -594,7 +594,7 @@ class Decoder3d(nn.Module):
 
         # output blocks
         self.head = nn.Sequential(
-            RMS_norm(out_dim, images=False), nn.SiLU(), CausalConv3d(out_dim, out_channels, 3, padding=1)
+            QwenRMS_norm(out_dim, images=False), nn.SiLU(), QwenCausalConv3d(out_dim, out_channels, 3, padding=1)
         )
 
     def forward(self, x, feat_cache=None, first_chunk=False):
@@ -628,7 +628,7 @@ class Decoder3d(nn.Module):
 
         ## head
         for layer in self.head:
-            if check_is_instance(layer, CausalConv3d) and feat_cache is not None:
+            if check_is_instance(layer, QwenCausalConv3d) and feat_cache is not None:
                 key = id(layer)
                 cache_x = x[:, :, -CACHE_T:, :, :].clone()
                 if cache_x.shape[2] < 2 and key in feat_cache:
@@ -669,8 +669,8 @@ class VideoVAE(nn.Module):
         self.encoder = Encoder3d(
             in_channels, encoder_dim, z_dim * 2, dim_mult, num_res_blocks, self.temperal_downsample, dropout
         )
-        self.conv1 = CausalConv3d(z_dim * 2, z_dim * 2, 1)
-        self.conv2 = CausalConv3d(z_dim, z_dim, 1)
+        self.conv1 = QwenCausalConv3d(z_dim * 2, z_dim * 2, 1)
+        self.conv2 = QwenCausalConv3d(z_dim, z_dim, 1)
         self.decoder = Decoder3d(
             out_channels, decoder_dim, z_dim, dim_mult, num_res_blocks, self.temperal_upsample, dropout
         )
@@ -738,7 +738,7 @@ class VideoVAE(nn.Module):
         return mu + std * torch.randn_like(std)
 
 
-class WanVideoVAEStateDictConverter(StateDictConverter):
+class QwenImageVAEStateDictConverter(StateDictConverter):
     def from_diffusers(self, state_dict):
         rename_dict = config["diffusers"]["rename_dict"]
         state_dict_ = {}
@@ -764,8 +764,8 @@ class WanVideoVAEStateDictConverter(StateDictConverter):
             return self.from_civitai(state_dict)
 
 
-class WanVideoVAE(PreTrainedModel):
-    converter = WanVideoVAEStateDictConverter()
+class QwenImageVAE(PreTrainedModel):
+    converter = QwenImageVAEStateDictConverter()
 
     def __init__(
         self,
@@ -846,20 +846,6 @@ class WanVideoVAE(PreTrainedModel):
         self.patch_size = patch_size
         self.upsampling_factor = 8 * patch_size
 
-    @staticmethod
-    def get_model_config(model_type: str) -> dict:
-        MODEL_CONFIG_FILES = {
-            "wan2.1-vae": WAN2_1_VAE_CONFIG_FILE,
-            "wan2.2-vae": WAN2_2_VAE_CONFIG_FILE,
-        }
-        if model_type not in MODEL_CONFIG_FILES:
-            raise ValueError(f"Unsupported model type: {model_type}")
-
-        config_file = MODEL_CONFIG_FILES[model_type]
-        with open(config_file, "r") as f:
-            config = json.load(f)
-        return config
-
     @classmethod
     def from_state_dict(
         cls,
@@ -867,7 +853,7 @@ class WanVideoVAE(PreTrainedModel):
         config: Dict[str, Any],
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float32,
-    ) -> "WanVideoVAE":
+    ) -> "QwenImageVAE":
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype)
         model.load_state_dict(state_dict, assign=True)

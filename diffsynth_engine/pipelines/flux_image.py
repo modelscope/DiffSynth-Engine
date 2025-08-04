@@ -17,10 +17,10 @@ from diffsynth_engine.models.flux import (
     flux_dit_config,
     flux_text_encoder_config,
 )
-from diffsynth_engine.configs import FluxPipelineConfig, ControlType, ControlNetParams
+from diffsynth_engine.configs import FluxPipelineConfig, FluxStateDicts, ControlType, ControlNetParams
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
-from diffsynth_engine.pipelines.utils import accumulate
+from diffsynth_engine.pipelines.utils import accumulate, calculate_shift
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
@@ -401,19 +401,6 @@ class FluxLoRAConverter(LoRAStateDictConverter):
         raise ValueError(f"Unsupported key: {key}")
 
 
-def calculate_shift(
-    image_seq_len,
-    base_seq_len: int = 256,
-    max_seq_len: int = 4096,
-    base_shift: float = 0.5,
-    max_shift: float = 1.15,
-):
-    m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
-    b = base_shift - m * base_seq_len
-    mu = image_seq_len * m + b
-    return mu
-
-
 class FluxImagePipeline(BasePipeline):
     lora_converter = FluxLoRAConverter()
 
@@ -464,24 +451,40 @@ class FluxImagePipeline(BasePipeline):
         else:
             config = model_path_or_config
 
-        if config.vae_path is None:
-            config.vae_path = fetch_model("muse/FLUX.1-dev-fp8", path="ae-bf16.safetensors")
-        if config.clip_path is None and config.load_text_encoder:
-            config.clip_path = fetch_model("muse/FLUX.1-dev-fp8", path="clip-bf16.safetensors")
-        if config.t5_path is None and config.load_text_encoder:
-            config.t5_path = fetch_model(
-                "muse/FLUX.1-dev-fp8", path=["t5-fp8-00001-of-00002.safetensors", "t5-fp8-00002-of-00002.safetensors"]
-            )
+        return cls.from_state_dict(FluxStateDicts(), config)
 
-        logger.info(f"loading state dict from {config.model_path} ...")
-        dit_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
-        logger.info(f"loading state dict from {config.vae_path} ...")
-        vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
-        if config.load_text_encoder:
+    @classmethod
+    def from_state_dict(cls, state_dicts: FluxStateDicts, config: FluxPipelineConfig) -> "FluxImagePipeline":
+        if state_dicts.model is None:
+            if config.model_path is None:
+                raise ValueError("`model_path` cannot be empty")
+            logger.info(f"loading state dict from {config.model_path} ...")
+            state_dicts.model = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
+
+        if state_dicts.vae is None:
+            if config.vae_path is None:
+                config.vae_path = fetch_model("muse/FLUX.1-dev-fp8", path="ae-bf16.safetensors")
+            logger.info(f"loading state dict from {config.vae_path} ...")
+            state_dicts.vae = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
+        if state_dicts.clip is None and config.load_text_encoder:
+            if config.clip_path is None:
+                config.clip_path = fetch_model("muse/FLUX.1-dev-fp8", path="clip-bf16.safetensors")
             logger.info(f"loading state dict from {config.clip_path} ...")
-            clip_state_dict = cls.load_model_checkpoint(config.clip_path, device="cpu", dtype=config.clip_dtype)
+            state_dicts.clip = cls.load_model_checkpoint(config.clip_path, device="cpu", dtype=config.clip_dtype)
+        if state_dicts.t5 is None and config.load_text_encoder:
+            if config.t5_path is None:
+                config.t5_path = fetch_model(
+                    "muse/FLUX.1-dev-fp8",
+                    path=["t5-fp8-00001-of-00002.safetensors", "t5-fp8-00002-of-00002.safetensors"],
+                )
             logger.info(f"loading state dict from {config.t5_path} ...")
-            t5_state_dict = cls.load_model_checkpoint(config.t5_path, device="cpu", dtype=config.t5_dtype)
+            state_dicts.t5 = cls.load_model_checkpoint(config.t5_path, device="cpu", dtype=config.t5_dtype)
+
+        cls.convert(state_dicts.model, config.model_dtype)
+        cls.convert(state_dicts.vae, config.vae_dtype)
+        if config.load_text_encoder:
+            cls.convert(state_dicts.clip, config.clip_dtype)
+            cls.convert(state_dicts.t5, config.t5_dtype)
 
         init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
         if config.load_text_encoder:
@@ -489,12 +492,12 @@ class FluxImagePipeline(BasePipeline):
             tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
             with LoRAContext():
                 text_encoder_1 = FluxTextEncoder1.from_state_dict(
-                    clip_state_dict, device=init_device, dtype=config.clip_dtype
+                    state_dicts.clip, device=init_device, dtype=config.clip_dtype
                 )
-            text_encoder_2 = FluxTextEncoder2.from_state_dict(t5_state_dict, device=init_device, dtype=config.t5_dtype)
+            text_encoder_2 = FluxTextEncoder2.from_state_dict(state_dicts.t5, device=init_device, dtype=config.t5_dtype)
 
-        vae_decoder = FluxVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=config.vae_dtype)
-        vae_encoder = FluxVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=config.vae_dtype)
+        vae_decoder = FluxVAEDecoder.from_state_dict(state_dicts.vae, device=init_device, dtype=config.vae_dtype)
+        vae_encoder = FluxVAEEncoder.from_state_dict(state_dicts.vae, device=init_device, dtype=config.vae_dtype)
 
         with LoRAContext():
             attn_kwargs = {
@@ -506,7 +509,7 @@ class FluxImagePipeline(BasePipeline):
             }
             if config.use_fbcache:
                 dit = FluxDiTFBCache.from_state_dict(
-                    dit_state_dict,
+                    state_dicts.model,
                     device=init_device,
                     dtype=config.model_dtype,
                     in_channel=config.control_type.get_in_channel(),
@@ -515,7 +518,7 @@ class FluxImagePipeline(BasePipeline):
                 )
             else:
                 dit = FluxDiT.from_state_dict(
-                    dit_state_dict,
+                    state_dicts.model,
                     device=init_device,
                     dtype=config.model_dtype,
                     in_channel=config.control_type.get_in_channel(),
@@ -552,7 +555,7 @@ class FluxImagePipeline(BasePipeline):
             )
 
         if config.parallelism > 1:
-            return ParallelWrapper(
+            pipe = ParallelWrapper(
                 pipe,
                 cfg_degree=config.cfg_degree,
                 sp_ulysses_degree=config.sp_ulysses_degree,
@@ -561,7 +564,12 @@ class FluxImagePipeline(BasePipeline):
                 use_fsdp=config.use_fsdp,
                 device="cuda",
             )
+        if config.use_torch_compile:
+            pipe.compile()
         return pipe
+
+    def compile(self):
+        self.dit.compile()
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.config.tp_degree is None or self.config.tp_degree == 1, (
@@ -578,12 +586,6 @@ class FluxImagePipeline(BasePipeline):
         self.dit.unload_loras()
         self.text_encoder_1.unload_loras()
         self.text_encoder_2.unload_loras()
-
-    @classmethod
-    def from_state_dict(
-        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda", dtype: torch.dtype = torch.bfloat16
-    ) -> "FluxImagePipeline":
-        raise NotImplementedError()
 
     def denoising_model(self):
         return self.dit
@@ -947,7 +949,7 @@ class FluxImagePipeline(BasePipeline):
         # Encode prompts
         self.load_models_to_device(["text_encoder_1", "text_encoder_2"])
         positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)
-        if cfg_scale > 1:
+        if cfg_scale > 1.0:
             negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
         else:
             negative_prompt_emb, negative_add_text_embeds = None, None

@@ -1,7 +1,7 @@
 import os
 import torch
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 
 from diffsynth_engine.configs.controlnet import ControlType
 
@@ -33,6 +33,7 @@ class OptimizationConfig:
     use_fp8_linear: bool = False
     use_fbcache: bool = False
     fbcache_relative_l1_threshold: float = 0.05
+    use_torch_compile: bool = False
 
 
 @dataclass
@@ -174,7 +175,72 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
         init_parallel_config(self)
 
 
-def init_parallel_config(config: FluxPipelineConfig | WanPipelineConfig):
+@dataclass
+class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, BaseConfig):
+    model_path: str | os.PathLike | List[str | os.PathLike]
+    encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    model_dtype: torch.dtype = torch.bfloat16
+    encoder_dtype: torch.dtype = torch.bfloat16
+    vae_dtype: torch.dtype = torch.float32
+
+    # override OptimizationConfig
+    fbcache_relative_l1_threshold = 0.009
+
+    @classmethod
+    def basic_config(
+        cls,
+        model_path: str | os.PathLike | List[str | os.PathLike],
+        encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None,
+        vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None,
+        device: str = "cuda",
+        parallelism: int = 1,
+        offload_mode: Optional[str] = None,
+    ) -> "QwenImagePipelineConfig":
+        return cls(
+            model_path=model_path,
+            device=device,
+            encoder_path=encoder_path,
+            vae_path=vae_path,
+            parallelism=parallelism,
+            use_cfg_parallel=True,
+            use_fsdp=True,
+            offload_mode=offload_mode,
+        )
+
+    def __post_init__(self):
+        init_parallel_config(self)
+
+
+@dataclass
+class BaseStateDicts:
+    model: Optional[Dict[str, torch.Tensor]] = None
+    vae: Optional[Dict[str, torch.Tensor]] = None
+
+
+@dataclass
+class SDStateDicts(BaseStateDicts):
+    clip: Optional[Dict[str, torch.Tensor]] = None
+
+
+@dataclass
+class SDXLStateDicts(BaseStateDicts):
+    clip_l: Optional[Dict[str, torch.Tensor]] = None
+    clip_g: Optional[Dict[str, torch.Tensor]] = None
+
+
+@dataclass
+class FluxStateDicts(BaseStateDicts):
+    t5: Optional[Dict[str, torch.Tensor]] = None
+    clip: Optional[Dict[str, torch.Tensor]] = None
+
+
+@dataclass
+class QwenImageStateDicts(BaseStateDicts):
+    encoder: Optional[Dict[str, torch.Tensor]] = None
+
+
+def init_parallel_config(config: FluxPipelineConfig | QwenImagePipelineConfig | WanPipelineConfig):
     assert config.parallelism in (1, 2, 4, 8), "parallelism must be 1, 2, 4 or 8"
     config.batch_cfg = True if config.parallelism > 1 and config.use_cfg_parallel else config.batch_cfg
 
