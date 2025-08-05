@@ -90,7 +90,7 @@ Diffusion 模型包含多种多样的模型结构，每种模型由对应的流�
 
 ### 图像生成(Qwen-Image)
 
-以下代码可以调用 `QwenImagePipeline` 加载[Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image)模型生成一张图。推荐分辨率为928*1664 1104*1472 1328*1328 1472*1104 1664*928，cfg_scale为4，如果没有negative_prompt默认为一个空格而不是空字符串。多卡并行目前支持cfg并行(parallelism=2)，其他优化工作正在进行中。
+以下代码可以调用 `QwenImagePipeline` 加载[Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image)模型生成一张图。推荐分辨率为928×1664, 1104×1472, 1328×1328, 1472×1104, 1664×928，cfg_scale为4，如果没有negative_prompt默认为一个空格而不是空字符串。多卡并行目前支持cfg并行(parallelism=2)，其他优化工作正在进行中。
 
 ```python
 from diffsynth_engine import fetch_model, QwenImagePipeline, QwenImagePipelineConfig
