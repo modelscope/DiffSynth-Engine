@@ -82,10 +82,8 @@ class QwenImagePipeline(BasePipeline):
             dtype=config.model_dtype,
         )
         self.config = config
-        self.tokenizer_max_length = 1024
         self.prompt_template_encode = "<|im_start|>system\nDescribe the image by detailing the color, shape, size, texture, quantity, text, spatial relationships of the objects and background:<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
         self.prompt_template_encode_start_idx = 34
-        self.default_sample_size = 128
         # sampler
         self.noise_scheduler = RecifitedFlowScheduler(shift=3.0, use_dynamic_shifting=True)
         self.sampler = FlowMatchEulerSampler()
@@ -262,7 +260,7 @@ class QwenImagePipeline(BasePipeline):
         template = self.prompt_template_encode
         drop_idx = self.prompt_template_encode_start_idx
         texts = [template.format(txt) for txt in prompt]
-        outputs = self.tokenizer(texts, max_length=min(max_sequence_length, self.tokenizer_max_length) + drop_idx)
+        outputs = self.tokenizer(texts, max_length=max_sequence_length + drop_idx)
         input_ids, attention_mask = outputs["input_ids"].to(self.device), outputs["attention_mask"].to(self.device)
         outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         hidden_states = outputs["hidden_states"]
