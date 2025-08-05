@@ -197,8 +197,8 @@ class Qwen2TokenizerFast(BaseTokenizer):
         encoded.fill_(self.pad_token_id)
         attention_mask = torch.zeros(len(texts), max_length, dtype=torch.long)
         for i, ids in enumerate(batch_ids):
-            if len(ids) > self.model_max_length:
-                ids = ids[: self.model_max_length]
+            if len(ids) > max_length:
+                ids = ids[:max_length]
                 ids[-1] = self.eos_token_id
             if padding_side == "right":
                 encoded[i, : len(ids)] = torch.tensor(ids)

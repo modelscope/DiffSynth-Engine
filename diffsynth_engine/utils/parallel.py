@@ -304,12 +304,14 @@ def _worker_loop(
             if rank == 0:
                 queue_out.put(res)
             dist.barrier()
-    except Exception as e:
+    except Exception:
         import traceback
 
-        traceback.print_exc()
-        logger.error(f"Error in worker loop (rank {rank}): {e}")
-        queue_out.put(e)  # any exception caught in the worker will be raised to the main process
+        msg = traceback.format_exc()
+        err = RuntimeError(msg)
+        logger.error(f"Error in worker loop (rank {rank}): {msg}")
+        if rank == 0:
+            queue_out.put(err)  # any exception caught in the worker will be raised to the main process
     finally:
         del module
         torch.cuda.synchronize()
