@@ -377,9 +377,9 @@ class QwenImagePipeline(BasePipeline):
         self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas)
 
         self.load_models_to_device(["encoder"])
-        prompt_embeds, prompt_embeds_mask = self.encode_prompt(prompt, 1, 512)
+        prompt_embeds, prompt_embeds_mask = self.encode_prompt(prompt, 1, 4096)
         if cfg_scale > 1.0 and negative_prompt != "":
-            negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt(negative_prompt, 1, 512)
+            negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt(negative_prompt, 1, 4096)
         else:
             negative_prompt_embeds, negative_prompt_embeds_mask = None, None
 
