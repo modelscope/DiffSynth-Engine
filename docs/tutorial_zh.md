@@ -88,6 +88,51 @@ Diffusion 模型包含多种多样的模型结构，每种模型由对应的流�
 
 模型下载完毕后，我们可以根据对应的模型类型选择流水线加载模型并进行推理。
 
+### 图像生成(Qwen-Image)
+
+以下代码可以调用 `QwenImagePipeline` 加载[Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image)模型生成一张图。推荐分辨率为928*1664 1104*1472 1328*1328 1472*1104 1664*928，cfg_scale为4，如果没有negative_prompt默认为一个空格而不是空字符串。多卡并行目前支持cfg并行(parallelism=2)，其他优化工作正在进行中。
+
+```python
+from diffsynth_engine import fetch_model, QwenImagePipeline, QwenImagePipelineConfig
+
+config = QwenImagePipelineConfig.basic_config(
+    model_path=fetch_model("MusePublic/Qwen-image", revision="v1", path="transformer/*.safetensors"),
+    encoder_path=fetch_model("MusePublic/Qwen-image", revision="v1", path="text_encoder/*.safetensors"),
+    vae_path=fetch_model("MusePublic/Qwen-image", revision="v1", path="vae/*.safetensors"),
+    parallelism=2,
+)
+pipe = QwenImagePipeline.from_pretrained(config)
+
+prompt = """
+    一副典雅庄重的对联悬挂于厅堂之中，房间是个安静古典的中式布置，桌子上放着一些青花瓷，对联上左书“思涌如泉万类灵感皆可触”，右书“智启于问千机代码自天成”，横批“AI脑洞力”，字体飘逸灵动，兼具传统笔意与未来感。中间挂着一幅中国风的画作，内容是岳阳楼，云雾缭绕间似有数据流光隐现，古今交融，意境深远。
+    """
+negative_prompt = " "
+image = pipe(
+    prompt=prompt,
+    negative_prompt=negative_prompt,
+    cfg_scale=4.0,
+    width=1104,
+    height=1472,
+    num_inference_steps=30,
+    seed=42,
+)
+image.save("image.png")
+```
+
+请注意，某些模型库中缺乏必要的文本编码器等模块，我们的代码会自动补充下载所需的模型文件。
+
+#### 详细参数(Qwen-Image)
+
+在图像生成流水线 `pipe` 中，我们可以通过以下参数进行精细的控制：
+
+* `prompt`: 提示词，用于描述生成图像的内容，支持多种语言(中文/英文/日文等)，例如“一只猫”/"a cat"/"庭を走る猫"。
+* `negative_prompt`：负面提示词，用于描述不希望图像中出现的内容，例如“ugly”，默认为一个空格而不是空字符串， " "。
+* `cfg_scale`：[Classifier-free guidance](https://arxiv.org/abs/2207.12598) 的引导系数，通常更大的引导系数可以达到更强的文图相关性，但会降低生成内容的多样性，推荐值为4。
+* `height`：图像高度。
+* `width`：图像宽度。
+* `num_inference_steps`：推理步数，通常推理步数越多，计算时间越长，图像质量越高。
+* `seed`：随机种子，固定的随机种子可以使生成的内容固定。
+
 ### 图像生成
 
 以下代码可以调用 `FluxImagePipeline` 加载[麦橘超然](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0)模型生成一张图。如果要加载其他结构的模型，请将代码中的 `FluxImagePipeline` 和 `FluxPipelineConfig` 替换成对应的流水线模块及配置。
