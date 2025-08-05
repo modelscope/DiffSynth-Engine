@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from typing import Dict
 
 
 def enable_sequential_cpu_offload(module: nn.Module, device: str = "cuda"):
@@ -50,3 +51,24 @@ def add_cpu_offload_hook(module: nn.Module, device: str = "cuda", recurse: bool 
     module.register_forward_pre_hook(_forward_pre_hook)
     module.register_forward_hook(_forward_hook)
     setattr(module, "_cpu_offload_enabled", True)
+
+
+def offload_model_to_dict(module: nn.Module) -> Dict[str, torch.Tensor]:
+    offload_param_dict = {}
+    for name, param in module.named_parameters(recurse=True):
+        param.data = param.data.pin_memory()
+        offload_param_dict[name] = param.data
+    for name, buffer in module.named_buffers(recurse=True):
+        buffer.data = buffer.data.pin_memory()
+        offload_param_dict[name] = buffer.data
+    return offload_param_dict
+
+
+def restore_model_from_dict(module: nn.Module, offload_param_dict: Dict[str, torch.Tensor]):
+    for name, param in module.named_parameters(recurse=True):
+        if name in offload_param_dict:
+            param.data = offload_param_dict[name]
+    for name, buffer in module.named_buffers(recurse=True):
+        if name in offload_param_dict:
+            buffer.data = offload_param_dict[name]
+    return offload_param_dict

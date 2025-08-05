@@ -584,4 +584,11 @@ class WanVideoPipeline(BasePipeline):
                 use_fsdp=config.use_fsdp,
                 device="cuda",
             )
+        if config.use_torch_compile:
+            pipe.compile()
         return pipe
+
+    def compile(self):
+        self.dit.compile()
+        if self.dit2 is not None:
+            self.dit2.compile()

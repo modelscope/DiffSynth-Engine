@@ -315,6 +315,7 @@ class QwenImageTransformerBlock(nn.Module):
 
 class QwenImageDiT(PreTrainedModel):
     converter = QwenImageDiTStateDictConverter()
+    _supports_parallelization = True
 
     def __init__(
         self,
@@ -423,3 +424,6 @@ class QwenImageDiT(PreTrainedModel):
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
+
+    def get_fsdp_modules(self):
+        return ["transformer_blocks"]

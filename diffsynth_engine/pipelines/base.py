@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple
 from PIL import Image
 
 from diffsynth_engine.configs import BaseConfig, BaseStateDicts
-from diffsynth_engine.utils.offload import enable_sequential_cpu_offload
+from diffsynth_engine.utils.offload import enable_sequential_cpu_offload, offload_model_to_dict, restore_model_from_dict
 from diffsynth_engine.utils.fp8_linear import enable_fp8_autocast
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
 from diffsynth_engine.utils import logging
@@ -40,6 +40,7 @@ class BasePipeline:
         self.dtype = dtype
         self.offload_mode = None
         self.model_names = []
+        self._offload_param_dict = {}
 
     @classmethod
     def from_pretrained(cls, model_path_or_config: str | BaseConfig) -> "BasePipeline":
@@ -244,6 +245,7 @@ class BasePipeline:
             model = getattr(self, model_name)
             if model is not None:
                 model.to("cpu")
+                self._offload_param_dict[model_name] = offload_model_to_dict(model)
         self.offload_mode = "cpu_offload"
 
     def _enable_sequential_cpu_offload(self):
@@ -277,20 +279,12 @@ class BasePipeline:
         for model_name in self.model_names:
             if model_name not in load_model_names:
                 model = getattr(self, model_name)
-                if (
-                    model is not None
-                    and (p := next(model.parameters(), None)) is not None
-                    and p.device != torch.device("cpu")
-                ):
-                    model.to("cpu")
+                if model is not None and (p := next(model.parameters(), None)) is not None and p.device.type != "cpu":
+                    restore_model_from_dict(model, self._offload_param_dict[model_name])
         # load the needed models to device
         for model_name in load_model_names:
             model = getattr(self, model_name)
-            if (
-                model is not None
-                and (p := next(model.parameters(), None)) is not None
-                and p.device != torch.device(self.device)
-            ):
+            if model is not None and (p := next(model.parameters(), None)) is not None and p.device.type != self.device:
                 model.to(self.device)
         # fresh the cuda cache
         empty_cache()
