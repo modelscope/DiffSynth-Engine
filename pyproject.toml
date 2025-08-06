@@ -31,7 +31,9 @@ dependencies = [
     "imageio[ffmpeg]",
     "yunchang ; sys_platform == 'linux'",
     "onnxruntime",
-    "opencv-python"
+    "opencv-python",
+    "scikit-image",
+    "trimesh"
 ]
 
 [project.optional-dependencies]
@@ -41,7 +43,6 @@ dev = [
     "accelerate",
     "build",
     "ruff",
-    "scikit-image",
     "pytest",
     "pre-commit"
 ]

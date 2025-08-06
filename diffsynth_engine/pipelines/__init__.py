@@ -4,7 +4,7 @@ from .sdxl_image import SDXLImagePipeline
 from .sd_image import SDImagePipeline
 from .wan_video import WanVideoPipeline
 from .qwen_image import QwenImagePipeline
-
+from .hunyuan3d_shape import Hunyuan3DShapePipeline
 
 __all__ = [
     "BasePipeline",
@@ -14,4 +14,5 @@ __all__ = [
     "SDImagePipeline",
     "WanVideoPipeline",
     "QwenImagePipeline",
+    "Hunyuan3DShapePipeline",
 ]

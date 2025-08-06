@@ -46,5 +46,6 @@ class RecifitedFlowScheduler(BaseScheduler):
         else:
             sigmas = self._shift_sigma(sigmas, self.shift)
         timesteps = sigmas * self.num_train_timesteps
+
         sigmas = append_zero(sigmas)
         return sigmas, timesteps

@@ -17,6 +17,7 @@ from .pipelines import (
     SDImagePipeline,
     WanVideoPipeline,
     QwenImagePipeline,
+    Hunyuan3DShapePipeline,
 )
 from .models.flux import FluxControlNet, FluxIPAdapter, FluxRedux
 from .models.sd import SDControlNet
@@ -57,6 +58,7 @@ __all__ = [
     "SDImagePipeline",
     "WanVideoPipeline",
     "QwenImagePipeline",
+    "Hunyuan3DShapePipeline",
     "FluxInpaintingTool",
     "FluxOutpaintingTool",
     "FluxIPAdapterRefTool",

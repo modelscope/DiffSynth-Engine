@@ -111,7 +111,7 @@ def attention(
     q,
     k,
     v,
-    attn_impl: Optional[str] = None,
+    attn_impl: Optional[str] = 'auto',
     attn_mask: Optional[torch.Tensor] = None,
     scale: Optional[float] = None,
     **kwargs,
