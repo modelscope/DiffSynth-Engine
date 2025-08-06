@@ -133,6 +133,7 @@ image.save("image.png")
 * `num_inference_steps`：推理步数，通常推理步数越多，计算时间越长，图像质量越高。
 * `seed`：随机种子，固定的随机种子可以使生成的内容固定。
 
+
 ### 图像生成
 
 以下代码可以调用 `FluxImagePipeline` 加载[麦橘超然](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0)模型生成一张图。如果要加载其他结构的模型，请将代码中的 `FluxImagePipeline` 和 `FluxPipelineConfig` 替换成对应的流水线模块及配置。
@@ -155,15 +156,15 @@ image.save("image.png")
 在图像生成流水线 `pipe` 中，我们可以通过以下参数进行精细的控制：
 
 * `prompt`: 提示词，用于描述生成图像的内容，例如“a cat”。
-* `negative_prompt`：负面提示词，用于描述不希望图像中出现的内容，例如“ugly”。
-* `cfg_scale`：[Classifier-free guidance](https://arxiv.org/abs/2207.12598) 的引导系数，通常更大的引导系数可以达到更强的文图相关性，但会降低生成内容的多样性。
-* `clip_skip`：跳过 [CLIP](https://arxiv.org/abs/2103.00020) 文本编码器的层数，跳过的层数越多，生成的图像与文本的相关性越低，但生成的图像内容可能会出现奇妙的变化。
-* `input_image`：输入图像，用于图生图。
-* `denoising_strength`：去噪力度，当设置为 1 时，执行完整的生成过程，当设置为 0 到 1 之间的值时，会保留输入图像中的部分信息。
-* `height`：图像高度。
-* `width`：图像宽度。
-* `num_inference_steps`：推理步数，通常推理步数越多，计算时间越长，图像质量越高。
-* `seed`：随机种子，固定的随机种子可以使生成的内容固定。
+* `negative_prompt`: 负面提示词，用于描述不希望图像中出现的内容，例如“ugly”。
+* `cfg_scale`: [Classifier-free guidance](https://arxiv.org/abs/2207.12598) 的引导系数，通常更大的引导系数可以达到更强的文图相关性，但会降低生成内容的多样性。
+* `clip_skip`: 跳过 [CLIP](https://arxiv.org/abs/2103.00020) 文本编码器的层数，跳过的层数越多，生成的图像与文本的相关性越低，但生成的图像内容可能会出现奇妙的变化。
+* `input_image`: 输入图像，用于图生图。
+* `denoising_strength`: 去噪力度，当设置为 1 时，执行完整的生成过程，当设置为 0 到 1 之间的值时，会保留输入图像中的部分信息。
+* `height`: 图像高度。
+* `width`: 图像宽度。
+* `num_inference_steps`: 推理步数，通常推理步数越多，计算时间越长，图像质量越高。
+* `seed`: 随机种子，固定的随机种子可以使生成的内容固定。
 
 #### LoRA 加载
 
@@ -220,16 +221,16 @@ save_video(video, "video.mp4")
 在视频生成流水线 `pipe` 中，我们可以通过以下参数进行精细的控制：
 
 * `prompt`: 提示词，用于描述生成图像的内容，例如“a cat”。
-* `negative_prompt`：负面提示词，用于描述不希望图像中出现的内容，例如“ugly”。
-* `cfg_scale`：[Classifier-free guidance](https://arxiv.org/abs/2207.12598) 的引导系数，通常更大的引导系数可以达到更强的文图相关性，但会降低生成内容的多样性。
-* `input_image`：输入图像，只在图生视频模型中有效，例如 [Wan-AI/Wan2.1-I2V-14B-720P](https://modelscope.cn/models/Wan-AI/Wan2.1-I2V-14B-720P)。
-* `input_video`：输入视频，用于视频生视频。
-* `denoising_strength`：去噪力度，当设置为 1 时，执行完整的生成过程，当设置为 0 到 1 之间的值时，会保留输入视频中的部分信息。
-* `height`：视频帧高度。
-* `width`：视频帧宽度。
-* `num_frames`：视频帧数。
-* `num_inference_steps`：推理步数，通常推理步数越多，计算时间越长，图像质量越高。
-* `seed`：随机种子，固定的随机种子可以使生成的内容固定。
+* `negative_prompt`: 负面提示词，用于描述不希望图像中出现的内容，例如“ugly”。
+* `cfg_scale`: [Classifier-free guidance](https://arxiv.org/abs/2207.12598) 的引导系数，通常更大的引导系数可以达到更强的文图相关性，但会降低生成内容的多样性。
+* `input_image`: 输入图像，只在图生视频模型中有效，例如 [Wan-AI/Wan2.1-I2V-14B-720P](https://modelscope.cn/models/Wan-AI/Wan2.1-I2V-14B-720P)。
+* `input_video`: 输入视频，用于视频生视频。
+* `denoising_strength`: 去噪力度，当设置为 1 时，执行完整的生成过程，当设置为 0 到 1 之间的值时，会保留输入视频中的部分信息。
+* `height`: 视频帧高度。
+* `width`: 视频帧宽度。
+* `num_frames`: 视频帧数。
+* `num_inference_steps`: 推理步数，通常推理步数越多，计算时间越长，图像质量越高。
+* `seed`: 随机种子，固定的随机种子可以使生成的内容固定。
 
 #### LoRA 加载
 
