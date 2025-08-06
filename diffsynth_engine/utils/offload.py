@@ -4,6 +4,7 @@ from typing import Dict
 
 
 def enable_sequential_cpu_offload(module: nn.Module, device: str = "cuda"):
+    module = module.to("cpu")
     if len(list(module.children())) == 0:
         if len(list(module.parameters())) > 0 or len(list(module.buffers())) > 0:
             # leaf module with parameters or buffers
@@ -54,6 +55,7 @@ def add_cpu_offload_hook(module: nn.Module, device: str = "cuda", recurse: bool 
 
 
 def offload_model_to_dict(module: nn.Module) -> Dict[str, torch.Tensor]:
+    module = module.to("cpu")
     offload_param_dict = {}
     for name, param in module.named_parameters(recurse=True):
         param.data = param.data.pin_memory()
@@ -71,4 +73,3 @@ def restore_model_from_dict(module: nn.Module, offload_param_dict: Dict[str, tor
     for name, buffer in module.named_buffers(recurse=True):
         if name in offload_param_dict:
             buffer.data = offload_param_dict[name]
-    return offload_param_dict

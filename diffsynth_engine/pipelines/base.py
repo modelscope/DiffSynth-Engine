@@ -244,7 +244,6 @@ class BasePipeline:
         for model_name in self.model_names:
             model = getattr(self, model_name)
             if model is not None:
-                model.to("cpu")
                 self._offload_param_dict[model_name] = offload_model_to_dict(model)
         self.offload_mode = "cpu_offload"
 
@@ -252,7 +251,6 @@ class BasePipeline:
         for model_name in self.model_names:
             model = getattr(self, model_name)
             if model is not None:
-                model.to("cpu")
                 enable_sequential_cpu_offload(model, self.device)
         self.offload_mode = "sequential_cpu_offload"
 
