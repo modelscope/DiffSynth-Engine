@@ -90,7 +90,7 @@ After the model is downloaded, load the model with the corresponding pipeline an
 
 ### Image Generation(Qwen-Image)
 
-The following code calls `QwenImagePipeline` to load the [Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image) model and generate an image. Recommended resolutions are 928×1664, 1104×1472, 1328×1328, 1472×1104, and 1664×928, cfg_scale, with a suggested cfg_scale of 4. If no negative_prompt is provided, it defaults to a single space character (not an empty string). For multi-GPU parallelism, currently only cfg parallelism is supported (parallelism=2), with other optimization efforts underway.
+The following code calls `QwenImagePipeline` to load the [Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image) model and generate an image. Recommended resolutions are 928×1664, 1104×1472, 1328×1328, 1472×1104, and 1664×928, with a suggested cfg_scale of 4. If no negative_prompt is provided, it defaults to a single space character (not an empty string). For multi-GPU parallelism, currently only cfg parallelism is supported (parallelism=2), with other optimization efforts underway.
 
 ```python
 from diffsynth_engine import fetch_model, QwenImagePipeline, QwenImagePipelineConfig
