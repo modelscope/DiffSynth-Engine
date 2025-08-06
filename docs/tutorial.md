@@ -88,11 +88,9 @@ We will continuously update DiffSynth-Engine to support more models. (Wan2.2 LoR
 
 After the model is downloaded, load the model with the corresponding pipeline and perform inference.
 
-
 ### Image Generation(Qwen-Image)
 
 The following code calls `QwenImagePipeline` to load the [Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image) model and generate an image. Recommended resolutions are 928×1664, 1104×1472, 1328×1328, 1472×1104, and 1664×928, cfg_scale, with a suggested cfg_scale of 4. If no negative_prompt is provided, it defaults to a single space character (not an empty string). For multi-GPU parallelism, currently only cfg parallelism is supported (parallelism=2), with other optimization efforts underway.
-
 
 ```python
 from diffsynth_engine import fetch_model, QwenImagePipeline, QwenImagePipelineConfig
@@ -123,18 +121,17 @@ image.save("image.png")
 
 Please note that if some necessary modules, like text encoders, are missing from a model repository, the pipeline will automatically download the required files.
 
-#### Detailed Parameters(Qwen-Image)
+### Detailed Parameters(Qwen-Image)
 
 In the image generation pipeline `pipe`, we can use the following parameters for fine-grained control:
 
 * `prompt`: The prompt, used to describe the content of the generated image, It supports multiple languages (Chinese, English, Japanese, etc.), e.g., “一只猫” (Chinese), "a cat" (English), or "庭を走る猫" (Japanese).
-* `negative_prompt`：The negative prompt, used to describe content you do not want in the image, it defaults to a single space character (not an empty string), e.g., "ugly".
-* `cfg_scale`：The guidance scale for [Classifier-Free Guidance](https://arxiv.org/abs/2207.12598). A larger value usually results in stronger correlation between the text and the image but reduces the diversity of the generated content.
-*   `height`: Image height.
-*   `width`: Image width.
-*   `num_inference_steps`: The number of inference steps. Generally, more steps lead to longer computation time but higher image quality.
-*   `seed`: The random seed. A fixed seed ensures reproducible results.
-
+* `negative_prompt`: The negative prompt, used to describe content you do not want in the image, it defaults to a single space character (not an empty string), e.g., "ugly".
+* `cfg_scale`: The guidance scale for [Classifier-Free Guidance](https://arxiv.org/abs/2207.12598). A larger value usually results in stronger correlation between the text and the image but reduces the diversity of the generated content.
+* `height`: Image height.
+* `width`: Image width.
+* `num_inference_steps`: The number of inference steps. Generally, more steps lead to longer computation time but higher image quality.
+* `seed`: The random seed. A fixed seed ensures reproducible results.
 
 ### Image Generation
 

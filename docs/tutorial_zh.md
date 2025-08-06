@@ -2,13 +2,13 @@
 
 ## 安装
 
-在使用 DiffSynth-Engine 前，请先确保您的硬件设备满足以下要求：
+在使用 DiffSynth-Engine 前，请先确保您的硬件设备满足以下要求:
 
 * NVIDIA GPU CUDA 计算能力 8.6+（例如 RTX 50 Series、RTX 40 Series、RTX 30 Series 等，详见 [NVidia 文档](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#compute-capabilities)）或 Apple Silicon M 系列芯片
 
-以及 Python 环境需求：Python 3.10+。
+以及 Python 环境需求: Python 3.10+。
 
-使用 `pip3` 工具从 PyPI 安装 DiffSynth-Engine：
+使用 `pip3` 工具从 PyPI 安装 DiffSynth-Engine:
 
 ```shell
 pip3 install diffsynth-engine
@@ -64,7 +64,7 @@ model_path = fetch_model("Wan-AI/Wan2.1-T2V-14B", path="diffusion_pytorch_model*
 
 ## 模型类型
 
-Diffusion 模型包含多种多样的模型结构，每种模型由对应的流水线进行加载和推理，目前我们支持的模型类型包括：
+Diffusion 模型包含多种多样的模型结构，每种模型由对应的流水线进行加载和推理，目前我们支持的模型类型包括:
 
 | 模型结构         | 样例                                                         | 流水线              |
 | --------------- | ------------------------------------------------------------ | ------------------- |
@@ -123,15 +123,15 @@ image.save("image.png")
 
 #### 详细参数(Qwen-Image)
 
-在图像生成流水线 `pipe` 中，我们可以通过以下参数进行精细的控制：
+在图像生成流水线 `pipe` 中，我们可以通过以下参数进行精细的控制:
 
 * `prompt`: 提示词，用于描述生成图像的内容，支持多种语言(中文/英文/日文等)，例如“一只猫”/"a cat"/"庭を走る猫"。
-* `negative_prompt`：负面提示词，用于描述不希望图像中出现的内容，例如“ugly”，默认为一个空格而不是空字符串， " "。
-* `cfg_scale`：[Classifier-free guidance](https://arxiv.org/abs/2207.12598) 的引导系数，通常更大的引导系数可以达到更强的文图相关性，但会降低生成内容的多样性，推荐值为4。
-* `height`：图像高度。
-* `width`：图像宽度。
-* `num_inference_steps`：推理步数，通常推理步数越多，计算时间越长，图像质量越高。
-* `seed`：随机种子，固定的随机种子可以使生成的内容固定。
+* `negative_prompt`: 负面提示词，用于描述不希望图像中出现的内容，例如“ugly”，默认为一个空格而不是空字符串， " "。
+* `cfg_scale`:[Classifier-free guidance](https://arxiv.org/abs/2207.12598) 的引导系数，通常更大的引导系数可以达到更强的文图相关性，但会降低生成内容的多样性，推荐值为4。
+* `height`: 图像高度。
+* `width`: 图像宽度。
+* `num_inference_steps`: 推理步数，通常推理步数越多，计算时间越长，图像质量越高。
+* `seed`: 随机种子，固定的随机种子可以使生成的内容固定。
 
 
 ### 图像生成
@@ -153,7 +153,7 @@ image.save("image.png")
 
 #### 详细参数
 
-在图像生成流水线 `pipe` 中，我们可以通过以下参数进行精细的控制：
+在图像生成流水线 `pipe` 中，我们可以通过以下参数进行精细的控制:
 
 * `prompt`: 提示词，用于描述生成图像的内容，例如“a cat”。
 * `negative_prompt`: 负面提示词，用于描述不希望图像中出现的内容，例如“ugly”。
@@ -218,7 +218,7 @@ save_video(video, "video.mp4")
 
 #### 详细参数
 
-在视频生成流水线 `pipe` 中，我们可以通过以下参数进行精细的控制：
+在视频生成流水线 `pipe` 中，我们可以通过以下参数进行精细的控制:
 
 * `prompt`: 提示词，用于描述生成图像的内容，例如“a cat”。
 * `negative_prompt`: 负面提示词，用于描述不希望图像中出现的内容，例如“ugly”。
