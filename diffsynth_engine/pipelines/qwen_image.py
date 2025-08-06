@@ -41,19 +41,32 @@ class QwenImageLoRAConverter(LoRAStateDictConverter):
         dit_dict = {}
         for key, param in lora_state_dict.items():
             origin_key = key
-            if "lora_A.default.weight" not in key:
+            lora_a_suffix = None
+            if "lora_A.default.weight" in key:
+                lora_a_suffix = "lora_A.default.weight"
+            elif "lora_A.weight" in key:
+                lora_a_suffix = "lora_A.weight"
+
+            if lora_a_suffix is None:
                 continue
+
             lora_args = {}
             lora_args["down"] = param
-            lora_args["up"] = lora_state_dict[origin_key.replace("lora_A.default.weight", "lora_B.default.weight")]
+
+            lora_b_suffix = lora_a_suffix.replace("lora_A", "lora_B")
+            lora_args["up"] = lora_state_dict[origin_key.replace(lora_a_suffix, lora_b_suffix)]
+
             lora_args["rank"] = lora_args["up"].shape[1]
-            alpha_key = origin_key.replace("lora_A.default.weight", "alpha").replace("lora_up.default.weight", "alpha")
+            alpha_key = origin_key.replace("lora_up", "lora_A").replace(lora_a_suffix, "alpha")
+
             if alpha_key in lora_state_dict:
                 alpha = lora_state_dict[alpha_key]
             else:
                 alpha = lora_args["rank"]
             lora_args["alpha"] = alpha
-            key = key.replace(".lora_A.default.weight", "")
+
+            key = key.replace(f".{lora_a_suffix}", "")
+
             if key.startswith("transformer") and "attn.to_out.0" in key:
                 key = key.replace("attn.to_out.0", "attn.to_out")
             dit_dict[key] = lora_args
