@@ -41,6 +41,7 @@ class BasePipeline:
         self.offload_mode = None
         self.model_names = []
         self._offload_param_dict = {}
+        self.offload_to_disk = False
 
     @classmethod
     def from_pretrained(cls, model_path_or_config: str | BaseConfig) -> "BasePipeline":
@@ -228,19 +229,23 @@ class BasePipeline:
                 model.eval()
         return self
 
-    def enable_cpu_offload(self, offload_mode: str):
-        valid_offload_mode = ("cpu_offload", "sequential_cpu_offload")
+    def enable_cpu_offload(self, offload_mode: str | None, offload_to_disk:bool = False):
+        valid_offload_mode = ("cpu_offload", "sequential_cpu_offload", "disable", None)
         if offload_mode not in valid_offload_mode:
             raise ValueError(f"offload_mode must be one of {valid_offload_mode}, but got {offload_mode}")
         if self.device == "cpu" or self.device == "mps":
             logger.warning("must set an non cpu device for pipeline before calling enable_cpu_offload")
             return
-        if offload_mode == "cpu_offload":
+        if offload_mode is None or offload_mode == "disable":
+            self._disable_offload()
+        elif offload_mode == "cpu_offload":
             self._enable_model_cpu_offload()
         elif offload_mode == "sequential_cpu_offload":
             self._enable_sequential_cpu_offload()
+        self.offload_to_disk = offload_to_disk
 
-    def _enable_model_cpu_offload(self):
+
+    def _enable_model_cpu_offload(self):        
         for model_name in self.model_names:
             model = getattr(self, model_name)
             if model is not None:
@@ -253,6 +258,15 @@ class BasePipeline:
             if model is not None:
                 enable_sequential_cpu_offload(model, self.device)
         self.offload_mode = "sequential_cpu_offload"
+    
+    def _disable_offload(self):
+        self.offload_mode = None                
+        self._offload_param_dict = {}        
+        for model_name in self.model_names:
+            model = getattr(self, model_name)
+            if model is not None:
+                model.to(self.device)
+
 
     def enable_fp8_autocast(
         self, model_names: List[str], compute_dtype: torch.dtype = torch.bfloat16, use_fp8_linear: bool = False
@@ -282,10 +296,26 @@ class BasePipeline:
         # load the needed models to device
         for model_name in load_model_names:
             model = getattr(self, model_name)
+            if model is None:
+                raise ValueError(f"model {model_name} is not loaded, maybe this model has been destroyed by model_lifecycle_finish function with offload_to_disk=True")
             if model is not None and (p := next(model.parameters(), None)) is not None and p.device.type != self.device:
                 model.to(self.device)
         # fresh the cuda cache
         empty_cache()
 
+    def model_lifecycle_finish(self, model_names: List[str] | None = None):
+        if not self.offload_to_disk or self.offload_mode is None:
+            return 
+        for model_name in model_names:
+            model = getattr(self, model_name)
+            del model
+            if model_name in self._offload_param_dict:
+                del self._offload_param_dict[model_name]
+            setattr(self, model_name, None)
+            print(f"model {model_name} has been deleted from memory")
+            logger.info(f"model {model_name} has been deleted from memory")
+            empty_cache()
+        
+        
     def compile(self):
         raise NotImplementedError(f"{self.__class__.__name__} does not support compile")

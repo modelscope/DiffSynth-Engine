@@ -208,7 +208,7 @@ class QwenImagePipeline(BasePipeline):
         pipe.eval()
 
         if config.offload_mode is not None:
-            pipe.enable_cpu_offload(config.offload_mode)
+            pipe.enable_cpu_offload(config.offload_mode, config.offload_to_disk)
 
         if config.parallelism > 1:
             pipe = ParallelWrapper(
@@ -393,6 +393,7 @@ class QwenImagePipeline(BasePipeline):
             negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt(negative_prompt, 1, 4096)
         else:
             negative_prompt_embeds, negative_prompt_embeds_mask = None, None
+        self.model_lifecycle_finish(["encoder"])
 
         hide_progress = dist.is_initialized() and dist.get_rank() != 0
         for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
@@ -412,6 +413,7 @@ class QwenImagePipeline(BasePipeline):
             # UI
             if progress_callback is not None:
                 progress_callback(i, len(timesteps), "DENOISING")
+        self.model_lifecycle_finish(["dit"])
         # Decode image
         self.load_models_to_device(["vae"])
         latents = rearrange(latents, "B C H W -> B C 1 H W")
@@ -423,5 +425,6 @@ class QwenImagePipeline(BasePipeline):
         )
         image = self.vae_output_to_image(vae_output)
         # Offload all models
+        self.model_lifecycle_finish(["vae"])        
         self.load_models_to_device([])
         return image

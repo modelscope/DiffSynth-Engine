@@ -16,6 +16,7 @@ class BaseConfig:
     vae_tile_stride: int | Tuple[int, int] = 256
     device: str = "cuda"
     offload_mode: Optional[str] = None
+    offload_to_disk: bool = False
 
 
 @dataclass
@@ -62,11 +63,13 @@ class SDPipelineConfig(BaseConfig):
         model_path: str | os.PathLike | List[str | os.PathLike],
         device: str = "cuda",
         offload_mode: Optional[str] = None,
+        offload_to_disk: bool = False,
     ) -> "SDPipelineConfig":
         return cls(
             model_path=model_path,
             device=device,
             offload_mode=offload_mode,
+            offload_to_disk=offload_to_disk,
         )
 
 
@@ -87,11 +90,13 @@ class SDXLPipelineConfig(BaseConfig):
         model_path: str | os.PathLike | List[str | os.PathLike],
         device: str = "cuda",
         offload_mode: Optional[str] = None,
+        offload_to_disk: bool = False,
     ) -> "SDXLPipelineConfig":
         return cls(
             model_path=model_path,
             device=device,
             offload_mode=offload_mode,
+            offload_to_disk=offload_to_disk,
         )
 
 
@@ -116,6 +121,7 @@ class FluxPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Ba
         device: str = "cuda",
         parallelism: int = 1,
         offload_mode: Optional[str] = None,
+        offload_to_disk: bool = False,
     ) -> "FluxPipelineConfig":
         return cls(
             model_path=model_path,
@@ -123,6 +129,7 @@ class FluxPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Ba
             parallelism=parallelism,
             use_fsdp=True,
             offload_mode=offload_mode,
+            offload_to_disk=offload_to_disk,
         )
 
     def __post_init__(self):
@@ -160,6 +167,7 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
         device: str = "cuda",
         parallelism: int = 1,
         offload_mode: Optional[str] = None,
+        offload_to_disk: bool = False,
     ) -> "WanPipelineConfig":
         return cls(
             model_path=model_path,
@@ -169,6 +177,7 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
             use_cfg_parallel=True,
             use_fsdp=True,
             offload_mode=offload_mode,
+            offload_to_disk=offload_to_disk,
         )
 
     def __post_init__(self):
@@ -196,6 +205,7 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
         device: str = "cuda",
         parallelism: int = 1,
         offload_mode: Optional[str] = None,
+        offload_to_disk: bool = False,
     ) -> "QwenImagePipelineConfig":
         return cls(
             model_path=model_path,
@@ -206,6 +216,7 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
             use_cfg_parallel=True,
             use_fsdp=True,
             offload_mode=offload_mode,
+            offload_to_disk=offload_to_disk,
         )
 
     def __post_init__(self):
