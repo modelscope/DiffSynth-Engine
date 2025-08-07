@@ -274,6 +274,7 @@ class BasePipeline:
         for model_name in model_names:
             model = getattr(self, model_name)
             if model is not None:
+                model.to(device=self.device, dtype=torch.float8_e4m3fn)                
                 enable_fp8_autocast(model, compute_dtype, use_fp8_linear)
         self.fp8_autocast_enabled = True
 

@@ -209,6 +209,18 @@ class QwenImagePipeline(BasePipeline):
 
         if config.offload_mode is not None:
             pipe.enable_cpu_offload(config.offload_mode, config.offload_to_disk)
+        
+        if config.model_dtype == torch.float8_e4m3fn:
+            pipe.dtype = torch.bfloat16  # compute dtype
+            pipe.enable_fp8_autocast(
+                model_names=["dit"], compute_dtype=pipe.dtype, use_fp8_linear=config.use_fp8_linear
+            )
+
+        if config.encoder_dtype == torch.float8_e4m3fn:
+            pipe.dtype = torch.bfloat16  # compute dtype
+            pipe.enable_fp8_autocast(
+                model_names=["encoder"], compute_dtype=pipe.dtype, use_fp8_linear=config.use_fp8_linear
+            )
 
         if config.parallelism > 1:
             pipe = ParallelWrapper(
