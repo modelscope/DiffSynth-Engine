@@ -20,6 +20,22 @@ logger = logging.get_logger(__name__)
 
 MODEL_SOURCES = ["modelscope", "civitai"]
 
+# Global registry for custom fetch function
+_CUSTOM_MODELSCOPE_FETCHER = None
+
+
+def register_fetch_modelscope_model(fetch_func):
+    """
+    Register a global custom fetch function for ModelScope models.
+
+    Args:
+        fetch_func (callable): Custom fetch function that should accept the same parameters
+                               as fetch_modelscope_model and return the model path(s)
+    """
+    global _CUSTOM_MODELSCOPE_FETCHER
+    _CUSTOM_MODELSCOPE_FETCHER = fetch_func
+    logger.info("Registered global custom ModelScope fetcher")
+
 
 def fetch_model(
     model_uri: str,
@@ -43,6 +59,11 @@ def fetch_modelscope_model(
     access_token: Optional[str] = None,
     fetch_safetensors: bool = True,
 ) -> str:
+    # Check if there's a global custom fetcher registered
+    if _CUSTOM_MODELSCOPE_FETCHER is not None:
+        logger.info(f"Using global custom fetcher for model: {model_id}")
+        return _CUSTOM_MODELSCOPE_FETCHER(model_id, revision, path, access_token, fetch_safetensors)
+
     lock_file_name = f"modelscope.{model_id.replace('/', '--')}.{revision if revision else '__version'}.lock"
     lock_file_path = os.path.join(DIFFSYNTH_FILELOCK_DIR, lock_file_name)
     ensure_directory_exists(lock_file_path)
