@@ -37,6 +37,15 @@ def register_fetch_modelscope_model(fetch_func):
     logger.info("Registered global custom ModelScope fetcher")
 
 
+def reset_fetch_modelscope_model():
+    """
+    Reset the global custom fetch function for ModelScope models.
+    """
+    global _CUSTOM_MODELSCOPE_FETCHER
+    _CUSTOM_MODELSCOPE_FETCHER = None
+    logger.info("Reset global custom ModelScope fetcher")
+
+
 def fetch_model(
     model_uri: str,
     revision: Optional[str] = None,
