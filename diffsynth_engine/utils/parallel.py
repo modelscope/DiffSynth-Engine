@@ -331,19 +331,14 @@ class ParallelWrapper:
         master_port: int = 29500,
         device: str = "cuda",
     ):
-        current_method = mp.get_start_method(allow_none=True)
-        if current_method is None or current_method != "spawn":
-            try:
-                mp.set_start_method("spawn")
-            except RuntimeError as e:
-                raise RuntimeError("Failed to set start method to spawn:", e)
         super().__init__()
         self.config = module.config if isinstance(module, BasePipeline) else None
         self._module_name = module.__class__.__name__
 
         self.world_size = cfg_degree * sp_ulysses_degree * sp_ring_degree * tp_degree
-        self.queue_in = mp.Queue()
-        self.queue_out = mp.Queue()
+        spawn_ctx = mp.get_context("spawn")
+        self.queue_in = spawn_ctx.Queue()
+        self.queue_out = spawn_ctx.Queue()
         self.ctx = mp.spawn(
             _worker_loop,
             args=(
