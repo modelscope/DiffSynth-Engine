@@ -172,31 +172,40 @@ class SDImagePipeline(BasePipeline):
         else:
             config = model_path_or_config
 
-        logger.info(f"loading state dict from {config.model_path} ...")
-        unet_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
+        return cls.from_state_dict(SDStateDicts(), config)
 
-        if config.vae_path is not None:
-            logger.info(f"loading state dict from {config.vae_path} ...")
-            vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
-        else:
-            vae_state_dict = unet_state_dict
-
-        if config.clip_path is not None:
-            logger.info(f"loading state dict from {config.clip_path} ...")
-            clip_state_dict = cls.load_model_checkpoint(config.clip_path, device="cpu", dtype=config.clip_dtype)
-        else:
-            clip_state_dict = unet_state_dict
-
+    @classmethod
+    def from_state_dict(cls, state_dicts: SDStateDicts, config: SDPipelineConfig) -> "SDImagePipeline":
+        if state_dicts.model is None:
+            if config.model_path is None:
+                raise ValueError("`model_path` cannot be empty")
+            logger.info(f"loading state dict from {config.model_path} ...")
+            state_dicts.model = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
+        
+        if state_dicts.vae is None:
+            if config.vae_path is None:
+                state_dicts.vae = state_dicts.model
+            else:
+                logger.info(f"loading state dict from {config.vae_path} ...")
+                state_dicts.vae = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
+        
+        if state_dicts.clip is None:
+            if config.clip_path is None:
+                state_dicts.clip = state_dicts.model
+            else:
+                logger.info(f"loading state dict from {config.clip_path} ...")
+                state_dicts.clip = cls.load_model_checkpoint(config.clip_path, device="cpu", dtype=config.clip_dtype)
+        
         init_device = "cpu" if config.offload_mode is not None else config.device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         with LoRAContext():
-            text_encoder = SDTextEncoder.from_state_dict(clip_state_dict, device=init_device, dtype=config.clip_dtype)
-            unet = SDUNet.from_state_dict(unet_state_dict, device=init_device, dtype=config.model_dtype)
+            text_encoder = SDTextEncoder.from_state_dict(state_dicts.clip, device=init_device, dtype=config.clip_dtype)
+            unet = SDUNet.from_state_dict(state_dicts.model, device=init_device, dtype=config.model_dtype)
         vae_decoder = SDVAEDecoder.from_state_dict(
-            vae_state_dict, device=init_device, dtype=config.vae_dtype, attn_impl="sdpa"
+            state_dicts.vae, device=init_device, dtype=config.vae_dtype, attn_impl="sdpa"
         )
         vae_encoder = SDVAEEncoder.from_state_dict(
-            vae_state_dict, device=init_device, dtype=config.vae_dtype, attn_impl="sdpa"
+            state_dicts.vae, device=init_device, dtype=config.vae_dtype, attn_impl="sdpa"
         )
 
         pipe = cls(
@@ -212,10 +221,6 @@ class SDImagePipeline(BasePipeline):
         if config.offload_mode is not None:
             pipe.enable_cpu_offload(config.offload_mode)
         return pipe
-
-    @classmethod
-    def from_state_dict(cls, state_dicts: SDStateDicts, pipeline_config: SDPipelineConfig) -> "SDImagePipeline":
-        raise NotImplementedError()
 
     def denoising_model(self):
         return self.unet
