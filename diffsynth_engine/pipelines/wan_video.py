@@ -417,7 +417,7 @@ class WanVideoPipeline(BasePipeline):
                 cfg_scale_ = cfg_scale if isinstance(cfg_scale, float) else cfg_scale[0]
 
             timestep = timestep * mask[:, :, :, ::2, ::2].flatten()  # seq_len
-            timestep = timestep.to(dtype=self.config.model_dtype, device=self.device)
+            timestep = timestep.to(device=self.device)
             # Classifier-free guidance
             noise_pred = self.predict_noise_with_cfg(
                 model=model,
