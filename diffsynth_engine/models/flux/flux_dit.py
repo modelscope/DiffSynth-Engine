@@ -14,7 +14,6 @@ from diffsynth_engine.models.basic.transformer_helper import (
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic import attention as attention_ops
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
@@ -503,15 +502,13 @@ class FluxDiT(PreTrainedModel):
         in_channel: int = 64,
         attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls,
-                device=device,
-                dtype=dtype,
-                in_channel=in_channel,
-                attn_kwargs=attn_kwargs,
-            )
-            model = model.requires_grad_(False)  # for loading gguf
+        model = cls(
+            device="meta",
+            dtype=dtype,
+            in_channel=in_channel,
+            attn_kwargs=attn_kwargs,
+        )
+        model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

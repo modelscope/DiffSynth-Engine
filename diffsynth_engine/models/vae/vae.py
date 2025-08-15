@@ -7,7 +7,6 @@ from typing import Dict
 from diffsynth_engine.models.basic.attention import Attention
 from diffsynth_engine.models.basic.unet_helper import ResnetBlock, UpSampler, DownSampler
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import VAE_CONFIG_FILE
 from diffsynth_engine.utils import logging
 
@@ -209,18 +208,18 @@ class VAEDecoder(PreTrainedModel):
         use_post_quant_conv: bool = True,
         attn_impl: str = "auto",
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls,
-                latent_channels=latent_channels,
-                scaling_factor=scaling_factor,
-                shift_factor=shift_factor,
-                use_post_quant_conv=use_post_quant_conv,
-                attn_impl=attn_impl,
-                device=device,
-                dtype=dtype,
-            )
-        model.load_state_dict(state_dict)
+        model = cls(
+            latent_channels=latent_channels,
+            scaling_factor=scaling_factor,
+            shift_factor=shift_factor,
+            use_post_quant_conv=use_post_quant_conv,
+            attn_impl=attn_impl,
+            device="meta",
+            dtype=dtype,
+        )
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
     @classmethod
@@ -321,18 +320,18 @@ class VAEEncoder(PreTrainedModel):
         use_quant_conv: bool = True,
         attn_impl: str = "auto",
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls,
-                latent_channels=latent_channels,
-                scaling_factor=scaling_factor,
-                shift_factor=shift_factor,
-                use_quant_conv=use_quant_conv,
-                attn_impl=attn_impl,
-                device=device,
-                dtype=dtype,
-            )
-        model.load_state_dict(state_dict)
+        model = cls(
+            latent_channels=latent_channels,
+            scaling_factor=scaling_factor,
+            shift_factor=shift_factor,
+            use_quant_conv=use_quant_conv,
+            attn_impl=attn_impl,
+            device="meta",
+            dtype=dtype,
+        )
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
     @classmethod
@@ -393,17 +392,17 @@ class VAE(PreTrainedModel):
         use_post_quant_conv: bool = True,
         attn_impl: str = "auto",
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls,
-                latent_channels=latent_channels,
-                scaling_factor=scaling_factor,
-                shift_factor=shift_factor,
-                use_quant_conv=use_quant_conv,
-                use_post_quant_conv=use_post_quant_conv,
-                attn_impl=attn_impl,
-                device=device,
-                dtype=dtype,
-            )
-        model.load_state_dict(state_dict)
+        model = cls(
+            latent_channels=latent_channels,
+            scaling_factor=scaling_factor,
+            shift_factor=shift_factor,
+            use_quant_conv=use_quant_conv,
+            use_post_quant_conv=use_post_quant_conv,
+            attn_impl=attn_impl,
+            device="meta",
+            dtype=dtype,
+        )
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model

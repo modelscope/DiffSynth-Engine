@@ -8,7 +8,6 @@ from einops import rearrange
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import (
     WAN2_1_DIT_T2V_1_3B_CONFIG_FILE,
     WAN2_1_DIT_I2V_14B_CONFIG_FILE,
@@ -409,11 +408,10 @@ class WanDiT(PreTrainedModel):
         attn_kwargs: Optional[Dict[str, Any]] = None,
         assign: bool = True,
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype, attn_kwargs=attn_kwargs)
-            model = model.requires_grad_(False)
+        model = cls(**config, device="meta", dtype=dtype, attn_kwargs=attn_kwargs)
+        model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=assign)
-        model.to(device=device, dtype=dtype)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
     def get_tp_plan(self):

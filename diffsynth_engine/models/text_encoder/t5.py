@@ -6,7 +6,6 @@ from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic.relative_position_emb import RelativePositionEmbedding
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
 from diffsynth_engine.models.basic.attention import Attention
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils import logging
 
@@ -212,9 +211,8 @@ class T5EncoderModel(PreTrainedModel):
 
     @classmethod
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype, **kwargs):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, **kwargs)
-            model.requires_grad_(False)  # for loading gguf
+        model = cls(device="meta", dtype=dtype, **kwargs)
+        model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

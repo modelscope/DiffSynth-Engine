@@ -1,10 +1,10 @@
 import torch
 import torch.distributed as dist
-from typing import Callable, List, Tuple, Optional
+from typing import Callable, List, Dict, Tuple, Optional
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.configs import WanPipelineConfig
+from diffsynth_engine.configs import WanPipelineConfig, WanStateDicts
 from diffsynth_engine.algorithm.noise_scheduler.flow_match import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.models.wan.wan_dit import WanDiT
@@ -148,8 +148,8 @@ class WanVideoPipeline(BasePipeline):
         self.dit.unload_loras()
         self.text_encoder.unload_loras()
 
-    def denoising_model(self):
-        return self.dit
+    def get_default_fps(self) -> int:
+        return self.config.fps
 
     def encode_prompt(self, prompt):
         ids, mask = self.tokenizer(prompt, return_mask=True, add_special_tokens=True)
@@ -466,58 +466,28 @@ class WanVideoPipeline(BasePipeline):
             logger.info(f"loading dit state dict from {config.model_path} ...")
             dit_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
 
-        # determine wan dit type by model params
-        dit_type = None
-        if dit2_state_dict is not None and dit2_state_dict["patch_embedding.weight"].shape[1] == 36:
-            dit_type = "wan2.2-i2v-a14b"
-        elif dit2_state_dict is not None and dit2_state_dict["patch_embedding.weight"].shape[1] == 16:
-            dit_type = "wan2.2-t2v-a14b"
-        elif dit_state_dict["patch_embedding.weight"].shape[1] == 48:
-            dit_type = "wan2.2-ti2v-5b"
-        elif "img_emb.emb_pos" in dit_state_dict:
-            dit_type = "wan2.1-flf2v-14b"
-        elif "img_emb.proj.0.weight" in dit_state_dict:
-            dit_type = "wan2.1-i2v-14b"
-        elif "blocks.39.self_attn.norm_q.weight" in dit_state_dict:
-            dit_type = "wan2.1-t2v-14b"
-        else:
-            dit_type = "wan2.1-t2v-1.3b"
+        model_state_dict = dit_state_dict
+        if dit2_state_dict is not None:
+            model_state_dict = {
+                "high_noise_model": dit_state_dict,
+                "low_noise_model": dit2_state_dict,
+            }
 
         if config.t5_path is None:
             config.t5_path = fetch_model("muse/wan2.1-umt5", path="umt5.safetensors")
-        if config.vae_path is None:
-            config.vae_path = (
-                fetch_model("muse/wan2.2-vae", path="vae.safetensors")
-                if dit_type == "wan2.2-ti2v-5b"
-                else fetch_model("muse/wan2.1-vae", path="vae.safetensors")
-            )
-
         logger.info(f"loading t5 state dict from {config.t5_path} ...")
         t5_state_dict = cls.load_model_checkpoint(config.t5_path, device="cpu", dtype=config.t5_dtype)
 
+        if config.vae_path is None:
+            config.vae_path = (
+                fetch_model("muse/wan2.2-vae", path="vae.safetensors")
+                if cls._get_dit_type(model_state_dict) == "wan2.2-ti2v-5b"
+                else fetch_model("muse/wan2.1-vae", path="vae.safetensors")
+            )
         logger.info(f"loading vae state dict from {config.vae_path} ...")
         vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
 
-        # determine wan vae type by model params
-        vae_type = "wan2.1-vae"
-        if vae_state_dict["encoder.conv1.weight"].shape[1] == 12:  # in_channels
-            vae_type = "wan2.2-vae"
-
-        # default params from model config
-        vae_config: dict = WanVideoVAE.get_model_config(vae_type)
-        model_config: dict = WanDiT.get_model_config(dit_type)
-        config.boundary = model_config.pop("boundary", -1.0)
-        config.shift = model_config.pop("shift", 5.0)
-        config.cfg_scale = model_config.pop("cfg_scale", 5.0)
-        config.num_inference_steps = model_config.pop("num_inference_steps", 50)
-        config.fps = model_config.pop("fps", 16)
-
-        init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
-        tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
-        text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=config.t5_dtype)
-        vae = WanVideoVAE.from_state_dict(vae_state_dict, config=vae_config, device=init_device, dtype=config.vae_dtype)
-
-        image_encoder = None
+        image_encoder_state_dict = None
         if config.image_encoder_path is not None:
             logger.info(f"loading state dict from {config.image_encoder_path} ...")
             image_encoder_state_dict = cls.load_model_checkpoint(
@@ -525,11 +495,64 @@ class WanVideoPipeline(BasePipeline):
                 device="cpu",
                 dtype=config.image_encoder_dtype,
             )
+
+        state_dicts = WanStateDicts(
+            model=model_state_dict,
+            t5=t5_state_dict,
+            vae=vae_state_dict,
+            image_encoder=image_encoder_state_dict,
+        )
+        return cls.from_state_dict(state_dicts, config)
+
+    @classmethod
+    def from_state_dict(cls, state_dicts: WanStateDicts, config: WanPipelineConfig) -> "WanVideoPipeline":
+        if config.parallelism > 1:
+            pipe = ParallelWrapper(
+                cfg_degree=config.cfg_degree,
+                sp_ulysses_degree=config.sp_ulysses_degree,
+                sp_ring_degree=config.sp_ring_degree,
+                tp_degree=config.tp_degree,
+                use_fsdp=config.use_fsdp,
+            )
+            pipe.load_module(cls._from_state_dict, state_dicts=state_dicts, config=config)
+        else:
+            pipe = cls._from_state_dict(state_dicts, config)
+        return pipe
+
+    @classmethod
+    def _from_state_dict(cls, state_dicts: WanStateDicts, config: WanPipelineConfig) -> "WanVideoPipeline":
+        # default params from model config
+        vae_type = cls._get_vae_type(state_dicts.vae)
+        dit_type = cls._get_dit_type(state_dicts.model)
+        vae_config: dict = WanVideoVAE.get_model_config(vae_type)
+        dit_config: dict = WanDiT.get_model_config(dit_type)
+        config.boundary = dit_config.pop("boundary", -1.0)
+        config.shift = dit_config.pop("shift", 5.0)
+        config.cfg_scale = dit_config.pop("cfg_scale", 5.0)
+        config.num_inference_steps = dit_config.pop("num_inference_steps", 50)
+        config.fps = dit_config.pop("fps", 16)
+
+        init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
+        tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
+        text_encoder = WanTextEncoder.from_state_dict(state_dicts.t5, device=init_device, dtype=config.t5_dtype)
+        vae = WanVideoVAE.from_state_dict(
+            state_dicts.vae, config=vae_config, device=init_device, dtype=config.vae_dtype
+        )
+
+        image_encoder = None
+        if state_dicts.image_encoder is not None:
             image_encoder = WanImageEncoder.from_state_dict(
-                image_encoder_state_dict,
+                state_dicts.image_encoder,
                 device=init_device,
                 dtype=config.image_encoder_dtype,
             )
+
+        dit_state_dict, dit2_state_dict = None, None
+        if "high_noise_model" in state_dicts.model and "low_noise_model" in state_dicts.model:
+            dit_state_dict = state_dicts.model["high_noise_model"]
+            dit2_state_dict = state_dicts.model["low_noise_model"]
+        else:
+            dit_state_dict = state_dicts.model
 
         with LoRAContext():
             attn_kwargs = {
@@ -541,7 +564,7 @@ class WanVideoPipeline(BasePipeline):
             }
             dit = WanDiT.from_state_dict(
                 dit_state_dict,
-                config=model_config,
+                config=dit_config,
                 device=init_device,
                 dtype=config.model_dtype,
                 attn_kwargs=attn_kwargs,
@@ -553,7 +576,7 @@ class WanVideoPipeline(BasePipeline):
             if dit2_state_dict is not None:
                 dit2 = WanDiT.from_state_dict(
                     dit2_state_dict,
-                    config=model_config,
+                    config=dit_config,
                     device=init_device,
                     dtype=config.model_dtype,
                     attn_kwargs=attn_kwargs,
@@ -578,7 +601,7 @@ class WanVideoPipeline(BasePipeline):
         if config.model_dtype == torch.float8_e4m3fn:
             pipe.dtype = torch.bfloat16  # compute dtype
             pipe.enable_fp8_autocast(
-                model_names=["dit"], compute_dtype=pipe.dtype, use_fp8_linear=config.use_fp8_linear
+                model_names=["dit", "dit2"], compute_dtype=pipe.dtype, use_fp8_linear=config.use_fp8_linear
             )
 
         if config.t5_dtype == torch.float8_e4m3fn:
@@ -587,19 +610,38 @@ class WanVideoPipeline(BasePipeline):
                 model_names=["text_encoder"], compute_dtype=pipe.dtype, use_fp8_linear=config.use_fp8_linear
             )
 
-        if config.parallelism > 1:
-            return ParallelWrapper(
-                pipe,
-                cfg_degree=config.cfg_degree,
-                sp_ulysses_degree=config.sp_ulysses_degree,
-                sp_ring_degree=config.sp_ring_degree,
-                tp_degree=config.tp_degree,
-                use_fsdp=config.use_fsdp,
-                device="cuda",
-            )
         if config.use_torch_compile:
             pipe.compile()
         return pipe
+
+    @staticmethod
+    def _get_dit_type(model_state_dict: Dict[str, torch.Tensor] | Dict[str, Dict[str, torch.Tensor]]) -> str:
+        # determine wan dit type by model params
+        dit_type = None
+        if "high_noise_model" in model_state_dict and "low_noise_model" in model_state_dict:
+            if model_state_dict["high_noise_model"]["patch_embedding.weight"].shape[1] == 36:
+                dit_type = "wan2.2-i2v-a14b"
+            elif model_state_dict["high_noise_model"]["patch_embedding.weight"].shape[1] == 16:
+                dit_type = "wan2.2-t2v-a14b"
+        elif model_state_dict["patch_embedding.weight"].shape[1] == 48:
+            dit_type = "wan2.2-ti2v-5b"
+        elif "img_emb.emb_pos" in model_state_dict:
+            dit_type = "wan2.1-flf2v-14b"
+        elif "img_emb.proj.0.weight" in model_state_dict:
+            dit_type = "wan2.1-i2v-14b"
+        elif "blocks.39.self_attn.norm_q.weight" in model_state_dict:
+            dit_type = "wan2.1-t2v-14b"
+        else:
+            dit_type = "wan2.1-t2v-1.3b"
+        return dit_type
+
+    @staticmethod
+    def _get_vae_type(vae_state_dict: Dict[str, torch.Tensor]) -> str:
+        # determine wan vae type by model params
+        vae_type = "wan2.1-vae"
+        if vae_state_dict["encoder.conv1.weight"].shape[1] == 12:  # in_channels
+            vae_type = "wan2.2-vae"
+        return vae_type
 
     def compile(self):
         self.dit.compile_repeated_blocks(dynamic=True)

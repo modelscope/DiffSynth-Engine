@@ -8,7 +8,6 @@ from diffsynth_engine.models.flux.flux_dit import (
     RoPEEmbedding,
     TimestepEmbeddings,
 )
-from diffsynth_engine.models.utils import no_init_weights
 
 
 class FluxControlNetStateDictConverter(StateDictConverter):
@@ -164,10 +163,13 @@ class FluxControlNet(PreTrainedModel):
         else:
             condition_channels = 64
 
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls, condition_channels=condition_channels, attn_kwargs=attn_kwargs, device=device, dtype=dtype
-            )
-        model.load_state_dict(state_dict)
+        model = cls(
+            condition_channels=condition_channels,
+            attn_kwargs=attn_kwargs,
+            device="meta",
+            dtype=dtype,
+        )
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

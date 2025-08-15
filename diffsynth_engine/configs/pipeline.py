@@ -1,7 +1,7 @@
 import os
 import torch
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Dict
+from typing import List, Dict, Tuple, Optional
 
 from diffsynth_engine.configs.controlnet import ControlType
 
@@ -185,16 +185,6 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
 
 
 @dataclass
-class HunyuanPipelineConfig(BaseConfig):
-    model_path: str | os.PathLike | List[str | os.PathLike]
-    model_dtype: torch.dtype = torch.float16
-    vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
-    vae_dtype: torch.dtype = torch.float16
-    image_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
-    image_encoder_dtype: torch.dtype = torch.float16
-
-
-@dataclass
 class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, BaseConfig):
     model_path: str | os.PathLike | List[str | os.PathLike]
     encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
@@ -239,31 +229,56 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
 
 
 @dataclass
+class HunyuanPipelineConfig(BaseConfig):
+    model_path: str | os.PathLike | List[str | os.PathLike]
+    model_dtype: torch.dtype = torch.float16
+    vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    vae_dtype: torch.dtype = torch.float16
+    image_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    image_encoder_dtype: torch.dtype = torch.float16
+
+
+@dataclass
 class BaseStateDicts:
-    model: Optional[Dict[str, torch.Tensor]] = None
-    vae: Optional[Dict[str, torch.Tensor]] = None
+    pass
 
 
 @dataclass
-class SDStateDicts(BaseStateDicts):
-    clip: Optional[Dict[str, torch.Tensor]] = None
+class SDStateDicts:
+    model: Dict[str, torch.Tensor]
+    clip: Dict[str, torch.Tensor]
+    vae: Dict[str, torch.Tensor]
 
 
 @dataclass
-class SDXLStateDicts(BaseStateDicts):
-    clip_l: Optional[Dict[str, torch.Tensor]] = None
-    clip_g: Optional[Dict[str, torch.Tensor]] = None
+class SDXLStateDicts:
+    model: Dict[str, torch.Tensor]
+    clip_l: Dict[str, torch.Tensor]
+    clip_g: Dict[str, torch.Tensor]
+    vae: Dict[str, torch.Tensor]
 
 
 @dataclass
-class FluxStateDicts(BaseStateDicts):
-    t5: Optional[Dict[str, torch.Tensor]] = None
-    clip: Optional[Dict[str, torch.Tensor]] = None
+class FluxStateDicts:
+    model: Dict[str, torch.Tensor]
+    t5: Dict[str, torch.Tensor]
+    clip: Dict[str, torch.Tensor]
+    vae: Dict[str, torch.Tensor]
 
 
 @dataclass
-class QwenImageStateDicts(BaseStateDicts):
-    encoder: Optional[Dict[str, torch.Tensor]] = None
+class WanStateDicts:
+    model: Dict[str, torch.Tensor] | Dict[str, Dict[str, torch.Tensor]]
+    t5: Dict[str, torch.Tensor]
+    vae: Dict[str, torch.Tensor]
+    image_encoder: Optional[Dict[str, torch.Tensor]] = None
+
+
+@dataclass
+class QwenImageStateDicts:
+    model: Dict[str, torch.Tensor]
+    encoder: Dict[str, torch.Tensor]
+    vae: Dict[str, torch.Tensor]
 
 
 def init_parallel_config(config: FluxPipelineConfig | QwenImagePipelineConfig | WanPipelineConfig):

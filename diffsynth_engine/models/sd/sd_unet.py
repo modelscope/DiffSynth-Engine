@@ -5,7 +5,6 @@ from typing import Dict
 
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter, split_suffix
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.models.basic.unet_helper import (
     ResnetBlock,
     AttentionBlock,
@@ -294,8 +293,8 @@ class SDUNet(PreTrainedModel):
 
     @classmethod
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
+        model = cls(device="meta", dtype=dtype)
+        model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

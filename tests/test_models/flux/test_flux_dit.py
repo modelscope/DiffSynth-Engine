@@ -1,12 +1,11 @@
 import unittest
 import torch
-from diffsynth_engine.utils.loader import load_file, save_file
 from einops import repeat
 
-from diffsynth_engine.models.flux import FluxDiT
-from diffsynth_engine.models.utils import no_init_weights
-from diffsynth_engine.utils.download import ensure_directory_exists
 from diffsynth_engine import fetch_model
+from diffsynth_engine.models.flux import FluxDiT
+from diffsynth_engine.utils.download import ensure_directory_exists
+from diffsynth_engine.utils.loader import load_file, save_file
 from tests.common.test_case import TestCase, RUN_EXTRA_TEST
 
 
@@ -147,9 +146,8 @@ class TestFluxDiT(TestCase):
                             _state_dict[f"single_transformer_blocks.{block_id}.{s}"] = p
             return _state_dict
 
-        with no_init_weights():
-            model = FluxTransformer2DModel(guidance_embeds=True)
-            model = model.to(device="cuda:0", dtype=torch.bfloat16).eval()
+        model = FluxTransformer2DModel(guidance_embeds=True)
+        model = model.to(device="cuda:0", dtype=torch.bfloat16).eval()
         loaded_state_dict = load_file(self._model_path)
         model.load_state_dict(_convert(loaded_state_dict))
 

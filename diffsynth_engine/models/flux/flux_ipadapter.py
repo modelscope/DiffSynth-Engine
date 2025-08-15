@@ -4,7 +4,6 @@ from torch import nn
 from PIL import Image
 from typing import Any, Dict, List, Optional
 from functools import partial
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.models.text_encoder.siglip import SiglipImageEncoder
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
 from diffsynth_engine.models.basic.attention import attention
@@ -39,9 +38,8 @@ class FluxIPAdapterAttention(nn.Module):
 
     @classmethod
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype, **kwargs):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, **kwargs)
-        model.to_empty(device=device)
+        model = cls(device="meta", dtype=dtype, **kwargs)
+        model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
@@ -74,9 +72,8 @@ class FluxIPAdapterMLP(torch.nn.Module):
 
     @classmethod
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype, **kwargs):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, **kwargs)
-        model.to_empty(device=device)
+        model = cls(device="meta", dtype=dtype, **kwargs)
+        model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

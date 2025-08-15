@@ -3,7 +3,6 @@ import torch
 from typing import Dict
 
 from diffsynth_engine.models.vae import VAEDecoder, VAEEncoder, VAEStateDictConverter
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import FLUX_VAE_CONFIG_FILE
 from diffsynth_engine.utils import logging
 
@@ -51,8 +50,8 @@ class FluxVAEEncoder(VAEEncoder):
 
     @classmethod
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
+        model = cls(device="meta", dtype=dtype)
+        model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
@@ -73,8 +72,8 @@ class FluxVAEDecoder(VAEDecoder):
 
     @classmethod
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
+        model = cls(device="meta", dtype=dtype)
+        model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

@@ -74,12 +74,11 @@ class LoRALinear(nn.Linear):
 
     @staticmethod
     def from_linear(linear: nn.Linear):
-        lora_linear = torch.nn.utils.skip_init(
-            LoRALinear,
+        lora_linear = LoRALinear(
             linear.in_features,
             linear.out_features,
             linear.bias is not None,
-            device=linear.weight.device,
+            device="meta",
             dtype=linear.weight.dtype,
         )
         lora_linear.weight = linear.weight
@@ -98,12 +97,8 @@ class LoRALinear(nn.Linear):
         dtype: torch.dtype,
         **kwargs,
     ):
-        up_linear = torch.nn.utils.skip_init(
-            nn.Linear, up.shape[1], up.shape[0], bias=False, device=device, dtype=dtype
-        )
-        down_linear = torch.nn.utils.skip_init(
-            nn.Linear, down.shape[0], down.shape[1], bias=False, device=device, dtype=dtype
-        )
+        up_linear = nn.Linear(up.shape[1], up.shape[0], bias=False, device="meta", dtype=dtype)
+        down_linear = nn.Linear(down.shape[0], down.shape[1], bias=False, device="meta", dtype=dtype)
         up_linear.weight.data = up
         down_linear.weight.data = down
         lora = LoRA(scale, rank, alpha, up_linear, down_linear, device, dtype)
@@ -182,8 +177,7 @@ class LoRAConv2d(nn.Conv2d):
 
     @staticmethod
     def from_conv2d(conv2d: nn.Conv2d):
-        lora_conv2d = torch.nn.utils.skip_init(
-            LoRAConv2d,
+        lora_conv2d = LoRAConv2d(
             conv2d.in_channels,
             conv2d.out_channels,
             conv2d.kernel_size,
@@ -193,7 +187,7 @@ class LoRAConv2d(nn.Conv2d):
             conv2d.groups,
             conv2d.bias is not None,
             conv2d.padding_mode,
-            device=conv2d.weight.device,
+            device="meta",
             dtype=conv2d.weight.dtype,
         )
         lora_conv2d.weight = conv2d.weight
@@ -211,29 +205,27 @@ class LoRAConv2d(nn.Conv2d):
         device: str,
         dtype: torch.dtype,
     ):
-        down_conv = torch.nn.utils.skip_init(
-            nn.Conv2d,
+        down_conv = nn.Conv2d(
             self.in_channels,
             rank,
             kernel_size=self.kernel_size,
             stride=self.stride,
             padding=self.padding,
             bias=False,
-            device=device,
+            device="meta",
             dtype=dtype,
         )
         down_conv.weight.data = down
         # according to the official kohya_ss trainer kernel_size are always fixed for the up layer
         # see: https://github.com/bmaltais/kohya_ss/blob/2accb1305979ba62f5077a23aabac23b4c37e935/networks/lora_diffusers.py#L129
         # refer from diffusers
-        up_conv = torch.nn.utils.skip_init(
-            nn.Conv2d,
+        up_conv = nn.Conv2d(
             rank,
             self.out_channels,
             kernel_size=(1, 1),
             stride=(1, 1),
             bias=False,
-            device=device,
+            device="meta",
             dtype=dtype,
         )
         up_conv.weight.data = up

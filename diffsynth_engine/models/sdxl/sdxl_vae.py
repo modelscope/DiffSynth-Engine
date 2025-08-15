@@ -2,7 +2,6 @@ import torch
 from typing import Dict
 
 from diffsynth_engine.models.vae import VAEDecoder, VAEEncoder
-from diffsynth_engine.models.utils import no_init_weights
 
 
 class SDXLVAEEncoder(VAEEncoder):
@@ -21,9 +20,10 @@ class SDXLVAEEncoder(VAEEncoder):
     def from_state_dict(
         cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype, attn_impl: str = "auto"
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, attn_impl=attn_impl)
-        model.load_state_dict(state_dict)
+        model = cls(device="meta", dtype=dtype, attn_impl=attn_impl)
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
 
@@ -43,7 +43,8 @@ class SDXLVAEDecoder(VAEDecoder):
     def from_state_dict(
         cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype, attn_impl: str = "auto"
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, attn_impl=attn_impl)
-        model.load_state_dict(state_dict)
+        model = cls(device="meta", dtype=dtype, attn_impl=attn_impl)
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model

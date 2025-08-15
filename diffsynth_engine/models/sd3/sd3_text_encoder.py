@@ -6,7 +6,6 @@ from diffsynth_engine.models.text_encoder.t5 import T5EncoderModel
 from diffsynth_engine.models.base import StateDictConverter
 from diffsynth_engine.models.sd import SDTextEncoder
 from diffsynth_engine.models.sdxl import SDXLTextEncoder2
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import SD3_TEXT_ENCODER_CONFIG_FILE
 from diffsynth_engine.utils import logging
 
@@ -86,9 +85,10 @@ class SD3TextEncoder1(SDTextEncoder):
         dtype: torch.dtype,
         vocab_size: int = 49408,
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, vocab_size=vocab_size)
-        model.load_state_dict(state_dict)
+        model = cls(device="meta", dtype=dtype, vocab_size=vocab_size)
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
 

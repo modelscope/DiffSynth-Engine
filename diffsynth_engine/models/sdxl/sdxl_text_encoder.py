@@ -5,7 +5,6 @@ from typing import Dict
 
 from diffsynth_engine.models.text_encoder.clip import CLIPEncoderLayer
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter, split_suffix
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import SDXL_TEXT_ENCODER_CONFIG_FILE
 from diffsynth_engine.utils import logging
 
@@ -198,18 +197,18 @@ class SDXLTextEncoder(PreTrainedModel):
         num_encoder_layers: int = 11,
         encoder_intermediate_size: int = 3072,
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls,
-                device=device,
-                dtype=dtype,
-                embed_dim=embed_dim,
-                vocab_size=vocab_size,
-                max_position_embeddings=max_position_embeddings,
-                num_encoder_layers=num_encoder_layers,
-                encoder_intermediate_size=encoder_intermediate_size,
-            )
-        model.load_state_dict(state_dict)
+        model = cls(
+            device="meta",
+            dtype=dtype,
+            embed_dim=embed_dim,
+            vocab_size=vocab_size,
+            max_position_embeddings=max_position_embeddings,
+            num_encoder_layers=num_encoder_layers,
+            encoder_intermediate_size=encoder_intermediate_size,
+        )
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
 
@@ -292,16 +291,16 @@ class SDXLTextEncoder2(PreTrainedModel):
         num_encoder_layers: int = 32,
         encoder_intermediate_size: int = 5120,
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls,
-                device=device,
-                dtype=dtype,
-                embed_dim=embed_dim,
-                vocab_size=vocab_size,
-                max_position_embeddings=max_position_embeddings,
-                num_encoder_layers=num_encoder_layers,
-                encoder_intermediate_size=encoder_intermediate_size,
-            )
-        model.load_state_dict(state_dict)
+        model = cls(
+            device="meta",
+            dtype=dtype,
+            embed_dim=embed_dim,
+            vocab_size=vocab_size,
+            max_position_embeddings=max_position_embeddings,
+            num_encoder_layers=num_encoder_layers,
+            encoder_intermediate_size=encoder_intermediate_size,
+        )
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model

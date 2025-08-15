@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Tuple, Optional
 from diffsynth_engine.models.base import PreTrainedModel
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
 from diffsynth_engine.models.basic import attention as attention_ops
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.cache import Cache, DynamicCache
 from diffsynth_engine.utils import logging
 
@@ -968,8 +967,8 @@ class Qwen2_5_VLForConditionalGeneration(PreTrainedModel):
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
-        with torch.device("meta"), no_init_weights():
-            model = cls(vision_config=vision_config, config=config, device=device, dtype=dtype)
+        model = cls(vision_config=vision_config, config=config, device="meta", dtype=dtype)
+        model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

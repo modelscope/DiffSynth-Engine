@@ -13,7 +13,6 @@ from diffsynth_engine.models.basic.unet_helper import (
     UpSampler,
 )
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter, split_suffix
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import SDXL_UNET_CONFIG_FILE
 from diffsynth_engine.utils import logging
 
@@ -285,8 +284,8 @@ class SDXLUNet(PreTrainedModel):
     def from_state_dict(
         cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype, is_kolors: bool = False
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, is_kolors=is_kolors)
+        model = cls(device="meta", dtype=dtype, is_kolors=is_kolors)
+        model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

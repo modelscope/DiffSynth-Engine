@@ -4,7 +4,6 @@ import torch.nn as nn
 from typing import Dict, Union, List, Any
 from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.models.basic.lora import LoRALinear, LoRAConv2d
-from diffsynth_engine.models.utils import no_init_weights
 
 
 class StateDictConverter:
@@ -33,10 +32,9 @@ class PreTrainedModel(nn.Module):
 
     @classmethod
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype, **kwargs):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, **kwargs)
-        model.to_empty(device=device)
-        model.load_state_dict(state_dict)
+        model = cls(device="meta", dtype=dtype, **kwargs)
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 

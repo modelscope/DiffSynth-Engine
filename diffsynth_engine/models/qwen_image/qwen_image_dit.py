@@ -7,7 +7,6 @@ from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm, ApproximateGELU, RMSNorm
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.parallel import cfg_parallel, cfg_parallel_unshard
@@ -44,28 +43,30 @@ class QwenEmbedRope(nn.Module):
         theta: int,
         axes_dim: list[int],
         scale_rope=False,
+        device: str = "cuda:0",
     ):
         super().__init__()
         self.theta = theta
         self.axes_dim = axes_dim
-        pos_index = torch.arange(10000)
-        neg_index = torch.arange(10000).flip(0) * -1 - 1
-        self.pos_freqs = torch.cat(
-            [
-                self.rope_params(pos_index, self.axes_dim[0], self.theta),
-                self.rope_params(pos_index, self.axes_dim[1], self.theta),
-                self.rope_params(pos_index, self.axes_dim[2], self.theta),
-            ],
-            dim=1,
-        )
-        self.neg_freqs = torch.cat(
-            [
-                self.rope_params(neg_index, self.axes_dim[0], self.theta),
-                self.rope_params(neg_index, self.axes_dim[1], self.theta),
-                self.rope_params(neg_index, self.axes_dim[2], self.theta),
-            ],
-            dim=1,
-        )
+        with torch.device("cpu" if device == "meta" else device):
+            pos_index = torch.arange(10000)
+            neg_index = torch.arange(10000).flip(0) * -1 - 1
+            self.pos_freqs = torch.cat(
+                [
+                    self.rope_params(pos_index, self.axes_dim[0], self.theta),
+                    self.rope_params(pos_index, self.axes_dim[1], self.theta),
+                    self.rope_params(pos_index, self.axes_dim[2], self.theta),
+                ],
+                dim=1,
+            )
+            self.neg_freqs = torch.cat(
+                [
+                    self.rope_params(neg_index, self.axes_dim[0], self.theta),
+                    self.rope_params(neg_index, self.axes_dim[1], self.theta),
+                    self.rope_params(neg_index, self.axes_dim[2], self.theta),
+                ],
+                dim=1,
+            )
         self.rope_cache = {}
         self.scale_rope = scale_rope
 
@@ -332,11 +333,11 @@ class QwenImageDiT(PreTrainedModel):
     ):
         super().__init__()
 
-        self.pos_embed = QwenEmbedRope(theta=10000, axes_dim=[16, 56, 56], scale_rope=True)
+        self.pos_embed = QwenEmbedRope(theta=10000, axes_dim=[16, 56, 56], scale_rope=True, device=device)
 
         self.time_text_embed = TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
 
-        self.txt_norm = RMSNorm(3584, eps=1e-6)
+        self.txt_norm = RMSNorm(3584, eps=1e-6, device=device, dtype=dtype)
 
         self.img_in = nn.Linear(64, 3072, device=device, dtype=dtype)
         self.txt_in = nn.Linear(3584, 3072, device=device, dtype=dtype)
@@ -429,15 +430,13 @@ class QwenImageDiT(PreTrainedModel):
         num_layers: int = 60,
         attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls,
-                device=device,
-                dtype=dtype,
-                num_layers=num_layers,
-                attn_kwargs=attn_kwargs,
-            )
-            model = model.requires_grad_(False)  # for loading gguf
+        model = cls(
+            device="meta",
+            dtype=dtype,
+            num_layers=num_layers,
+            attn_kwargs=attn_kwargs,
+        )
+        model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

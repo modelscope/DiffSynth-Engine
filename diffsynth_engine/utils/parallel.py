@@ -21,6 +21,7 @@ from queue import Empty
 import diffsynth_engine.models.basic.attention as attention_ops
 from diffsynth_engine.models import PreTrainedModel
 from diffsynth_engine.pipelines import BasePipeline
+from diffsynth_engine.utils.platform import empty_cache
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -165,14 +166,14 @@ def to_device(data, device):
     if isinstance(data, tuple) or isinstance(data, list):
         return [to_device(t, device) for t in data]
     elif isinstance(data, torch.Tensor):
-        return data.to(device)
+        return data.to(device, non_blocking=True)
     else:
         return data
 
 
 def shard_model(
     module: nn.Module,
-    device_id: int,
+    device_id: int | torch.device,
     sharding_strategy: ShardingStrategy = ShardingStrategy.FULL_SHARD,
     wrap_module_names: Optional[List[str]] = None,
 ):
@@ -223,25 +224,28 @@ PARALLEL_FWD_TIMEOUT_SEC = int(os.environ.get("PARALLEL_FWD_TIMEOUT_SEC", 3600))
 def _worker_loop(
     rank: int,
     world_size: int,
-    queue_in: mp.Queue,
+    queue_in: List[mp.Queue],
     queue_out: mp.Queue,
-    module: Union[PreTrainedModel, BasePipeline],
     cfg_degree: int,
     sp_ulysses_degree: int,
     sp_ring_degree: int,
     tp_degree: int,
     use_fsdp: bool,
     master_port: int = 29500,
-    device: str = "cuda",
+    device_type: str = "cuda",
 ):
     """
     https://pytorch.org/docs/stable/multiprocessing.html#sharing-cuda-tensors
     """
+    if device_type != "cuda" or not torch.cuda.is_available():
+        raise RuntimeError("parallelism is only supported on CUDA devices")
+
     try:
         os.environ["RANK"] = str(rank)
         os.environ["WORLD_SIZE"] = str(world_size)
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = str(master_port)
+        device = torch.device(type=device_type, index=rank)
         torch.cuda.set_device(rank)
 
         timeout = timedelta(seconds=NCCL_TIMEOUT_SEC)
@@ -251,6 +255,7 @@ def _worker_loop(
             timeout=timeout,
             world_size=world_size,
             rank=rank,
+            device_id=device,
         )
         init_parallel_pgs(
             cfg_degree=cfg_degree,
@@ -261,49 +266,53 @@ def _worker_loop(
             world_size=world_size,
         )
 
-        def wrap_for_parallel(module: PreTrainedModel):
+        def wrap_for_parallel(module: Union[PreTrainedModel, BasePipeline]):
+            if isinstance(module, BasePipeline):
+                for model_name in module.model_names:
+                    if isinstance(submodule := getattr(module, model_name), PreTrainedModel):
+                        setattr(module, model_name, wrap_for_parallel(submodule))
+                return module
+
             if not module._supports_parallelization:
-                module = module.to(device)
                 return module
 
             if tp_degree > 1:
                 module = parallelize_module(
                     module=module,
-                    device_mesh=DeviceMesh(device, torch.tensor(get_tp_ranks())),
+                    device_mesh=DeviceMesh(device_type, torch.tensor(get_tp_ranks())),
                     parallelize_plan=module.get_tp_plan(),
-                ).to(device)
+                )
             elif use_fsdp:
-                module = shard_model(module, device_id=rank, wrap_module_names=module.get_fsdp_modules())
-            else:
-                module = module.to(device)
+                module = shard_model(module, device_id=device, wrap_module_names=module.get_fsdp_modules())
             return module
 
-        if isinstance(module, BasePipeline):
-            for model_name in module.model_names:
-                submodule = getattr(module, model_name)
-                if isinstance(submodule, PreTrainedModel):
-                    setattr(module, model_name, wrap_for_parallel(submodule))
-        else:
-            module = wrap_for_parallel(module)
-        logger.info(f"{module.__class__.__name__} init done (rank {rank})")
+        module = None
+        data, args, kwargs = None, None, None
 
         while True:
-            if rank == 0:
-                data = queue_in.get()
+            res = None
+            data = queue_in[rank].get()
+
+            if (name := data[0]) == "unload_module":
+                module = None
+            elif name == "load_module":
+                init_fn, kwargs = to_device(data[1:], device=device)
+                module = wrap_for_parallel(init_fn(**kwargs))
+            elif module is None:
+                res = RuntimeError("module is not initialized")
+            elif not hasattr(module, name):
+                res = AttributeError(f'{module.__class__.__name__} has no attribute "{name}"')
             else:
-                data = [None, None, None]
-            dist.broadcast_object_list(data, src=0)
-            name, args, kwargs = to_device(clone(data), device=device)
-            del data
+                args, kwargs = to_device(data[1:], device=device)
+                with torch.no_grad():
+                    res = getattr(module, name)(*args, **kwargs)
 
-            if not hasattr(module, name):
-                raise AttributeError(f'{module.__class__.__name__} has no attribute "{name}"')
-            with torch.no_grad():
-                res = getattr(module, name)(*args, **kwargs)
-
+            data, args, kwargs = None, None, None
+            torch.cuda.synchronize()
+            empty_cache()
+            dist.barrier()
             if rank == 0:
                 queue_out.put(res)
-            dist.barrier()
     except Exception:
         import traceback
 
@@ -313,31 +322,29 @@ def _worker_loop(
         if rank == 0:
             queue_out.put(err)  # any exception caught in the worker will be raised to the main process
     finally:
-        del module
+        del module, data, args, kwargs
         torch.cuda.synchronize()
-        torch.cuda.empty_cache()
+        empty_cache()
         dist.destroy_process_group()
 
 
 class ParallelWrapper:
     def __init__(
         self,
-        module: Union[PreTrainedModel, BasePipeline],
         cfg_degree: int,
         sp_ulysses_degree: int,
         sp_ring_degree: int,
         tp_degree: int,
         use_fsdp: bool = False,
         master_port: int = 29500,
-        device: str = "cuda",
+        device_type: str = "cuda",
     ):
         super().__init__()
-        self.config = module.config if isinstance(module, BasePipeline) else None
-        self._module_name = module.__class__.__name__
+        self._module_name = None
 
         self.world_size = cfg_degree * sp_ulysses_degree * sp_ring_degree * tp_degree
         spawn_ctx = mp.get_context("spawn")
-        self.queue_in = spawn_ctx.Queue()
+        self.queue_in = [spawn_ctx.Queue() for _ in range(self.world_size)]
         self.queue_out = spawn_ctx.Queue()
         self.ctx = mp.spawn(
             _worker_loop,
@@ -345,22 +352,55 @@ class ParallelWrapper:
                 self.world_size,
                 self.queue_in,
                 self.queue_out,
-                module,
                 cfg_degree,
                 sp_ulysses_degree,
                 sp_ring_degree,
                 tp_degree,
                 use_fsdp,
                 master_port,
-                device,
+                device_type,
             ),
             nprocs=self.world_size,
             join=False,
         )
 
+    def load_module(self, init_fn, **kwargs):
+        data = ["load_module", init_fn, kwargs]
+        for q in self.queue_in:
+            q.put(data)
+        try:
+            res = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
+            if isinstance(res, Exception):
+                raise res
+            self._module_name = init_fn.__self__.__name__
+        except Empty:
+            logger.error("[ParallelWrapper] load_module timeout")
+            raise RuntimeError("[ParallelWrapper] load_module timeout")
+        except Exception as e:
+            logger.error(f"[ParallelWrapper] load_module error: {e}")
+            raise RuntimeError(f"[ParallelWrapper] load_module error: {e}")
+        logger.info("[ParallelWrapper] load_module done")
+
+    def unload_module(self):
+        data = ["unload_module", None, None]
+        for q in self.queue_in:
+            q.put(data)
+        try:
+            res = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
+            if isinstance(res, Exception):
+                raise res
+        except Empty:
+            logger.error("[ParallelWrapper] unload_module timeout")
+            raise RuntimeError("[ParallelWrapper] unload_module timeout")
+        except Exception as e:
+            logger.error(f"[ParallelWrapper] unload_module error: {e}")
+            raise RuntimeError(f"[ParallelWrapper] unload_module error: {e}")
+        logger.info("[ParallelWrapper] unload_module done")
+
     def __call__(self, *args, **kwargs):
         data = ["__call__", args, kwargs]
-        self.queue_in.put(data)
+        for q in self.queue_in:
+            q.put(data)
         try:
             res = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
             if isinstance(res, Exception):
@@ -377,7 +417,8 @@ class ParallelWrapper:
     def __getattr__(self, name):
         def wrapped_func(*args, **kwargs):
             data = [name, args, kwargs]
-            self.queue_in.put(data)
+            for q in self.queue_in:
+                q.put(data)
             try:
                 res = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
                 if isinstance(res, Exception):
@@ -398,7 +439,8 @@ class ParallelWrapper:
         for p in self.ctx.processes:
             p.terminate()
             p.join()
-        self.queue_in.close()
+        for p in self.queue_in:
+            p.close()
         self.queue_out.close()
 
 

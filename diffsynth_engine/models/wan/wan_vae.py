@@ -8,7 +8,6 @@ from tqdm import tqdm
 from typing import Any, Dict
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import WAN2_1_VAE_CONFIG_FILE, WAN2_2_VAE_CONFIG_FILE, WAN_VAE_KEYMAP_FILE
 
 CACHE_T = 2
@@ -868,8 +867,8 @@ class WanVideoVAE(PreTrainedModel):
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float32,
     ) -> "WanVideoVAE":
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype)
+        model = cls(**config, device="meta", dtype=dtype)
+        model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

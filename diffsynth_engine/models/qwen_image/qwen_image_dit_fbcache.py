@@ -2,7 +2,6 @@ import torch
 from typing import Any, Dict, Optional
 
 from diffsynth_engine.models.qwen_image import QwenImageDiT
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.parallel import cfg_parallel, cfg_parallel_unshard
@@ -118,16 +117,14 @@ class QwenImageDiTFBCache(QwenImageDiT):
         attn_kwargs: Optional[Dict[str, Any]] = None,
         relative_l1_threshold: float = 0.05,
     ):
-        with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls,
-                device=device,
-                dtype=dtype,
-                num_layers=num_layers,
-                attn_kwargs=attn_kwargs,
-                relative_l1_threshold=relative_l1_threshold,
-            )
-            model = model.requires_grad_(False)  # for loading gguf
+        model = cls(
+            device="meta",
+            dtype=dtype,
+            num_layers=num_layers,
+            attn_kwargs=attn_kwargs,
+            relative_l1_threshold=relative_l1_threshold,
+        )
+        model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
