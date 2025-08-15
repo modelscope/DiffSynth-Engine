@@ -349,8 +349,7 @@ class WanDiT(PreTrainedModel):
             gguf_inference(),
             cfg_parallel((x, context, timestep, clip_feature, y), use_cfg=use_cfg),
         ):
-            t=sinusoidal_embedding_1d(self.freq_dim, timestep).to(x.dtype)
-            t = self.time_embedding(t)  # (s, d)
+            t = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep))  # (s, d)
             t_mod = self.time_projection(t).unflatten(1, (6, self.dim))  # (s, 6, d)
             context = self.text_embedding(context)
             if self.has_vae_feature:
