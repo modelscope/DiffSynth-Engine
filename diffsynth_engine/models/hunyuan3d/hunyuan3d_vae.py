@@ -271,7 +271,7 @@ class CrossAttentionDecoder(nn.Module):
             query_embeddings = self.query_proj(self.fourier_embedder(queries).to(latents.dtype))
         x = self.cross_attn_decoder(query_embeddings, latents)
         x = self.ln_post(x)
-        occ = self.output_proj(x)
+        occ = self.output_proj(x)        
         return occ
 
 class Transformer(nn.Module):

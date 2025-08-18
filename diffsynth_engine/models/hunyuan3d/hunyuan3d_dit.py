@@ -108,12 +108,32 @@ class Attention(nn.Module):
         self.k_norm = nn.RMSNorm(self.head_dim, elementwise_affine=True, eps=1e-6) if qk_norm else nn.Identity()
         self.out_proj = nn.Linear(dim, dim)
 
-    def forward(self, x, y=None):
+    def forward(self, x, y=None):    
+        self_attn = False
         if y is None:
+            self_attn = True
             y = x
-        q = rearrange(self.to_q(x), "b s (n d) -> b s n d", n=self.num_heads)
-        k = rearrange(self.to_k(y), "b s (n d) -> b s n d", n=self.num_heads)
-        v = rearrange(self.to_v(y), "b s (n d) -> b s n d", n=self.num_heads)        
+        b, s1, _ = x.shape        
+        _, s2, _ = y.shape
+        q = self.to_q(x)
+        k = self.to_k(y)
+        v = self.to_v(y)
+        # 下面这段reshape完全是错误的，但是不能改，因为hunyuan3d 2.1这个模型训练时就是这样写的
+        if self_attn:
+            qkv = torch.cat((q, k, v), dim=-1)
+            split_size = qkv.shape[-1] // self.num_heads // 3
+            qkv = qkv.view(1, -1, self.num_heads, split_size * 3)
+            q, k, v = torch.split(qkv, split_size, dim=-1)
+        else:
+            kv = torch.cat((k, v), dim=-1)
+            split_size = kv.shape[-1] // self.num_heads // 2
+            kv = kv.view(1, -1, self.num_heads, split_size * 2)
+            k, v = torch.split(kv, split_size, dim=-1)
+
+        q = q.view(b, s1, self.num_heads, self.head_dim)
+        k = k.view(b, s2, self.num_heads, self.head_dim)
+        v = v.view(b, s2, self.num_heads, self.head_dim)
+
         q, k = self.q_norm(q), self.k_norm(k)
         out = attention(q, k, v)
         out = rearrange(out, "b s n d -> b s (n d)")
@@ -160,7 +180,6 @@ class HunYuanDiTBlock(nn.Module):
         return x
 
 
-    
 class HunYuan3DDiT(PreTrainedModel):
     def __init__(
         self,
@@ -181,6 +200,7 @@ class HunYuan3DDiT(PreTrainedModel):
         self.dtype = dtype
         self.x_embedder = nn.Linear(in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size, hidden_size * 4)
+        self.depth = depth
         self.blocks = nn.ModuleList([
             HunYuanDiTBlock(hidden_size=hidden_size,
                             num_heads=num_heads,
@@ -200,10 +220,10 @@ class HunYuan3DDiT(PreTrainedModel):
         t = self.t_embedder(t)
         x = torch.cat([t, x], dim=1)
         residuals = []
-        for block in self.blocks:
-            residual = residuals.pop() if block.skip_connection else None
+        for idx, block in enumerate(self.blocks):
+            residual = None if idx <= self.depth // 2 else residuals.pop()
             x = block(x, cond, residual)
-            if not block.skip_connection:
+            if idx < self.depth // 2:
                 residuals.append(x)
         x = self.final_layer(x)
         return x

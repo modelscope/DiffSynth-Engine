@@ -5,7 +5,6 @@ import math
 from typing import Optional, Tuple, Dict
 
 import torch
-import torch.utils.checkpoint
 from torch import nn
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 
@@ -94,7 +93,6 @@ class Dinov2Embeddings(nn.Module):
         batch_size, _, height, width = pixel_values.shape
         target_dtype = self.patch_embeddings.projection.weight.dtype
         embeddings = self.patch_embeddings(pixel_values.to(dtype=target_dtype))
-
         if bool_masked_pos is not None:
             embeddings = torch.where(
                 bool_masked_pos.unsqueeze(-1), self.mask_token.to(embeddings.dtype).unsqueeze(0), embeddings
@@ -102,8 +100,10 @@ class Dinov2Embeddings(nn.Module):
 
         cls_tokens = self.cls_token.expand(batch_size, -1, -1)
         embeddings = torch.cat((cls_tokens, embeddings), dim=1)
-        embeddings = embeddings + self.interpolate_pos_encoding(embeddings, height, width)
-        return embeddings
+        pos_embed  = self.interpolate_pos_encoding(embeddings, height, width)
+
+        result = embeddings + pos_embed
+        return result
 
 class Dinov2SelfAttention(nn.Module):
     def __init__(self, hidden_size: int, num_attention_heads: int, qkv_bias: bool) -> None:
@@ -310,7 +310,6 @@ class Dinov2Model(nn.Module):
         pixel_values: torch.Tensor,
         bool_masked_pos: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        breakpoint()
         embedding_output = self.embeddings(pixel_values, bool_masked_pos=bool_masked_pos)
         sequence_output = self.encoder(embedding_output)
         return self.layernorm(sequence_output)
@@ -377,7 +376,7 @@ class ImageEncoder(PreTrainedModel):
         if value_range is not None:
             low, high = value_range
             image = (image - low) / (high - low)
-            
+        
         inputs = self.transform(image)
         outputs = self.model(inputs)
         return outputs

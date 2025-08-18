@@ -1,8 +1,10 @@
 import torch
 import math
 
-from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import append_zero, BaseScheduler
+from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import BaseScheduler
 
+def append(x, value):
+    return torch.cat([x, x.new_ones([1]) * value])
 
 class RecifitedFlowScheduler(BaseScheduler):
     def __init__(
@@ -37,6 +39,7 @@ class RecifitedFlowScheduler(BaseScheduler):
         mu: float | None = None,
         sigma_min: float | None = None,
         sigma_max: float | None = None,
+        append_value: float = 0,
     ):
         sigma_min = self.sigma_min if sigma_min is None else sigma_min
         sigma_max = self.sigma_max if sigma_max is None else sigma_max
@@ -46,6 +49,5 @@ class RecifitedFlowScheduler(BaseScheduler):
         else:
             sigmas = self._shift_sigma(sigmas, self.shift)
         timesteps = sigmas * self.num_train_timesteps
-
-        sigmas = append_zero(sigmas)
+        sigmas = append(sigmas, append_value)
         return sigmas, timesteps

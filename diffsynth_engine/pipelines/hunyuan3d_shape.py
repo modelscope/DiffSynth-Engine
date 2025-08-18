@@ -157,12 +157,12 @@ class Hunyuan3DShapePipeline(BasePipeline):
         latents,
         box_v=1.01,
         mc_level=0.0,
-        num_chunks=20000,
-        octree_resolution=256,
-        mc_algo='mc',
+        num_chunks=8000,
+        octree_resolution=384,
+        mc_algo=None,
         enable_pbar=True
     ):
-        latents = latents * self.vae_decoder.scale_factor
+        latents = latents / self.vae_decoder.scale_factor
         latents = self.vae_decoder(latents)
         outputs = self.vae_decoder.latents2mesh(
             latents,
@@ -185,11 +185,12 @@ class Hunyuan3DShapePipeline(BasePipeline):
         seed:int = 42,
     ):
         image_emb = self.encode_image(image)
+
         latents = self.generate_noise((1, 4096, 64), seed=seed, device=self.device, dtype=self.dtype)
-        sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, sigma_min=1.0, sigma_max=0.0)
+        sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, sigma_min=1.0, sigma_max=0.0, append_value=1.0)
         self.sampler.initialize(sigmas=sigmas)        
         for i, timestep in enumerate(tqdm(timesteps)):
-            timestep = timestep.unsqueeze(0).to(device=self.device)            
+            timestep = timestep.unsqueeze(0).to(device=self.device) / 1000            
             model_outputs = self.dit(
                 x=torch.cat([latents, latents]),
                 t=torch.cat([timestep, timestep]),
@@ -198,5 +199,4 @@ class Hunyuan3DShapePipeline(BasePipeline):
             noise_pred, noise_pred_uncond = model_outputs.chunk(2)
             model_outputs = noise_pred_uncond + guidance_scale * (noise_pred - noise_pred_uncond)
             latents = self.sampler.step(latents, model_outputs, i)
-            
         return self.decode_latents(latents)
