@@ -2,19 +2,21 @@ import numpy as np
 from typing import List, Tuple, Union
 from skimage import measure
 
+
 class Latent2MeshOutput:
     def __init__(self, mesh_v=None, mesh_f=None):
         self.mesh_v = mesh_v
         self.mesh_f = mesh_f
 
+
 class SurfaceExtractor:
     def _compute_box_stat(self, bounds: Union[Tuple[float], List[float], float], octree_resolution: int):
         """
-        Compute grid size, bounding box minimum coordinates, and bounding box size based on input 
+        Compute grid size, bounding box minimum coordinates, and bounding box size based on input
         bounds and resolution.
 
         Args:
-            bounds (Union[Tuple[float], List[float], float]): Bounding box coordinates or a single 
+            bounds (Union[Tuple[float], List[float], float]): Bounding box coordinates or a single
             float representing half side length.
                 If float, bounds are assumed symmetric around zero in all axes.
                 Expected format if list/tuple: [xmin, ymin, zmin, xmax, ymax, zmax].
@@ -66,6 +68,7 @@ class SurfaceExtractor:
 
             except Exception:
                 import traceback
+
                 traceback.print_exc()
                 outputs.append(None)
 
@@ -86,13 +89,11 @@ class MCSurfaceExtractor(SurfaceExtractor):
 
         Returns:
             Tuple[np.ndarray, np.ndarray]: Tuple containing:
-                - vertices (np.ndarray): Extracted mesh vertices, scaled and translated to bounding 
+                - vertices (np.ndarray): Extracted mesh vertices, scaled and translated to bounding
                   box coordinates.
                 - faces (np.ndarray): Extracted mesh faces (triangles).
         """
-        vertices, faces, normals, _ = measure.marching_cubes(grid_logit.cpu().numpy(),
-                                                             mc_level,
-                                                             method="lewiner")
+        vertices, faces, normals, _ = measure.marching_cubes(grid_logit.cpu().numpy(), mc_level, method="lewiner")
         grid_size, bbox_min, bbox_size = self._compute_box_stat(bounds, octree_resolution)
         vertices = vertices / grid_size * bbox_size + bbox_min
         return vertices, faces

@@ -3,8 +3,10 @@ import math
 
 from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import BaseScheduler
 
+
 def append(x, value):
     return torch.cat([x, x.new_ones([1]) * value])
+
 
 class RecifitedFlowScheduler(BaseScheduler):
     def __init__(

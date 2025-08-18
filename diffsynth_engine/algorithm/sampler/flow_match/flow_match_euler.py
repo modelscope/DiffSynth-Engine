@@ -4,7 +4,7 @@ import torch
 class FlowMatchEulerSampler:
     def initialize(self, sigmas):
         self.sigmas = sigmas
-    
+
     def step(self, latents, model_outputs, i):
         dt = self.sigmas[i + 1] - self.sigmas[i]
         latents = latents.to(dtype=torch.float32)

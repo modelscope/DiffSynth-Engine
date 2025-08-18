@@ -183,6 +183,7 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
     def __post_init__(self):
         init_parallel_config(self)
 
+
 @dataclass
 class HunyuanPipelineConfig(BaseConfig):
     model_path: str | os.PathLike | List[str | os.PathLike]

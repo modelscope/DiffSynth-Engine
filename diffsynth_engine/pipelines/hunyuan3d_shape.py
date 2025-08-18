@@ -17,12 +17,14 @@ from einops import rearrange, repeat
 
 logger = logging.getLogger(__name__)
 
+
 def array_to_tensor(np_array):
     image_pt = torch.tensor(np_array).float()
     image_pt = image_pt / 255 * 2 - 1
     image_pt = rearrange(image_pt, "h w c -> c h w")
     image_pts = repeat(image_pt, "c h w -> b c h w", b=1)
     return image_pts
+
 
 class Hunyuan3DImageProcessor:
     def __init__(self, size=512):
@@ -47,7 +49,7 @@ class Hunyuan3DImageProcessor:
         h = x_max - x_min
         w = y_max - y_min
         if h == 0 or w == 0:
-            raise ValueError('input image is empty')
+            raise ValueError("input image is empty")
         desired_size = int(size * (1 - border_ratio))
         scale = desired_size / max(h, w)
         h2 = int(h * scale)
@@ -58,8 +60,9 @@ class Hunyuan3DImageProcessor:
         y2_min = (size - w2) // 2
         y2_max = y2_min + w2
 
-        result[x2_min:x2_max, y2_min:y2_max] = cv2.resize(image[x_min:x_max, y_min:y_max], (w2, h2),
-                                                          interpolation=cv2.INTER_AREA)
+        result[x2_min:x2_max, y2_min:y2_max] = cv2.resize(
+            image[x_min:x_max, y_min:y_max], (w2, h2), interpolation=cv2.INTER_AREA
+        )
 
         bg = np.ones((result.shape[0], result.shape[1], 3), dtype=np.uint8) * 255
 
@@ -86,11 +89,8 @@ class Hunyuan3DImageProcessor:
 
     def __call__(self, image, border_ratio=0.15):
         image, mask = self.load_image(image, border_ratio=border_ratio)
-        outputs = {
-            'image': image,
-            'mask': mask
-        }
-        return outputs    
+        outputs = {"image": image, "mask": mask}
+        return outputs
 
 
 def export_to_trimesh(mesh_output):
@@ -101,8 +101,8 @@ def export_to_trimesh(mesh_output):
 
 class Hunyuan3DShapePipeline(BasePipeline):
     def __init__(
-        self, 
-        config: HunyuanPipelineConfig, 
+        self,
+        config: HunyuanPipelineConfig,
         dit: HunYuan3DDiT,
         vae_decoder: ShapeVAEDecoder,
         image_encoder: ImageEncoder,
@@ -137,30 +137,27 @@ class Hunyuan3DShapePipeline(BasePipeline):
         logger.info(f"loading state dict from {config.vae_path} ...")
         vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
         logger.info(f"loading state dict from {config.image_encoder_path} ...")
-        image_encoder_state_dict = cls.load_model_checkpoint(config.image_encoder_path, device="cpu", dtype=config.image_encoder_dtype)
+        image_encoder_state_dict = cls.load_model_checkpoint(
+            config.image_encoder_path, device="cpu", dtype=config.image_encoder_dtype
+        )
 
         dit = HunYuan3DDiT.from_state_dict(dit_state_dict, device=config.device, dtype=config.model_dtype)
         vae_decoder = ShapeVAEDecoder.from_state_dict(vae_state_dict, device=config.device, dtype=config.vae_dtype)
-        image_encoder = ImageEncoder.from_state_dict(image_encoder_state_dict, device=config.device, dtype=config.image_encoder_dtype)
+        image_encoder = ImageEncoder.from_state_dict(
+            image_encoder_state_dict, device=config.device, dtype=config.image_encoder_dtype
+        )
         pipe = cls(config, dit, vae_decoder, image_encoder)
         pipe.eval()
         return pipe
 
     def encode_image(self, image: Image.Image):
-        image = self.image_processor(image)['image'].to(device=self.device, dtype=self.dtype)
+        image = self.image_processor(image)["image"].to(device=self.device, dtype=self.dtype)
         image_emb = self.image_encoder(image)
         uncond_image_emb = torch.zeros_like(image_emb, device=self.device, dtype=self.dtype)
         return torch.cat([image_emb, uncond_image_emb], dim=0)
 
     def decode_latents(
-        self,
-        latents,
-        box_v=1.01,
-        mc_level=0.0,
-        num_chunks=8000,
-        octree_resolution=384,
-        mc_algo=None,
-        enable_pbar=True
+        self, latents, box_v=1.01, mc_level=0.0, num_chunks=8000, octree_resolution=384, mc_algo=None, enable_pbar=True
     ):
         latents = latents / self.vae_decoder.scale_factor
         latents = self.vae_decoder(latents)
@@ -174,23 +171,24 @@ class Hunyuan3DShapePipeline(BasePipeline):
             enable_pbar=enable_pbar,
         )
         return export_to_trimesh(outputs)
-        
 
     @torch.no_grad()
     def __call__(
         self,
         image: Image.Image,
-        num_inference_steps:int = 50,
-        guidance_scale:float = 7.5,
-        seed:int = 42,
+        num_inference_steps: int = 50,
+        guidance_scale: float = 7.5,
+        seed: int = 42,
     ):
         image_emb = self.encode_image(image)
 
         latents = self.generate_noise((1, 4096, 64), seed=seed, device=self.device, dtype=self.dtype)
-        sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, sigma_min=1.0, sigma_max=0.0, append_value=1.0)
-        self.sampler.initialize(sigmas=sigmas)        
+        sigmas, timesteps = self.noise_scheduler.schedule(
+            num_inference_steps, sigma_min=1.0, sigma_max=0.0, append_value=1.0
+        )
+        self.sampler.initialize(sigmas=sigmas)
         for i, timestep in enumerate(tqdm(timesteps)):
-            timestep = timestep.unsqueeze(0).to(device=self.device) / 1000            
+            timestep = timestep.unsqueeze(0).to(device=self.device) / 1000
             model_outputs = self.dit(
                 x=torch.cat([latents, latents]),
                 t=torch.cat([timestep, timestep]),
