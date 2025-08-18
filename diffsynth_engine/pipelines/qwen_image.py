@@ -252,7 +252,7 @@ class QwenImagePipeline(BasePipeline):
         return pipe
 
     def compile(self):
-        self.dit.compile()
+        self.dit.compile_repeated_blocks(dynamic=True)
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.config.tp_degree is None or self.config.tp_degree == 1, (

@@ -493,5 +493,12 @@ class WanDiT(PreTrainedModel):
             )
         return tp_plan
 
+    def compile_repeated_blocks(self, *args, **kwargs):
+        for block in self.blocks:
+            block.compile(*args, **kwargs)
+
+        for block in self.single_blocks:
+            block.compile(*args, **kwargs)
+
     def get_fsdp_modules(self):
         return ["blocks"]

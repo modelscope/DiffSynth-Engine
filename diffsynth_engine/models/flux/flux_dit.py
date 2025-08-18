@@ -516,5 +516,9 @@ class FluxDiT(PreTrainedModel):
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
+    def compile_repeated_blocks(self, *args, **kwargs):
+        for block in self.blocks:
+            block.compile(*args, **kwargs)
+
     def get_fsdp_modules(self):
         return ["blocks", "single_blocks"]
