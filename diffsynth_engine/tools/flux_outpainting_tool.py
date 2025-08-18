@@ -1,5 +1,12 @@
-from diffsynth_engine import fetch_model, FluxPipelineConfig, FluxControlNet, ControlNetParams, FluxImagePipeline
-from typing import List, Tuple, Optional, Callable
+from diffsynth_engine import (
+    fetch_model,
+    FluxPipelineConfig,
+    FluxControlNet,
+    ControlNetParams,
+    FluxImagePipeline,
+    FluxStateDicts
+)
+from typing import List, Tuple, Optional, Callable, Dict
 from PIL import Image
 import torch
 
@@ -26,6 +33,23 @@ class FluxOutpaintingTool:
             device=device,
             dtype=torch.bfloat16,
         )
+
+    def from_state_dict(
+        self,
+        flux_state_dicts: FluxStateDicts,
+        controlnet_state_dict: Dict[str, torch.Tensor],
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+        offload_mode: Optional[str] = None,
+    ):
+        config = FluxPipelineConfig(
+            model_path="",
+            model_dtype=dtype,
+            device=device,
+            offload_mode=offload_mode,
+        )
+        self.pipe = FluxImagePipeline.from_state_dict(flux_state_dicts, config)
+        self.controlnet = FluxControlNet.from_state_dict(controlnet_state_dict, device, dtype)
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         self.pipe.load_loras(lora_list, fused, save_original_weight)

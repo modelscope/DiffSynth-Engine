@@ -5,6 +5,7 @@ from diffsynth_engine import (
     FluxImagePipeline,
     FluxRedux,
     fetch_model,
+    FluxStateDicts
 )
 from typing import List, Tuple, Optional, Callable
 from PIL import Image
@@ -43,6 +44,29 @@ class FluxReplaceByControlTool:
             device=device,
             dtype=torch.bfloat16,
         )
+
+    def from_state_dict(
+        self,
+        flux_state_dicts: FluxStateDicts,
+        redux_state_dict: Dict[str, torch.Tensor],
+        controlnet_state_dict: Dict[str, torch.Tensor],
+        load_text_encoder: bool = True,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+        offload_mode: Optional[str] = None,
+    ):
+        config = FluxPipelineConfig(
+            model_path=flux_model_path,
+            model_dtype=dtype,
+            load_text_encoder=load_text_encoder,
+            device=device,
+            offload_mode=offload_mode,
+        )
+        self.pipe = FluxImagePipeline.from_state_dict(flux_state_dicts, config)
+        flux_redux = FluxRedux.from_state_dict(redux_state_dict, device=device, dtype=dtype)
+        self.pipe.load_redux(flux_redux)
+        self.controlnet = FluxControlNet.from_state_dict(controlnet_state_dict, device=device, dtype=dtype)
+
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         self.pipe.load_loras(lora_list, fused, save_original_weight)
