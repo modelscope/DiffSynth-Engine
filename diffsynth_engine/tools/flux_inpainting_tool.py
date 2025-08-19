@@ -1,5 +1,12 @@
-from diffsynth_engine import fetch_model, FluxPipelineConfig, FluxControlNet, ControlNetParams, FluxImagePipeline
-from typing import List, Tuple, Optional, Callable
+from diffsynth_engine import (
+    fetch_model,
+    FluxPipelineConfig,
+    FluxControlNet,
+    ControlNetParams,
+    FluxImagePipeline,
+    FluxStateDicts,
+)
+from typing import List, Tuple, Optional, Callable, Dict
 from PIL import Image
 import torch
 
@@ -7,6 +14,15 @@ import torch
 class FluxInpaintingTool:
     def __init__(
         self,
+        flux_pipe: FluxImagePipeline,
+        controlnet: FluxControlNet
+    ):
+        self.pipe = flux_pipe
+        self.controlnet = controlnet
+
+    @classmethod
+    def from_pretrained(
+        cls,
         flux_model_path: str,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
@@ -18,14 +34,35 @@ class FluxInpaintingTool:
             device=device,
             offload_mode=offload_mode,
         )
-        self.pipe = FluxImagePipeline.from_pretrained(config)
-        self.controlnet = FluxControlNet.from_pretrained(
+        flux_pipe = FluxImagePipeline.from_pretrained(config)
+        controlnet = FluxControlNet.from_pretrained(
             fetch_model(
                 "alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta", path="diffusion_pytorch_model.safetensors"
             ),
             device=device,
             dtype=torch.bfloat16,
         )
+        return cls(flux_pipe, controlnet)
+
+    @classmethod
+    def from_state_dict(
+        cls,
+        flux_state_dicts: FluxStateDicts,
+        controlnet_state_dict: Dict[str, torch.Tensor],
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+        offload_mode: Optional[str] = None,
+    ):
+        config = FluxPipelineConfig(
+            model_path="",
+            model_dtype=dtype,
+            device=device,
+            offload_mode=offload_mode,
+        )
+        flux_pipe = FluxImagePipeline.from_state_dict(flux_state_dicts, config)
+        controlnet = FluxControlNet.from_state_dict(controlnet_state_dict, device, dtype)
+        return cls(flux_pipe, controlnet)
+
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         self.pipe.load_loras(lora_list, fused, save_original_weight)
