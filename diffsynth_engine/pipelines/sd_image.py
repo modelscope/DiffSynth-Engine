@@ -181,21 +181,21 @@ class SDImagePipeline(BasePipeline):
                 raise ValueError("`model_path` cannot be empty")
             logger.info(f"loading state dict from {config.model_path} ...")
             state_dicts.model = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
-        
+
         if state_dicts.vae is None:
             if config.vae_path is None:
                 state_dicts.vae = state_dicts.model
             else:
                 logger.info(f"loading state dict from {config.vae_path} ...")
                 state_dicts.vae = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
-        
+
         if state_dicts.clip is None:
             if config.clip_path is None:
                 state_dicts.clip = state_dicts.model
             else:
                 logger.info(f"loading state dict from {config.clip_path} ...")
                 state_dicts.clip = cls.load_model_checkpoint(config.clip_path, device="cpu", dtype=config.clip_dtype)
-        
+
         init_device = "cpu" if config.offload_mode is not None else config.device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         with LoRAContext():

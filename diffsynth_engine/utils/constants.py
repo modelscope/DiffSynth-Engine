@@ -5,6 +5,7 @@ REPO_ROOT = os.path.dirname(PACKAGE_ROOT)
 
 # conf
 CONF_PATH = os.path.join(PACKAGE_ROOT, "conf")
+
 # tokenizers
 FLUX_TOKENIZER_1_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "flux", "tokenizer_1")
 FLUX_TOKENIZER_2_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "flux", "tokenizer_2")
@@ -12,6 +13,8 @@ SDXL_TOKENIZER_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "sdxl", "tokeni
 SDXL_TOKENIZER_2_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "sdxl", "tokenizer_2")
 WAN_TOKENIZER_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "wan", "umt5-xxl")
 QWEN_IMAGE_TOKENIZER_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "qwen_image", "tokenizer")
+QWEN_IMAGE_PROCESSOR_CONFIG_FILE = os.path.join(CONF_PATH, "tokenizers", "qwen_image", "qwen2_vl_image_processor.json")
+
 # models
 VAE_CONFIG_FILE = os.path.join(CONF_PATH, "models", "components", "vae.json")
 FLUX_DIT_CONFIG_FILE = os.path.join(CONF_PATH, "models", "flux", "flux_dit.json")
@@ -46,3 +49,6 @@ KB = 1024
 MB = 1024 * KB
 GB = 1024 * MB
 TB = 1024 * GB
+
+OPENAI_CLIP_MEAN = [0.48145466, 0.4578275, 0.40821073]
+OPENAI_CLIP_STD = [0.26862954, 0.26130258, 0.27577711]

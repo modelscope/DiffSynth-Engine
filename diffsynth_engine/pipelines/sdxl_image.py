@@ -159,28 +159,32 @@ class SDXLImagePipeline(BasePipeline):
                 raise ValueError("`model_path` cannot be empty")
             logger.info(f"loading state dict from {config.model_path} ...")
             state_dicts.model = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
-            
+
         if state_dicts.vae is None:
             if config.vae_path is None:
                 state_dicts.vae = state_dicts.model
             else:
                 logger.info(f"loading state dict from {config.vae_path} ...")
                 state_dicts.vae = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
-        
+
         if state_dicts.clip_l is None:
             if config.clip_l_path is None:
                 state_dicts.clip_l = state_dicts.model
             else:
                 logger.info(f"loading state dict from {config.clip_l_path} ...")
-                state_dicts.clip_l = cls.load_model_checkpoint(config.clip_l_path, device="cpu", dtype=config.clip_l_dtype)
-                
+                state_dicts.clip_l = cls.load_model_checkpoint(
+                    config.clip_l_path, device="cpu", dtype=config.clip_l_dtype
+                )
+
         if state_dicts.clip_g is None:
             if config.clip_g_path is None:
                 state_dicts.clip_g = state_dicts.model
             else:
                 logger.info(f"loading state dict from {config.clip_g_path} ...")
-                state_dicts.clip_g = cls.load_model_checkpoint(config.clip_g_path, device="cpu", dtype=config.clip_g_dtype)
-                
+                state_dicts.clip_g = cls.load_model_checkpoint(
+                    config.clip_g_path, device="cpu", dtype=config.clip_g_dtype
+                )
+
         init_device = "cpu" if config.offload_mode else config.device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)

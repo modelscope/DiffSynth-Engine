@@ -1,10 +1,11 @@
 import json
 import torch
+import torch.distributed as dist
 import math
 from typing import Callable, List, Tuple, Optional, Union, Dict
 from tqdm import tqdm
 from einops import rearrange
-import torch.distributed as dist
+from PIL import Image
 
 from diffsynth_engine.configs import QwenImagePipelineConfig, QwenImageStateDicts
 from diffsynth_engine.models.basic.lora import LoRAContext
@@ -16,13 +17,14 @@ from diffsynth_engine.models.qwen_image import (
     Qwen2_5_VLConfig,
 )
 from diffsynth_engine.models.qwen_image import QwenImageVAE
-from diffsynth_engine.tokenizers import Qwen2TokenizerFast
+from diffsynth_engine.tokenizers import Qwen2TokenizerFast, Qwen2VLProcessor
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
 from diffsynth_engine.pipelines.utils import calculate_shift
 from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import (
     QWEN_IMAGE_TOKENIZER_CONF_PATH,
+    QWEN_IMAGE_PROCESSOR_CONFIG_FILE,
     QWEN_IMAGE_CONFIG_FILE,
     QWEN_IMAGE_VISION_CONFIG_FILE,
     QWEN_IMAGE_VAE_CONFIG_FILE,
@@ -44,20 +46,23 @@ class QwenImageLoRAConverter(LoRAStateDictConverter):
             lora_a_suffix = None
             if "lora_A.default.weight" in key:
                 lora_a_suffix = "lora_A.default.weight"
+                lora_b_suffix = "lora_B.default.weight"
             elif "lora_A.weight" in key:
                 lora_a_suffix = "lora_A.weight"
+                lora_b_suffix = "lora_B.weight"
+            elif "lora_down.weight" in key:
+                lora_a_suffix = "lora_down.weight"
+                lora_b_suffix = "lora_up.weight"
 
             if lora_a_suffix is None:
                 continue
 
             lora_args = {}
             lora_args["down"] = param
-
-            lora_b_suffix = lora_a_suffix.replace("lora_A", "lora_B")
             lora_args["up"] = lora_state_dict[origin_key.replace(lora_a_suffix, lora_b_suffix)]
 
             lora_args["rank"] = lora_args["up"].shape[1]
-            alpha_key = origin_key.replace("lora_up", "lora_A").replace(lora_a_suffix, "alpha")
+            alpha_key = origin_key.replace(lora_a_suffix, "alpha")
 
             if alpha_key in lora_state_dict:
                 alpha = lora_state_dict[alpha_key]
@@ -83,6 +88,7 @@ class QwenImagePipeline(BasePipeline):
         self,
         config: QwenImagePipelineConfig,
         tokenizer: Qwen2TokenizerFast,
+        processor: Qwen2VLProcessor,
         encoder: Qwen2_5_VLForConditionalGeneration,
         dit: QwenImageDiT,
         vae: QwenImageVAE,
@@ -97,11 +103,15 @@ class QwenImagePipeline(BasePipeline):
         self.config = config
         self.prompt_template_encode = "<|im_start|>system\nDescribe the image by detailing the color, shape, size, texture, quantity, text, spatial relationships of the objects and background:<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
         self.prompt_template_encode_start_idx = 34
+
+        self.edit_prompt_template_encode = "<|im_start|>system\nDescribe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{}<|im_end|>\n<|im_start|>assistant\n"
+        self.edit_prompt_template_encode_start_idx = 64
         # sampler
         self.noise_scheduler = RecifitedFlowScheduler(shift=3.0, use_dynamic_shifting=True)
         self.sampler = FlowMatchEulerSampler()
         # models
         self.tokenizer = tokenizer
+        self.processor = processor
         self.encoder = encoder
         self.dit = dit
         self.vae = vae
@@ -155,6 +165,10 @@ class QwenImagePipeline(BasePipeline):
 
         init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
         tokenizer = Qwen2TokenizerFast.from_pretrained(QWEN_IMAGE_TOKENIZER_CONF_PATH)
+        processor = Qwen2VLProcessor.from_pretrained(
+            tokenizer_config_path=QWEN_IMAGE_TOKENIZER_CONF_PATH,
+            image_processor_config_path=QWEN_IMAGE_PROCESSOR_CONFIG_FILE,
+        )
         with open(QWEN_IMAGE_VISION_CONFIG_FILE, "r") as f:
             vision_config = Qwen2_5_VLVisionConfig(**json.load(f))
         with open(QWEN_IMAGE_CONFIG_FILE, "r") as f:
@@ -201,6 +215,7 @@ class QwenImagePipeline(BasePipeline):
         pipe = cls(
             config=config,
             tokenizer=tokenizer,
+            processor=processor,
             encoder=encoder,
             dit=dit,
             vae=vae,
@@ -209,7 +224,7 @@ class QwenImagePipeline(BasePipeline):
 
         if config.offload_mode is not None:
             pipe.enable_cpu_offload(config.offload_mode, config.offload_to_disk)
-        
+
         if config.model_dtype == torch.float8_e4m3fn:
             pipe.dtype = torch.bfloat16  # compute dtype
             pipe.enable_fp8_autocast(
@@ -302,9 +317,54 @@ class QwenImagePipeline(BasePipeline):
 
         return prompt_embeds, prompt_embeds_mask
 
+    def encode_prompt_with_image(
+        self,
+        prompt: Union[str, List[str]],
+        image: torch.Tensor,
+        num_images_per_prompt: int = 1,
+        max_sequence_length: int = 1024,
+    ):
+        prompt = [prompt] if isinstance(prompt, str) else prompt
+
+        batch_size = len(prompt)
+        template = self.edit_prompt_template_encode
+        drop_idx = self.edit_prompt_template_encode_start_idx
+        texts = [template.format(txt) for txt in prompt]
+
+        model_inputs = self.processor(
+            text=texts,
+            images=image,
+        )
+        input_ids, attention_mask, pixel_values, image_grid_thw = (
+            model_inputs["input_ids"].to(self.device),
+            model_inputs["attention_mask"].to(self.device),
+            model_inputs["pixel_values"].to(self.device),
+            model_inputs["image_grid_thw"].to(self.device),
+        )
+        outputs = self.encoder(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
+        )
+        hidden_states = outputs["hidden_states"]
+        prompt_embeds = hidden_states[:, drop_idx:]
+        prompt_embeds_mask = attention_mask[:, drop_idx:]
+        seq_len = prompt_embeds.shape[1]
+
+        # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
+        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
+        prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
+
+        prompt_embeds_mask = prompt_embeds_mask.repeat(1, num_images_per_prompt, 1)
+        prompt_embeds_mask = prompt_embeds_mask.view(batch_size * num_images_per_prompt, seq_len)
+
+        return prompt_embeds, prompt_embeds_mask
+
     def predict_noise_with_cfg(
         self,
         latents: torch.Tensor,
+        image_latents: torch.Tensor,
         timestep: torch.Tensor,
         prompt_emb: torch.Tensor,
         negative_prompt_emb: torch.Tensor,
@@ -316,6 +376,7 @@ class QwenImagePipeline(BasePipeline):
         if cfg_scale <= 1.0 or negative_prompt_emb is None:
             return self.predict_noise(
                 latents,
+                image_latents,
                 timestep,
                 prompt_emb,
                 prompt_embeds_mask,
@@ -325,12 +386,14 @@ class QwenImagePipeline(BasePipeline):
             h, w = latents.shape[-2:]
             positive_noise_pred = self.predict_noise(
                 latents,
+                image_latents,
                 timestep,
                 prompt_emb,
                 prompt_embeds_mask,
             )
             negative_noise_pred = self.predict_noise(
                 latents,
+                image_latents,
                 timestep,
                 negative_prompt_emb,
                 negative_prompt_embeds_mask,
@@ -349,6 +412,7 @@ class QwenImagePipeline(BasePipeline):
             timestep = torch.cat([timestep, timestep], dim=0)
             noise_pred = self.predict_noise(
                 latents,
+                image_latents,
                 timestep,
                 prompt_emb,
                 prompt_embeds_mask,
@@ -363,25 +427,45 @@ class QwenImagePipeline(BasePipeline):
     def predict_noise(
         self,
         latents: torch.Tensor,
+        image_latents: torch.Tensor,
         timestep: torch.Tensor,
         prompt_emb: torch.Tensor,
         prompt_embeds_mask: torch.Tensor,
     ):
         self.load_models_to_device(["dit"])
-
         noise_pred = self.dit(
             image=latents,
+            edit=image_latents,
             text=prompt_emb,
             timestep=timestep,
             txt_seq_lens=prompt_embeds_mask.sum(dim=1),
         )
         return noise_pred
 
+    def prepare_image_latents(self, input_image: Image.Image):
+        image = self.preprocess_image(input_image).to(
+            device=self.device, dtype=self.vae.model.encoder.conv1.weight.dtype
+        )
+        image = image.unsqueeze(2)
+        image_latents = self.vae.encode(
+            image,
+            device=self.device,
+            tiled=self.vae_tiled,
+            tile_size=self.vae_tile_size,
+            tile_stride=self.vae_tile_stride,
+        )
+        mean = torch.tensor(self.vae.mean).view(1, 16, 1, 1, 1).to(image_latents.device, image_latents.dtype)
+        std = torch.tensor(self.vae.std).view(1, 16, 1, 1, 1).to(image_latents.device, image_latents.dtype)
+        image_latents = (image_latents - mean) / std
+        image_latents = image_latents.squeeze(2)
+        return image_latents
+
     @torch.no_grad()
     def __call__(
         self,
         prompt: str,
         negative_prompt: str = "",
+        input_image: Image.Image | None = None,  # use for img2img
         cfg_scale: float = 4.0,  # true cfg
         height: int = 1328,
         width: int = 1328,
@@ -389,29 +473,48 @@ class QwenImagePipeline(BasePipeline):
         seed: int | None = None,
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
+        if input_image is not None:
+            width, height = input_image.size
+        self.validate_image_size(height, width, minimum=64, multiple_of=16)
+
         noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device="cpu", dtype=self.dtype).to(
             device=self.device
         )
         # dynamic shift
         image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
         mu = calculate_shift(image_seq_len, max_shift=0.9, max_seq_len=8192)
+        if input_image:
+            image_latents = self.prepare_image_latents(input_image)
+        else:
+            image_latents = None
         init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, num_inference_steps, mu)
         # Initialize sampler
         self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas)
 
         self.load_models_to_device(["encoder"])
-        prompt_embeds, prompt_embeds_mask = self.encode_prompt(prompt, 1, 4096)
-        if cfg_scale > 1.0 and negative_prompt != "":
-            negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt(negative_prompt, 1, 4096)
+        if image_latents is not None:
+            prompt_embeds, prompt_embeds_mask = self.encode_prompt_with_image(prompt, input_image, 1, 4096)
+            if cfg_scale > 1.0 and negative_prompt != "":
+                negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt_with_image(
+                    negative_prompt, input_image, 1, 4096
+                )
+            else:
+                negative_prompt_embeds, negative_prompt_embeds_mask = None, None
         else:
-            negative_prompt_embeds, negative_prompt_embeds_mask = None, None
+            prompt_embeds, prompt_embeds_mask = self.encode_prompt(prompt, 1, 4096)
+            if cfg_scale > 1.0 and negative_prompt != "":
+                negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt(negative_prompt, 1, 4096)
+            else:
+                negative_prompt_embeds, negative_prompt_embeds_mask = None, None
         self.model_lifecycle_finish(["encoder"])
 
         hide_progress = dist.is_initialized() and dist.get_rank() != 0
+
         for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
             timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
             noise_pred = self.predict_noise_with_cfg(
                 latents=latents,
+                image_latents=image_latents,
                 timestep=timestep,
                 prompt_emb=prompt_embeds,
                 negative_prompt_emb=negative_prompt_embeds,
@@ -431,12 +534,16 @@ class QwenImagePipeline(BasePipeline):
         latents = rearrange(latents, "B C H W -> B C 1 H W")
         vae_output = rearrange(
             self.vae.decode(
-                latents.to(self.vae.model.encoder.conv1.weight.dtype), device=self.vae.model.encoder.conv1.weight.device
+                latents.to(self.vae.model.encoder.conv1.weight.dtype),
+                device=self.vae.model.encoder.conv1.weight.device,
+                tiled=self.vae_tiled,
+                tile_size=self.vae_tile_size,
+                tile_stride=self.vae_tile_stride,
             )[0],
             "C B H W -> B C H W",
         )
         image = self.vae_output_to_image(vae_output)
         # Offload all models
-        self.model_lifecycle_finish(["vae"])        
+        self.model_lifecycle_finish(["vae"])
         self.load_models_to_device([])
         return image

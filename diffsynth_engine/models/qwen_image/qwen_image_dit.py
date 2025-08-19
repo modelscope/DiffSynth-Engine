@@ -48,8 +48,8 @@ class QwenEmbedRope(nn.Module):
         super().__init__()
         self.theta = theta
         self.axes_dim = axes_dim
-        pos_index = torch.arange(10000)
-        neg_index = torch.arange(10000).flip(0) * -1 - 1
+        pos_index = torch.arange(4096)
+        neg_index = torch.arange(4096).flip(0) * -1 - 1
         self.pos_freqs = torch.cat(
             [
                 self.rope_params(pos_index, self.axes_dim[0], self.theta),
@@ -79,43 +79,48 @@ class QwenEmbedRope(nn.Module):
         freqs = torch.polar(torch.ones_like(freqs), freqs)
         return freqs
 
-    def forward(self, video_fhw, txt_length, device):
+    def forward(self, video_fhw, txt_seq_lens, device):
         """
-        Args: video_fhw: [frame, height, width] a list of 3 integers representing the shape of the video
-        Args: txt_length: an integer representing the length of text
+        Args: video_fhw: [frame, height, width] a list of 3 integers representing the shape of the video Args:
+        txt_length: [bs] a list of 1 integers representing the length of the text
         """
         if self.pos_freqs.device != device:
             self.pos_freqs = self.pos_freqs.to(device)
             self.neg_freqs = self.neg_freqs.to(device)
 
-        frame, height, width = video_fhw
-        rope_key = f"{frame}_{height}_{width}"
+        vid_freqs = []
+        max_vid_index = 0
+        for idx, fhw in enumerate(video_fhw):
+            frame, height, width = fhw
+            rope_key = f"{idx}_{height}_{width}"
 
-        if rope_key not in self.rope_cache:
-            seq_lens = frame * height * width
-            freqs_pos = self.pos_freqs.split([x // 2 for x in self.axes_dim], dim=1)
-            freqs_neg = self.neg_freqs.split([x // 2 for x in self.axes_dim], dim=1)
-            freqs_frame = freqs_pos[0][:frame].view(frame, 1, 1, -1).expand(frame, height, width, -1)
+            if rope_key not in self.rope_cache:
+                seq_lens = frame * height * width
+                freqs_pos = self.pos_freqs.split([x // 2 for x in self.axes_dim], dim=1)
+                freqs_neg = self.neg_freqs.split([x // 2 for x in self.axes_dim], dim=1)
+                freqs_frame = freqs_pos[0][idx : idx + frame].view(frame, 1, 1, -1).expand(frame, height, width, -1)
+                if self.scale_rope:
+                    freqs_height = torch.cat(
+                        [freqs_neg[1][-(height - height // 2) :], freqs_pos[1][: height // 2]], dim=0
+                    )
+                    freqs_height = freqs_height.view(1, height, 1, -1).expand(frame, height, width, -1)
+                    freqs_width = torch.cat([freqs_neg[2][-(width - width // 2) :], freqs_pos[2][: width // 2]], dim=0)
+                    freqs_width = freqs_width.view(1, 1, width, -1).expand(frame, height, width, -1)
+
+                else:
+                    freqs_height = freqs_pos[1][:height].view(1, height, 1, -1).expand(frame, height, width, -1)
+                    freqs_width = freqs_pos[2][:width].view(1, 1, width, -1).expand(frame, height, width, -1)
+
+                freqs = torch.cat([freqs_frame, freqs_height, freqs_width], dim=-1).reshape(seq_lens, -1)
+                self.rope_cache[rope_key] = freqs.clone().contiguous()
+            vid_freqs.append(self.rope_cache[rope_key])
             if self.scale_rope:
-                freqs_height = torch.cat([freqs_neg[1][-(height - height // 2) :], freqs_pos[1][: height // 2]], dim=0)
-                freqs_height = freqs_height.view(1, height, 1, -1).expand(frame, height, width, -1)
-                freqs_width = torch.cat([freqs_neg[2][-(width - width // 2) :], freqs_pos[2][: width // 2]], dim=0)
-                freqs_width = freqs_width.view(1, 1, width, -1).expand(frame, height, width, -1)
-
+                max_vid_index = max(height // 2, width // 2, max_vid_index)
             else:
-                freqs_height = freqs_pos[1][:height].view(1, height, 1, -1).expand(frame, height, width, -1)
-                freqs_width = freqs_pos[2][:width].view(1, 1, width, -1).expand(frame, height, width, -1)
+                max_vid_index = max(height, width, max_vid_index)
 
-            freqs = torch.cat([freqs_frame, freqs_height, freqs_width], dim=-1).reshape(seq_lens, -1)
-            self.rope_cache[rope_key] = freqs.clone().contiguous()
-        vid_freqs = self.rope_cache[rope_key]
-
-        if self.scale_rope:
-            max_vid_index = max(height // 2, width // 2)
-        else:
-            max_vid_index = max(height, width)
-
-        txt_freqs = self.pos_freqs[max_vid_index : max_vid_index + txt_length, ...]
+        txt_freqs = self.pos_freqs[max_vid_index : max_vid_index + txt_seq_lens, ...]
+        vid_freqs = torch.cat(vid_freqs, dim=0)
 
         return vid_freqs, txt_freqs
 
@@ -364,6 +369,7 @@ class QwenImageDiT(PreTrainedModel):
     def forward(
         self,
         image: torch.Tensor,
+        edit: torch.Tensor = None,
         text: torch.Tensor = None,
         timestep: torch.LongTensor = None,
         txt_seq_lens: torch.LongTensor = None,
@@ -377,6 +383,7 @@ class QwenImageDiT(PreTrainedModel):
             cfg_parallel(
                 (
                     image,
+                    edit,
                     text,
                     timestep,
                     txt_seq_lens,
@@ -385,11 +392,18 @@ class QwenImageDiT(PreTrainedModel):
             ),
         ):
             conditioning = self.time_text_embed(timestep, image.dtype)
-            video_fhw = (1, h // 2, w // 2)  # frame, height, width
+            video_fhw = [(1, h // 2, w // 2)]  # frame, height, width
             max_length = txt_seq_lens.max().item()
+            image = self.patchify(image)
+            image_seq_len = image.shape[1]
+            if edit is not None:
+                edit = edit.to(dtype=image.dtype)
+                edit = self.patchify(edit)
+                image = torch.cat([image, edit], dim=1)
+                video_fhw += video_fhw
+
             image_rotary_emb = self.pos_embed(video_fhw, max_length, image.device)
 
-            image = self.patchify(image)
             image = self.img_in(image)
             text = self.txt_in(self.txt_norm(text[:, :max_length]))
 
@@ -397,6 +411,8 @@ class QwenImageDiT(PreTrainedModel):
                 text, image = block(image=image, text=text, temb=conditioning, image_rotary_emb=image_rotary_emb)
             image = self.norm_out(image, conditioning)
             image = self.proj_out(image)
+            if edit is not None:
+                image = image[:, :image_seq_len]
 
             image = self.unpatchify(image, h, w)
 
