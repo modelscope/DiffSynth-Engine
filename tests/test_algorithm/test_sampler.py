@@ -33,7 +33,7 @@ class TestSampler(ImageTestCase):
         )
 
         sampler = FlowMatchEulerSampler()
-        sampler.initialize(None, timesteps, sigmas, None)
+        sampler.initialize(sigmas)
 
         expect_tensor = self.get_expect_tensor("algorithm/flow_match_euler_i10.safetensors")
         origin_sample = expect_tensor["origin_sample"]
