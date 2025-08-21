@@ -944,7 +944,7 @@ class FluxImagePipeline(BasePipeline):
             noise, input_image, denoising_strength, num_inference_steps, mu
         )
         # Initialize sampler
-        self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas)
+        self.sampler.initialize(sigmas=sigmas)
 
         # Encode prompts
         self.load_models_to_device(["text_encoder_1", "text_encoder_2"])

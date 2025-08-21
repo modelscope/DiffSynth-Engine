@@ -397,7 +397,7 @@ class QwenImagePipeline(BasePipeline):
         mu = calculate_shift(image_seq_len, max_shift=0.9, max_seq_len=8192)
         init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, num_inference_steps, mu)
         # Initialize sampler
-        self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas)
+        self.sampler.initialize(sigmas=sigmas)
 
         self.load_models_to_device(["encoder"])
         prompt_embeds, prompt_embeds_mask = self.encode_prompt(prompt, 1, 4096)
