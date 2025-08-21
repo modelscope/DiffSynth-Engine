@@ -53,6 +53,7 @@ class Qwen2VLProcessor:
         text: str | List[str],
         images: Optional[List[Image.Image]] = None,
         videos: Optional[List[List[Image.Image]]] = None,
+        max_length: Optional[int] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Main method to prepare for the model one or several sequences(s) and image(s). This method forwards the `text`
@@ -84,7 +85,7 @@ class Qwen2VLProcessor:
                     )
                     index += 1
                 text[i] = text[i].replace("<|placeholder|>", self.image_token)
-        text_inputs = self.tokenizer(text)
+        text_inputs = self.tokenizer(text, max_length=max_length)
 
         processed_inputs = text_inputs
         if images_pixel_values is not None:

@@ -9,3 +9,4 @@ dist/
 .DS_Store/
 .pytest_cache/
 .ruff_cache/
+CLAUDE.md

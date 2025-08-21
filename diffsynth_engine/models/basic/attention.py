@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from einops import rearrange, repeat
 from typing import Optional
 
-import torch.nn.functional as F
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.flag import (
     FLASH_ATTN_3_AVAILABLE,
@@ -42,11 +42,11 @@ if XFORMERS_AVAILABLE:
 
 if SDPA_AVAILABLE:
 
-    def sdpa_attn(q, k, v, attn_mask=None, scale=None):
+    def sdpa_attn(q, k, v, attn_mask=None, is_causal=False, scale=None):
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
-        out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, scale=scale)
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal, scale=scale)
         return out.transpose(1, 2)
 
 

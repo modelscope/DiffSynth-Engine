@@ -37,7 +37,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "diffusers == 0.31.0",
-    "transformers == 4.45.2",
+    "transformers == 4.52.4",
     "accelerate",
     "build",
     "ruff",

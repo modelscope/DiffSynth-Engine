@@ -21,5 +21,6 @@
     "vision_start_token_id": 151652,
     "vision_end_token_id": 151653,
     "image_token_id": 151655,
-    "video_token_id": 151656
+    "video_token_id": 151656,
+    "attn_impl": "sdpa"
 }

@@ -331,10 +331,7 @@ class QwenImagePipeline(BasePipeline):
         drop_idx = self.edit_prompt_template_encode_start_idx
         texts = [template.format(txt) for txt in prompt]
 
-        model_inputs = self.processor(
-            text=texts,
-            images=image,
-        )
+        model_inputs = self.processor(text=texts, images=image, max_length=max_sequence_length + drop_idx)
         input_ids, attention_mask, pixel_values, image_grid_thw = (
             model_inputs["input_ids"].to(self.device),
             model_inputs["attention_mask"].to(self.device),
@@ -409,6 +406,7 @@ class QwenImagePipeline(BasePipeline):
             prompt_emb = torch.cat([prompt_emb, negative_prompt_emb], dim=0)
             prompt_embeds_mask = torch.cat([prompt_embeds_mask, negative_prompt_embeds_mask], dim=0)
             latents = torch.cat([latents, latents], dim=0)
+            image_latents = torch.cat([image_latents, image_latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
             noise_pred = self.predict_noise(
                 latents,
@@ -454,11 +452,15 @@ class QwenImagePipeline(BasePipeline):
             tile_size=self.vae_tile_size,
             tile_stride=self.vae_tile_stride,
         )
-        mean = torch.tensor(self.vae.mean).view(1, 16, 1, 1, 1).to(image_latents.device, image_latents.dtype)
-        std = torch.tensor(self.vae.std).view(1, 16, 1, 1, 1).to(image_latents.device, image_latents.dtype)
-        image_latents = (image_latents - mean) / std
         image_latents = image_latents.squeeze(2)
         return image_latents
+
+    def calculate_dimensions(self, target_area, ratio):
+        width = math.sqrt(target_area * ratio)
+        height = width / ratio
+        width = round(width / 32) * 32
+        height = round(height / 32) * 32
+        return width, height
 
     @torch.no_grad()
     def __call__(
@@ -475,6 +477,9 @@ class QwenImagePipeline(BasePipeline):
     ):
         if input_image is not None:
             width, height = input_image.size
+            width, height = self.calculate_dimensions(1024 * 1024, width / height)
+            input_image = input_image.resize((width, height), Image.LANCZOS)
+
         self.validate_image_size(height, width, minimum=64, multiple_of=16)
 
         noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device="cpu", dtype=self.dtype).to(

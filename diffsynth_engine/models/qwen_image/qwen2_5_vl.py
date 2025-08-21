@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Tuple, Optional
 
 from diffsynth_engine.models.base import PreTrainedModel
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
-from diffsynth_engine.models.basic.attention import attention
+from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.cache import Cache, DynamicCache
 from diffsynth_engine.utils import logging
@@ -152,17 +152,15 @@ class Qwen2_5_VisionRotaryEmbedding(nn.Module):
         self,
         dim: int = 80,
         theta: float = 10000.0,
-        device: str = "cuda:0",
-        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
-        with torch.device(device):
-            inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
-            self.register_buffer("inv_freq", inv_freq, persistent=False)
+        with torch.device("cpu"):
+            self.inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2).float() / dim))
 
-    def forward(self, seqlen: int) -> torch.Tensor:
-        seq = torch.arange(seqlen, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
-        freqs = torch.outer(seq, self.inv_freq)
+    def forward(self, seqlen: int, device: str) -> torch.Tensor:
+        inv_freq = self.inv_freq.to(device=device)
+        seq = torch.arange(seqlen, device=inv_freq.device, dtype=inv_freq.dtype)
+        freqs = torch.outer(seq, inv_freq)
         return freqs
 
 
@@ -222,7 +220,7 @@ class Qwen2_5_VisionAttention(nn.Module):
         q = rearrange(q, "s n d -> 1 s n d")
         k = rearrange(k, "s n d -> 1 s n d")
         v = rearrange(v, "s n d -> 1 s n d")
-        out = attention(q, k, v, attn_impl=self.attn_impl, attn_mask=attention_mask)
+        out = attention_ops.attention(q, k, v, attn_impl=self.attn_impl, attn_mask=attention_mask)
         out = rearrange(out, "1 s n d -> s (n d)")
         out = self.proj(out)
         return out
@@ -301,7 +299,7 @@ class Qwen2_5_VisionTransformer(nn.Module):
             dtype=dtype,
         )
         head_dim = config.hidden_size // config.num_heads
-        self.rotary_pos_emb = Qwen2_5_VisionRotaryEmbedding(head_dim // 2, device=device, dtype=dtype)
+        self.rotary_pos_emb = Qwen2_5_VisionRotaryEmbedding(head_dim // 2)
         self.blocks = nn.ModuleList(
             [
                 Qwen2_5_VisionBlock(
@@ -348,7 +346,7 @@ class Qwen2_5_VisionTransformer(nn.Module):
             pos_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
         pos_ids = torch.cat(pos_ids, dim=0)
         max_grid_size = grid_thw[:, 1:].max()
-        rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)
+        rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size, device=grid_thw.device)
         rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)
         return rotary_pos_emb
 
@@ -488,7 +486,6 @@ class Qwen2_5_Attention(nn.Module):
         hidden_size: int = 3584,
         num_attention_heads: int = 28,
         num_key_value_heads: int = 4,
-        # dropout: float = 0.0,
         mrope_section: List[int] = [16, 24, 24],
         attn_impl: Optional[str] = None,
         device: str = "cuda:0",
@@ -501,7 +498,6 @@ class Qwen2_5_Attention(nn.Module):
         self.head_dim = hidden_size // num_attention_heads
         self.num_key_value_heads = num_key_value_heads
         self.num_key_value_groups = num_attention_heads // num_key_value_heads
-        # self.dropout = dropout
         self.mrope_section = mrope_section
         self.attn_impl = attn_impl
 
@@ -520,8 +516,6 @@ class Qwen2_5_Attention(nn.Module):
         self.o_proj = nn.Linear(
             self.num_attention_heads * self.head_dim, self.hidden_size, bias=False, device=device, dtype=dtype
         )
-
-        self.rotary_emb = Qwen2_5_VLRotaryEmbedding(dim=self.head_dim, device=device, dtype=dtype)
 
     def forward(
         self,
@@ -556,14 +550,17 @@ class Qwen2_5_Attention(nn.Module):
         if attention_mask is not None:  # no matter the length, we just slice it
             causal_mask = attention_mask[:, :, :, : key_states.shape[1]]
 
-        # TODO: attention_mask for flash attention 2
-        out = attention(
-            query_states,
-            key_states,
-            value_states,
-            attn_impl=self.attn_impl,
-            attn_mask=causal_mask,
-        )
+        if self.attn_impl == "sdpa":
+            out = attention_ops.sdpa_attn(query_states, key_states, value_states, is_causal=True)
+        else:
+            # TODO: attention_mask for flash attention 2
+            out = attention_ops.attention(
+                query_states,
+                key_states,
+                value_states,
+                attn_impl=self.attn_impl,
+                attn_mask=causal_mask,
+            )
         out = rearrange(out, "b s n d -> b s (n d)")
         out = self.o_proj(out)
         return out, past_key_values
@@ -647,29 +644,29 @@ class Qwen2_5_VLDecoderLayer(nn.Module):
 
 
 class Qwen2_5_VLRotaryEmbedding(nn.Module):
-    def __init__(self, dim: int = 128, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, dim: int = 128):
         super().__init__()
-        with torch.device(device):
-            inv_freq = self.compute_rope(dim)  # default rope without dynamic frequency
-            self.register_buffer("inv_freq", inv_freq, persistent=False)
+        with torch.device("cpu"):
+            self.inv_freq = self.compute_rope(dim)  # default rope without dynamic frequency
 
     def compute_rope(self, dim: int, theta: float = 1000000.0):
         inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2).float() / dim))
         return inv_freq
 
     @torch.no_grad()
-    def forward(self, x, position_ids):
+    def forward(self, position_ids: torch.LongTensor, device: str, dtype: torch.dtype):
         # In contrast to other models, Qwen2_5_VL has different position ids for the grids
         # So we expand the inv_freq to shape (3, ...)
-        inv_freq_expanded = self.inv_freq[None, None, :, None].float().expand(3, position_ids.shape[1], -1, 1)
+        inv_freq = self.inv_freq.to(device=device)
+        inv_freq_expanded = inv_freq[None, None, :, None].float().expand(3, position_ids.shape[1], -1, 1)
         position_ids_expanded = position_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
 
-        freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
+        freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
         emb = torch.cat((freqs, freqs), dim=-1)
         cos = emb.cos()
         sin = emb.sin()
 
-        return cos.to(device=x.device, dtype=x.dtype), sin.to(device=x.device, dtype=x.dtype)
+        return cos.to(device=device, dtype=dtype), sin.to(device=device, dtype=dtype)
 
 
 class Qwen2_5_VLModel(nn.Module):
@@ -702,7 +699,7 @@ class Qwen2_5_VLModel(nn.Module):
         )
         self.norm = Qwen2_5_RMSNorm(config.hidden_size, config.rms_norm_eps, device=device, dtype=dtype)
         head_dim = config.hidden_size // config.num_attention_heads
-        self.rotary_emb = Qwen2_5_VLRotaryEmbedding(dim=head_dim, device=device, dtype=dtype)
+        self.rotary_emb = Qwen2_5_VLRotaryEmbedding(dim=head_dim)
 
     def get_input_embeddings(self):
         return self.embed_tokens
@@ -749,7 +746,7 @@ class Qwen2_5_VLModel(nn.Module):
         hidden_states = inputs_embeds
 
         # create position embeddings to be shared across the decoder layers
-        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        position_embeddings = self.rotary_emb(position_ids, device=hidden_states.device, dtype=hidden_states.dtype)
 
         # decoder layers
         for decoder_layer in self.layers:
@@ -940,8 +937,7 @@ class Qwen2_5_VLForConditionalGeneration(PreTrainedModel):
         with torch.device("meta"), no_init_weights():
             model = cls(vision_config=vision_config, config=config, device=device, dtype=dtype)
         model.load_state_dict(state_dict, assign=True)
-        for param in model.parameters():  # skip buffers
-            param.data = param.data.to(device=device, dtype=dtype, non_blocking=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
     def get_input_embeddings(self):
@@ -1202,27 +1198,14 @@ class Qwen2_5_VLForConditionalGeneration(PreTrainedModel):
         if position_ids is None:
             assert attention_mask is None or attention_mask.ndim == 2, "attention mask must be 2D"
             # calculate RoPE index once per generation in the pre-fill stage only
-            if (cache_position is not None and cache_position[0] == 0) or self.rope_deltas is None:
-                position_ids, rope_deltas = self.get_rope_index(
-                    input_ids,
-                    image_grid_thw,
-                    video_grid_thw,
-                    second_per_grid_ts,
-                    attention_mask,
-                )
-                self.rope_deltas = rope_deltas
-            # then use the prev pre-calculated rope-deltas to get the correct position ids
-            else:
-                batch_size, seq_length, _ = inputs_embeds.shape
-                delta = (
-                    (cache_position[0] + self.rope_deltas).to(inputs_embeds.device) if cache_position is not None else 0
-                )
-                position_ids = torch.arange(seq_length, device=inputs_embeds.device)
-                position_ids = position_ids.view(1, -1).expand(batch_size, -1)
-                if cache_position is not None:  # otherwise `deltas` is an int `0`
-                    delta = delta.repeat_interleave(batch_size // delta.shape[0], dim=0)
-                position_ids = position_ids.add(delta)
-                position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
+            position_ids, rope_deltas = self.get_rope_index(
+                input_ids,
+                image_grid_thw,
+                video_grid_thw,
+                second_per_grid_ts,
+                attention_mask,
+            )
+            self.rope_deltas = rope_deltas
 
         hidden_states, present_key_values = self.model(
             input_ids=None,
