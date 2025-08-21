@@ -311,7 +311,7 @@ class Dinov2Model(nn.Module):
         self,
         pixel_values: torch.Tensor,
         bool_masked_pos: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         embedding_output = self.embeddings(pixel_values, bool_masked_pos=bool_masked_pos)
         sequence_output = self.encoder(embedding_output)
         return self.layernorm(sequence_output)
