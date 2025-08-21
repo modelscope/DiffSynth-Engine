@@ -46,7 +46,7 @@ class FluxReplaceByControlTool:
         )
         flux_pipe = FluxImagePipeline.from_pretrained(config)
         redux_model_path = fetch_model("muse/flux1-redux-dev", path="flux1-redux-dev.safetensors", revision="v1")
-        redux = FluxRedux.from_pretrained(flux_model_path, device=device, dtype=dtype)
+        redux = FluxRedux.from_pretrained(redux_model_path, device=device, dtype=dtype)
         controlnet = FluxControlNet.from_pretrained(
             fetch_model(
                 "alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta",
@@ -76,9 +76,9 @@ class FluxReplaceByControlTool:
             offload_mode=offload_mode,
         )
         flux_pipe = FluxImagePipeline.from_state_dict(flux_state_dicts, config)
-        flux_redux = FluxRedux.from_state_dict(redux_state_dict, device=device, dtype=dtype)
+        redux = FluxRedux.from_state_dict(redux_state_dict, device=device, dtype=dtype)
         controlnet = FluxControlNet.from_state_dict(controlnet_state_dict, device=device, dtype=dtype)
-        return cls(flux_pipe, flux_redux, controlnet)
+        return cls(flux_pipe, redux, controlnet)
 
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
