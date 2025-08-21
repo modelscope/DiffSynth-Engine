@@ -402,7 +402,7 @@ class WanVideoPipeline(BasePipeline):
             mask[:, :, : image_latents.shape[2], :, :] = 0
 
         # Initialize sampler
-        self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas, mask=mask)
+        self.sampler.initialize(sigmas=sigmas)
 
         # Denoise
         hide_progress = dist.is_initialized() and dist.get_rank() != 0
@@ -432,6 +432,7 @@ class WanVideoPipeline(BasePipeline):
             )
             # Scheduler
             latents = self.sampler.step(latents, noise_pred, i)
+            latents = latents * mask + init_latents * (1 - mask)
             if progress_callback is not None:
                 progress_callback(i + 1, len(timesteps), "DENOISING")
 
