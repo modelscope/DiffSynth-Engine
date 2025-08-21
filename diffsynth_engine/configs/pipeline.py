@@ -206,6 +206,11 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
     # override OptimizationConfig
     fbcache_relative_l1_threshold = 0.009
 
+    # override BaseConfig
+    vae_tiled: bool = True
+    vae_tile_size: Tuple[int, int] = (34, 34)
+    vae_tile_stride: Tuple[int, int] = (18, 16)
+
     @classmethod
     def basic_config(
         cls,
