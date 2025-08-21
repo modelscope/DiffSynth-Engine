@@ -43,7 +43,7 @@ def _forward_kwargs_to_record(forward_kwargs, key_inputs):
         else:
             record[f"input#{name}#"] = forward_kwargs[name]
         product = _get_product(record, name)
-        if indices is not None:  # 如果 indices 为 None，则不采用product，因为该元素是标量
+        if indices is not None:  # If indices is None, do not use product, because the element is a scalar
             record[f"input#{name}#product"] = product
         record[f"input#{name}#product_square"] = product**2
     return record
