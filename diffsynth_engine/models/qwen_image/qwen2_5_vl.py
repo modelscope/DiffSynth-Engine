@@ -550,6 +550,7 @@ class Qwen2_5_Attention(nn.Module):
         if attention_mask is not None:  # no matter the length, we just slice it
             causal_mask = attention_mask[:, :, :, : key_states.shape[1]]
 
+        # TODO: use is_causal when attention mask is causal
         if self.attn_impl == "sdpa":
             out = attention_ops.sdpa_attn(query_states, key_states, value_states, is_causal=True)
         else:

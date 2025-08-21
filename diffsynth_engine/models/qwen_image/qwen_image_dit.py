@@ -79,10 +79,11 @@ class QwenEmbedRope(nn.Module):
         freqs = torch.polar(torch.ones_like(freqs), freqs)
         return freqs
 
-    def forward(self, video_fhw, txt_seq_lens, device):
+    def forward(self, video_fhw, txt_length, device):
         """
-        Args: video_fhw: [frame, height, width] a list of 3 integers representing the shape of the video Args:
-        txt_length: [bs] a list of 1 integers representing the length of the text
+        Args:
+            video_fhw (List[Tuple[int, int, int]]): A list of (frame, height, width) tuples for each video/image
+            txt_length (int): The maximum length of the text sequences
         """
         if self.pos_freqs.device != device:
             self.pos_freqs = self.pos_freqs.to(device)
@@ -119,7 +120,7 @@ class QwenEmbedRope(nn.Module):
             else:
                 max_vid_index = max(height, width, max_vid_index)
 
-        txt_freqs = self.pos_freqs[max_vid_index : max_vid_index + txt_seq_lens, ...]
+        txt_freqs = self.pos_freqs[max_vid_index : max_vid_index + txt_length, ...]
         vid_freqs = torch.cat(vid_freqs, dim=0)
 
         return vid_freqs, txt_freqs

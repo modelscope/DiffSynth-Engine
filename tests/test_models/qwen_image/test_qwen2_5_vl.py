@@ -89,10 +89,9 @@ class TestQwen2_5_VL(ImageTestCase):
         with torch.no_grad():
             expected = vlm(input_ids=input_ids, attention_mask=attention_mask).logits.cpu()
             text_logits = self.encoder(input_ids=input_ids, attention_mask=attention_mask)["logits"].cpu()
-        # self.assertTensorEqual(text_logits, expected)
+        self.assertTensorEqual(text_logits, expected)
 
         outputs = self.processor(text=self.prompt, images=[self.input_image])
-        input_ids, attention_mask = outputs["input_ids"].to("cuda:0"), outputs["attention_mask"].to("cuda:0")
         input_ids, attention_mask, pixel_values, image_grid_thw = (
             outputs["input_ids"].to("cuda:0"),
             outputs["attention_mask"].to("cuda:0"),
