@@ -112,7 +112,7 @@ class Dinov2SelfAttention(nn.Module):
     def __init__(self, hidden_size: int, num_attention_heads: int, qkv_bias: bool) -> None:
         super().__init__()
         if hidden_size % num_attention_heads != 0:
-            raise ValueError(f"隐藏层大小 {hidden_size} 不是注意力头数 {num_attention_heads} 的整数倍。")
+            raise ValueError(f"hidden_size {hidden_size} is not a multiple of num_attention_heads {num_attention_heads}.")
 
         self.num_attention_heads = num_attention_heads
         self.attention_head_size = int(hidden_size / num_attention_heads)
