@@ -550,9 +550,15 @@ class Qwen2_5_Attention(nn.Module):
         if attention_mask is not None:  # no matter the length, we just slice it
             causal_mask = attention_mask[:, :, :, : key_states.shape[1]]
 
-        # TODO: use is_causal when attention mask is causal
         if self.attn_impl == "sdpa":
-            out = attention_ops.sdpa_attn(query_states, key_states, value_states, is_causal=True)
+            is_causal = causal_mask is None and query_states.shape[1] > 1
+            out = attention_ops.sdpa_attn(
+                query_states,
+                key_states,
+                value_states,
+                attn_mask=causal_mask,
+                is_causal=is_causal,
+            )
         else:
             # TODO: attention_mask for flash attention 2
             out = attention_ops.attention(
@@ -783,6 +789,9 @@ class Qwen2_5_VLModel(nn.Module):
             else past_seen_tokens + sequence_length + 1
         )
 
+        if self.config.attn_impl == "sdpa" and self._ignore_causal_mask(attention_mask, input_tensor, past_seen_tokens):
+            return None
+
         # In case the provided `attention` mask is 2D, we generate a causal mask here (4D).
         causal_mask = self._prepare_4d_causal_attention_mask_with_cache_position(
             attention_mask=attention_mask,
@@ -801,6 +810,32 @@ class Qwen2_5_VLModel(nn.Module):
             causal_mask = self._unmask_unattended(causal_mask, min_dtype)
 
         return causal_mask
+
+    @staticmethod
+    def _ignore_causal_mask(
+        attention_mask: Optional[torch.Tensor],
+        inputs_embeds: torch.Tensor,
+        past_seen_tokens: int,
+    ):
+        """
+        Detects whether the optional user-specified attention_mask & the automatically created causal mask can be
+        ignored in case PyTorch's SDPA is used, rather relying on SDPA's `is_causal` argument.
+
+        In case no token is masked in the `attention_mask` argument, if `query_length == 1` or
+        `key_value_length == query_length`, we rather rely on SDPA `is_causal` argument to use causal/non-causal masks,
+        allowing to dispatch to the flash attention kernel (that can otherwise not be used if a custom `attn_mask` is
+        passed).
+        """
+
+        _, query_length = inputs_embeds.shape[0], inputs_embeds.shape[1]
+        key_value_length = query_length + past_seen_tokens
+
+        ignore_causal_mask = False
+        if (attention_mask is None or (attention_mask.ndim == 2 and torch.all(attention_mask == 1))) and (
+            query_length == 1 or key_value_length == query_length
+        ):
+            ignore_causal_mask = True
+        return ignore_causal_mask
 
     @staticmethod
     def _prepare_4d_causal_attention_mask_with_cache_position(
@@ -825,8 +860,6 @@ class Qwen2_5_VLModel(nn.Module):
                 The target length: when generating with static cache, the mask should be as long as the static cache, to account for the 0 padding, the part of the cache that is not filled yet.
             dtype (`torch.dtype`):
                 The dtype to use for the 4D attention mask.
-            past_key_values (`Cache`):
-                The cache class that is being used currently to generate
             cache_position (`torch.LongTensor`):
                 Indices depicting the position of the input sequence tokens in the sequence.
             batch_size (`int`):
@@ -1199,14 +1232,29 @@ class Qwen2_5_VLForConditionalGeneration(PreTrainedModel):
         if position_ids is None:
             assert attention_mask is None or attention_mask.ndim == 2, "attention mask must be 2D"
             # calculate RoPE index once per generation in the pre-fill stage only
-            position_ids, rope_deltas = self.get_rope_index(
-                input_ids,
-                image_grid_thw,
-                video_grid_thw,
-                second_per_grid_ts,
-                attention_mask,
+            is_prefill = (
+                (cache_position is None or cache_position[0] == 0)
+                or self.rope_deltas is None
+                or past_key_values is None
             )
-            self.rope_deltas = rope_deltas
+            if is_prefill:
+                position_ids, rope_deltas = self.get_rope_index(
+                    input_ids,
+                    image_grid_thw,
+                    video_grid_thw,
+                    second_per_grid_ts,
+                    attention_mask,
+                )
+                self.rope_deltas = rope_deltas
+            # then use the prev pre-calculated rope-deltas to get the correct position ids
+            else:
+                batch_size, seq_length, _ = inputs_embeds.shape
+                delta = (cache_position[0] + self.rope_deltas).to(inputs_embeds.device)
+                delta = delta.repeat_interleave(batch_size // delta.shape[0], dim=0)
+                position_ids = torch.arange(seq_length, device=inputs_embeds.device)
+                position_ids = position_ids.view(1, -1).expand(batch_size, -1)
+                position_ids = position_ids.add(delta)
+                position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
 
         hidden_states, present_key_values = self.model(
             input_ids=None,
