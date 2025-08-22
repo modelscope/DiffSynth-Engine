@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from typing import Dict
-import platform
+
+from diffsynth_engine.utils.platform import pin_memory
 
 
 def enable_sequential_cpu_offload(module: nn.Module, device: str = "cuda"):
@@ -28,13 +29,11 @@ def add_cpu_offload_hook(module: nn.Module, device: str = "cuda", recurse: bool 
                 buffer.data = buffer.data.to(device=device)
             return tuple(x.to(device=device) if isinstance(x, torch.Tensor) else x for x in input_)
         for name, param in module.named_parameters(recurse=recurse):
-            if platform.system() == "Linux":
-                param.data = param.data.pin_memory()
+            param.data = pin_memory(param.data)
             offload_param_dict[name] = param.data
             param.data = param.data.to(device=device)
         for name, buffer in module.named_buffers(recurse=recurse):
-            if platform.system() == "Linux":
-                buffer.data = buffer.data.pin_memory()
+            buffer.data = pin_memory(buffer.data)
             offload_param_dict[name] = buffer.data
             buffer.data = buffer.data.to(device=device)
         setattr(module, "_offload_param_dict", offload_param_dict)
@@ -60,12 +59,10 @@ def offload_model_to_dict(module: nn.Module) -> Dict[str, torch.Tensor]:
     module = module.to("cpu")
     offload_param_dict = {}
     for name, param in module.named_parameters(recurse=True):
-        if platform.system() == "Linux":
-            param.data = param.data.pin_memory()
+        param.data = pin_memory(param.data)
         offload_param_dict[name] = param.data
     for name, buffer in module.named_buffers(recurse=True):
-        if platform.system() == "Linux":
-            buffer.data = buffer.data.pin_memory()
+        buffer.data = pin_memory(buffer.data)
         offload_param_dict[name] = buffer.data
     return offload_param_dict
 

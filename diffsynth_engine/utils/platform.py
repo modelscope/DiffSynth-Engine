@@ -1,6 +1,7 @@
 # cross-platform definitions and utilities
 import torch
 import gc
+import platform
 
 
 # data type
@@ -13,8 +14,12 @@ else:
 
 
 def empty_cache():
+    gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     if torch.mps.is_available():
         torch.mps.empty_cache()
-    gc.collect()
+
+
+def pin_memory(tensor: torch.Tensor):
+    return tensor.pin_memory() if platform.system() == "Linux" else tensor

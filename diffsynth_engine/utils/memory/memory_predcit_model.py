@@ -1,15 +1,14 @@
-import gc
 import tqdm
 import torch
 from typing import List
 from collections import OrderedDict
 
-from .linear_regression import LinearRegression, r2_score
+from diffsynth_engine.utils.memory.linear_regression import LinearRegression, r2_score
+from diffsynth_engine.utils.platform import empty_cache
 
 
 def _profile_activation_memory(model, forward_kwargs):
-    torch.cuda.empty_cache()
-    gc.collect()
+    empty_cache()
 
     memory_before_inference = torch.cuda.memory_reserved()
     torch.cuda.reset_peak_memory_stats()
