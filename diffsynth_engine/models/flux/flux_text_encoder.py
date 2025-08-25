@@ -62,8 +62,8 @@ class FluxTextEncoder1(SDTextEncoder):
     ):
         model = cls(device="meta", dtype=dtype, vocab_size=vocab_size)
         model.requires_grad_(False)
-        model.load_state_dict(state_dict)
-        model.to(device=device, dtype=dtype)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
 
