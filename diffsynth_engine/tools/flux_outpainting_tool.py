@@ -1,22 +1,15 @@
-from diffsynth_engine import (
-    fetch_model,
-    FluxPipelineConfig,
-    FluxControlNet,
-    ControlNetParams,
-    FluxImagePipeline,
-    FluxStateDicts
-)
-from typing import List, Tuple, Optional, Callable, Dict
-from PIL import Image
 import torch
+from typing import Callable, Dict, List, Tuple, Optional
+from PIL import Image
+
+from diffsynth_engine.configs import FluxPipelineConfig, FluxStateDicts, ControlNetParams
+from diffsynth_engine.models.flux import FluxControlNet
+from diffsynth_engine.pipelines.flux_image import FluxImagePipeline
+from diffsynth_engine.utils.download import fetch_model
 
 
 class FluxOutpaintingTool:
-    def __init__(
-        self,
-        flux_pipe: FluxImagePipeline,
-        controlnet: FluxControlNet,
-    ):
+    def __init__(self, flux_pipe: FluxImagePipeline, controlnet: FluxControlNet):
         self.pipe = flux_pipe
         self.controlnet = controlnet
 
@@ -37,11 +30,10 @@ class FluxOutpaintingTool:
         flux_pipe = FluxImagePipeline.from_pretrained(config)
         controlnet = FluxControlNet.from_pretrained(
             fetch_model(
-                "alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta",
-                path="diffusion_pytorch_model.safetensors"
+                "alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta", path="diffusion_pytorch_model.safetensors"
             ),
             device=device,
-            dtype=torch.bfloat16
+            dtype=torch.bfloat16,
         )
         return cls(flux_pipe, controlnet)
 

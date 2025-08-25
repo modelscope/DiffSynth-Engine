@@ -1,15 +1,11 @@
-from diffsynth_engine import (
-    FluxPipelineConfig,
-    ControlNetParams,
-    FluxControlNet,
-    FluxImagePipeline,
-    FluxRedux,
-    fetch_model,
-    FluxStateDicts
-)
-from typing import List, Tuple, Optional, Callable, Dict
-from PIL import Image
 import torch
+from typing import Callable, Dict, List, Tuple, Optional
+from PIL import Image
+
+from diffsynth_engine.configs import FluxPipelineConfig, FluxStateDicts, ControlNetParams
+from diffsynth_engine.models.flux import FluxRedux, FluxControlNet
+from diffsynth_engine.pipelines.flux_image import FluxImagePipeline
+from diffsynth_engine.utils.download import fetch_model
 
 
 class FluxReplaceByControlTool:
@@ -18,12 +14,7 @@ class FluxReplaceByControlTool:
     It is based on Redux and InpaintingControlNet.
     """
 
-    def __init__(
-        self,
-        flux_pipe: FluxImagePipeline,
-        redux: FluxRedux,
-        controlnet: FluxControlNet,
-    ):
+    def __init__(self, flux_pipe: FluxImagePipeline, redux: FluxRedux, controlnet: FluxControlNet):
         self.pipe = flux_pipe
         self.pipe.load_redux(redux)
         self.controlnet = controlnet
@@ -50,7 +41,7 @@ class FluxReplaceByControlTool:
         controlnet = FluxControlNet.from_pretrained(
             fetch_model(
                 "alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta",
-                path="diffusion_pytorch_model.safetensors"
+                path="diffusion_pytorch_model.safetensors",
             ),
             device=device,
             dtype=torch.bfloat16,
@@ -79,7 +70,6 @@ class FluxReplaceByControlTool:
         redux = FluxRedux.from_state_dict(redux_state_dict, device=device, dtype=dtype)
         controlnet = FluxControlNet.from_state_dict(controlnet_state_dict, device=device, dtype=dtype)
         return cls(flux_pipe, redux, controlnet)
-
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         self.pipe.load_loras(lora_list, fused, save_original_weight)

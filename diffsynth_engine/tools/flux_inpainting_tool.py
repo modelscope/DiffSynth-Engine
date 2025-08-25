@@ -1,22 +1,15 @@
-from diffsynth_engine import (
-    fetch_model,
-    FluxPipelineConfig,
-    FluxControlNet,
-    ControlNetParams,
-    FluxImagePipeline,
-    FluxStateDicts,
-)
-from typing import List, Tuple, Optional, Callable, Dict
-from PIL import Image
 import torch
+from typing import Callable, Dict, List, Tuple, Optional
+from PIL import Image
+
+from diffsynth_engine.configs import FluxPipelineConfig, FluxStateDicts, ControlNetParams
+from diffsynth_engine.models.flux import FluxControlNet
+from diffsynth_engine.pipelines.flux_image import FluxImagePipeline
+from diffsynth_engine.utils.download import fetch_model
 
 
 class FluxInpaintingTool:
-    def __init__(
-        self,
-        flux_pipe: FluxImagePipeline,
-        controlnet: FluxControlNet
-    ):
+    def __init__(self, flux_pipe: FluxImagePipeline, controlnet: FluxControlNet):
         self.pipe = flux_pipe
         self.controlnet = controlnet
 
@@ -62,7 +55,6 @@ class FluxInpaintingTool:
         flux_pipe = FluxImagePipeline.from_state_dict(flux_state_dicts, config)
         controlnet = FluxControlNet.from_state_dict(controlnet_state_dict, device, dtype)
         return cls(flux_pipe, controlnet)
-
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         self.pipe.load_loras(lora_list, fused, save_original_weight)

@@ -1,15 +1,11 @@
-from diffsynth_engine import (
-    FluxPipelineConfig,
-    ControlNetParams,
-    FluxImagePipeline,
-    FluxIPAdapter,
-    FluxRedux,
-    fetch_model,
-    FluxStateDicts
-)
-from typing import List, Tuple, Optional, Dict
-from PIL import Image
 import torch
+from typing import Dict, List, Tuple, Optional
+from PIL import Image
+
+from diffsynth_engine.configs import FluxPipelineConfig, FluxStateDicts, ControlNetParams
+from diffsynth_engine.models.flux import FluxRedux, FluxIPAdapter
+from diffsynth_engine.pipelines.flux_image import FluxImagePipeline
+from diffsynth_engine.utils.download import fetch_model
 
 
 class FluxReduxRefTool:
@@ -17,11 +13,7 @@ class FluxReduxRefTool:
     Use this tool to generate images with reference image based FluxRedux
     """
 
-    def __init__(
-        self,
-        flux_pipe: FluxImagePipeline,
-        redux: FluxRedux,
-    ):
+    def __init__(self, flux_pipe: FluxImagePipeline, redux: FluxRedux):
         self.pipe = flux_pipe
         self.pipe.load_redux(redux)
 
