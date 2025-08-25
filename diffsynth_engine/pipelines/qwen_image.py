@@ -409,7 +409,8 @@ class QwenImagePipeline(BasePipeline):
             prompt_emb = torch.cat([prompt_emb, negative_prompt_emb], dim=0)
             prompt_embeds_mask = torch.cat([prompt_embeds_mask, negative_prompt_embeds_mask], dim=0)
             latents = torch.cat([latents, latents], dim=0)
-            image_latents = torch.cat([image_latents, image_latents], dim=0)
+            if image_latents is not None:
+                image_latents = torch.cat([image_latents, image_latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
             noise_pred = self.predict_noise(
                 latents,
