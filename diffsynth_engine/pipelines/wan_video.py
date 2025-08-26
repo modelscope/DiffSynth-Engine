@@ -359,7 +359,8 @@ class WanVideoPipeline(BasePipeline):
         num_inference_steps=None,
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
-        assert height % 16 == 0 and width % 16 == 0, "height and width must be divisible by 16"
+        divisor = 32 if self.vae.z_dim == 48 else 16  # 32 for wan2.2 vae, 16 for wan2.1 vae
+        assert height % divisor == 0 and width % divisor == 0, f"height and width must be divisible by {divisor}"
         assert (num_frames - 1) % 4 == 0, "num_frames must be 4X+1"
         cfg_scale = self.config.cfg_scale if cfg_scale is None else cfg_scale
         num_inference_steps = self.config.num_inference_steps if num_inference_steps is None else num_inference_steps
