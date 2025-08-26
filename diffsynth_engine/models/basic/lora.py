@@ -80,7 +80,7 @@ class LoRALinear(nn.Linear):
             linear.bias is not None,
             device="meta",
             dtype=linear.weight.dtype,
-        )
+        ).to_empty(device=linear.weight.device)
         lora_linear.weight = linear.weight
         lora_linear.bias = linear.bias
         return lora_linear
@@ -97,8 +97,20 @@ class LoRALinear(nn.Linear):
         dtype: torch.dtype,
         **kwargs,
     ):
-        up_linear = nn.Linear(up.shape[1], up.shape[0], bias=False, device="meta", dtype=dtype)
-        down_linear = nn.Linear(down.shape[0], down.shape[1], bias=False, device="meta", dtype=dtype)
+        up_linear = nn.Linear(
+            up.shape[1],
+            up.shape[0],
+            bias=False,
+            device="meta",
+            dtype=dtype,
+        ).to_empty(device=device)
+        down_linear = nn.Linear(
+            down.shape[0],
+            down.shape[1],
+            bias=False,
+            device="meta",
+            dtype=dtype,
+        ).to_empty(device=device)
         up_linear.weight.data = up
         down_linear.weight.data = down
         lora = LoRA(scale, rank, alpha, up_linear, down_linear, device, dtype)
@@ -189,7 +201,7 @@ class LoRAConv2d(nn.Conv2d):
             conv2d.padding_mode,
             device="meta",
             dtype=conv2d.weight.dtype,
-        )
+        ).to_empty(device=conv2d.weight.device)
         lora_conv2d.weight = conv2d.weight
         lora_conv2d.bias = conv2d.bias
         return lora_conv2d
@@ -214,7 +226,7 @@ class LoRAConv2d(nn.Conv2d):
             bias=False,
             device="meta",
             dtype=dtype,
-        )
+        ).to_empty(device=device)
         down_conv.weight.data = down
         # according to the official kohya_ss trainer kernel_size are always fixed for the up layer
         # see: https://github.com/bmaltais/kohya_ss/blob/2accb1305979ba62f5077a23aabac23b4c37e935/networks/lora_diffusers.py#L129
@@ -227,7 +239,7 @@ class LoRAConv2d(nn.Conv2d):
             bias=False,
             device="meta",
             dtype=dtype,
-        )
+        ).to_empty(device=device)
         up_conv.weight.data = up
 
         lora = LoRA(scale, rank, alpha, up_conv, down_conv, device, dtype)
