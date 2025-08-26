@@ -501,7 +501,7 @@ class FluxImagePipeline(BasePipeline):
 
     @classmethod
     def _from_state_dict(cls, state_dicts: FluxStateDicts, config: FluxPipelineConfig) -> "FluxImagePipeline":
-        init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
+        init_device = "cpu" if config.offload_mode is not None else config.device
         if config.load_text_encoder:
             tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
             tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
@@ -569,15 +569,6 @@ class FluxImagePipeline(BasePipeline):
                 model_names=["text_encoder_2"], compute_dtype=pipe.dtype, use_fp8_linear=config.use_fp8_linear
             )
 
-        if config.parallelism > 1:
-            pipe = ParallelWrapper(
-                pipe,
-                cfg_degree=config.cfg_degree,
-                sp_ulysses_degree=config.sp_ulysses_degree,
-                sp_ring_degree=config.sp_ring_degree,
-                tp_degree=config.tp_degree,
-                use_fsdp=config.use_fsdp,
-            )
         if config.use_torch_compile:
             pipe.compile()
         return pipe

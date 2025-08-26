@@ -14,7 +14,6 @@ if __name__ == "__main__":
             path="open-clip-xlm-roberta-large-vit-huge-14.safetensors",
         ),
         parallelism=4,
-        offload_mode="cpu_offload",
     )
     pipe = WanVideoPipeline.from_pretrained(config)
 

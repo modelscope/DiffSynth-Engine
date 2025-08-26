@@ -127,7 +127,7 @@ class FluxPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Ba
             model_path=model_path,
             device=device,
             parallelism=parallelism,
-            use_fsdp=True,
+            use_fsdp=True if parallelism > 1 else False,
             offload_mode=offload_mode,
             offload_to_disk=offload_to_disk,
         )
@@ -174,8 +174,8 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
             image_encoder_path=image_encoder_path,
             device=device,
             parallelism=parallelism,
-            use_cfg_parallel=True,
-            use_fsdp=True,
+            use_cfg_parallel=True if parallelism > 1 else False,
+            use_fsdp=True if parallelism > 1 else False,
             offload_mode=offload_mode,
             offload_to_disk=offload_to_disk,
         )
@@ -218,8 +218,8 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
             encoder_path=encoder_path,
             vae_path=vae_path,
             parallelism=parallelism,
-            use_cfg_parallel=True,
-            use_fsdp=True,
+            use_cfg_parallel=True if parallelism > 1 else False,
+            use_fsdp=True if parallelism > 1 else False,
             offload_mode=offload_mode,
             offload_to_disk=offload_to_disk,
         )

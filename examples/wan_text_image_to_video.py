@@ -18,7 +18,6 @@ if __name__ == "__main__":
             ],
         ),
         parallelism=4,
-        offload_mode="cpu_offload",
     )
     pipe = WanVideoPipeline.from_pretrained(config)
 

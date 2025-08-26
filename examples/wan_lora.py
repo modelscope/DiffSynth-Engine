@@ -8,7 +8,6 @@ if __name__ == "__main__":
     config = WanPipelineConfig.basic_config(
         model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
         parallelism=4,
-        offload_mode="cpu_offload",
     )
     pipe = WanVideoPipeline.from_pretrained(config)
     pipe.load_lora(

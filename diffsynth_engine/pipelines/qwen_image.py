@@ -445,9 +445,7 @@ class QwenImagePipeline(BasePipeline):
         return noise_pred
 
     def prepare_image_latents(self, input_image: Image.Image):
-        image = self.preprocess_image(input_image).to(
-            device=self.device, dtype=self.vae.model.encoder.conv1.weight.dtype
-        )
+        image = self.preprocess_image(input_image).to(dtype=self.config.vae_dtype)
         image = image.unsqueeze(2)
         image_latents = self.vae.encode(
             image,
@@ -456,7 +454,7 @@ class QwenImagePipeline(BasePipeline):
             tile_size=self.vae_tile_size,
             tile_stride=self.vae_tile_stride,
         )
-        image_latents = image_latents.squeeze(2)
+        image_latents = image_latents.squeeze(2).to(device=self.device)
         return image_latents
 
     def calculate_dimensions(self, target_area, ratio):
@@ -492,13 +490,15 @@ class QwenImagePipeline(BasePipeline):
         # dynamic shift
         image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
         mu = calculate_shift(image_seq_len, max_shift=0.9, max_seq_len=8192)
+        init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, num_inference_steps, mu)
+        # Initialize sampler
+        self.sampler.initialize(sigmas=sigmas)
+
+        self.load_models_to_device(["vae"])
         if input_image:
             image_latents = self.prepare_image_latents(input_image)
         else:
             image_latents = None
-        init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, num_inference_steps, mu)
-        # Initialize sampler
-        self.sampler.initialize(sigmas=sigmas)
 
         self.load_models_to_device(["encoder"])
         if image_latents is not None:

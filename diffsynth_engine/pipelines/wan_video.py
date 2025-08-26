@@ -532,7 +532,7 @@ class WanVideoPipeline(BasePipeline):
         config.num_inference_steps = dit_config.pop("num_inference_steps", 50)
         config.fps = dit_config.pop("fps", 16)
 
-        init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
+        init_device = "cpu" if config.offload_mode is not None else config.device
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
         text_encoder = WanTextEncoder.from_state_dict(state_dicts.t5, device=init_device, dtype=config.t5_dtype)
         vae = WanVideoVAE.from_state_dict(
