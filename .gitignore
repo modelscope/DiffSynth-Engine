@@ -10,3 +10,4 @@ dist/
 .pytest_cache/
 .ruff_cache/
 CLAUDE.md
+.claude/settings.local.json
