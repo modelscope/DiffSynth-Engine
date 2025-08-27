@@ -85,7 +85,7 @@ def fp8_inference(enabled=True):
             fp8_max = fp8_max / 2.0
         scale_a = torch.clamp(x_max / fp8_max, min=1.0).float().to(device=device)
         scale_b = torch.ones((weight.shape[0], 1)).float().to(device=device)
-        input = input / (scale_a + 1e-8)
+        input = input / scale_a
         input = input.to(DTYPE_FP8)
         weight = weight.to(DTYPE_FP8)
 
