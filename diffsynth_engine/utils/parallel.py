@@ -295,8 +295,9 @@ def _worker_loop(
 
             if (name := data[0]) == "unload_module":
                 module = None
+                empty_cache()
             elif name == "load_module":
-                init_fn, kwargs = to_device(data[1:], device=device)
+                init_fn, kwargs = data[1:]
                 module = wrap_for_parallel(init_fn(**kwargs))
             elif module is None:
                 res = RuntimeError("module is not initialized")
@@ -307,12 +308,10 @@ def _worker_loop(
                 with torch.no_grad():
                     res = getattr(module, name)(*args, **kwargs)
 
-            data, args, kwargs = None, None, None
-            torch.cuda.synchronize()
-            empty_cache()
-            dist.barrier()
             if rank == 0:
                 queue_out.put(res)
+            data, args, kwargs = None, None, None
+            dist.barrier()
     except Exception:
         import traceback
 
