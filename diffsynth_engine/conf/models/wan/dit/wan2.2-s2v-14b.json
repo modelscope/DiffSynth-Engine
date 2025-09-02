@@ -1,0 +1,13 @@
+{
+    "patch_size": [1, 2, 2],
+    "in_dim": 16,
+    "dim": 5120,
+    "ffn_dim": 13824,
+    "freq_dim": 256,
+    "text_dim": 4096,
+    "out_dim": 16,
+    "num_heads": 40,
+    "num_layers": 40,
+    "eps": 1e-6,
+    "audio_inject_layers": [0, 4, 8, 12, 16, 20, 24, 27, 30, 33, 36, 39]
+}

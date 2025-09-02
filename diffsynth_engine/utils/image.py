@@ -1,4 +1,5 @@
 import torch
+from torchvision import transforms
 import numpy as np
 import math
 from PIL import Image
@@ -30,6 +31,12 @@ def tensor_to_image(t: torch.Tensor, denormalize: bool = True) -> Image.Image:
     else:
         mode = "RGB"
     return Image.fromarray(t, mode=mode)
+
+
+def resize_and_center_crop(image, height: int, width: int):
+    resize_operation = transforms.Resize(min(height, width))
+    crop_operation = transforms.CenterCrop((height, width))
+    return transforms.Compose([resize_operation, crop_operation])(image)
 
 
 class ChannelDimension(Enum):

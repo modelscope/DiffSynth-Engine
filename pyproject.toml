@@ -32,6 +32,10 @@ dependencies = [
     "yunchang ; sys_platform == 'linux'",
     "onnxruntime",
     "opencv-python",
+    "moviepy == 1.0.3",
+    "librosa",
+    "mediapipe",
+    "decord",
     "scikit-image",
     "trimesh"
 ]

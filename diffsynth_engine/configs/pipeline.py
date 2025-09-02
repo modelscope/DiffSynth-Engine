@@ -185,6 +185,36 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
 
 
 @dataclass
+class WanSound2VideoPipelineConfig(WanPipelineConfig):
+    audio_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    audio_encoder_dtype: torch.dtype = torch.bfloat16
+
+    @classmethod
+    def basic_config(
+        cls,
+        model_path: str | os.PathLike | List[str | os.PathLike],
+        audio_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None,
+        device: str = "cuda",
+        parallelism: int = 1,
+        offload_mode: Optional[str] = None,
+        offload_to_disk: bool = False,
+    ) -> "WanSound2VideoPipelineConfig":
+        return cls(
+            model_path=model_path,
+            audio_encoder_path=audio_encoder_path,
+            device=device,
+            parallelism=parallelism,
+            use_cfg_parallel=True,
+            use_fsdp=True,
+            offload_mode=offload_mode,
+            offload_to_disk=offload_to_disk,
+        )
+
+    def __post_init__(self):
+        init_parallel_config(self)
+
+
+@dataclass
 class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, BaseConfig):
     model_path: str | os.PathLike | List[str | os.PathLike]
     encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
