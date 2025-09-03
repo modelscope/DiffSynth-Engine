@@ -9,10 +9,15 @@ from typing import Callable, List, Optional
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.configs import WanSound2VideoPipelineConfig
+from diffsynth_engine.configs import WanSpeech2VideoPipelineConfig
 from diffsynth_engine.models.wan.wan_s2v_dit import WanS2VDiT
 from diffsynth_engine.models.wan.wan_text_encoder import WanTextEncoder
-from diffsynth_engine.models.wan.wan_audio_encoder import Wav2Vec2Model, Wav2Vec2Config, get_audio_embed_bucket_fps, extract_audio_feat
+from diffsynth_engine.models.wan.wan_audio_encoder import (
+    Wav2Vec2Model,
+    Wav2Vec2Config,
+    get_audio_embed_bucket_fps,
+    extract_audio_feat,
+)
 from diffsynth_engine.models.wan.wan_vae import WanVideoVAE
 from diffsynth_engine.pipelines.wan_video import WanVideoPipeline
 from diffsynth_engine.models.basic.lora import LoRAContext
@@ -77,12 +82,7 @@ def face_bbox_detect(image: np.ndarray, bbox_scale=1.0):
     return bboxes
 
 
-def generate_bbox_mask(
-    image: np.ndarray,
-    bboxes: List[List[int]],
-    skip_person_ids: List[int],
-    y_offset=0.0
-):
+def generate_bbox_mask(image: np.ndarray, bboxes: List[List[int]], skip_person_ids: List[int], y_offset=0.0):
     mask = np.zeros(image.shape[:2], dtype=np.uint8)
     for id, bbox in enumerate(bboxes):
         if id in skip_person_ids:
@@ -127,22 +127,21 @@ def get_face_mask(
         if end_id > num_frames_total:
             break
 
-    face_mask_resized = (
-        F.interpolate(
-            face_mask[None],
-            size=(
-                num_frames_total // temporal_scale,
-                mask_height // spatial_scale,
-                mask_width // spatial_scale,
-            ),
-            mode="nearest",
-        )[0]
-        .to(dtype=dtype, device=device)
-    )
+    face_mask_resized = F.interpolate(
+        face_mask[None],
+        size=(
+            num_frames_total // temporal_scale,
+            mask_height // spatial_scale,
+            mask_width // spatial_scale,
+        ),
+        mode="nearest",
+    )[0].to(dtype=dtype, device=device)
     return 1 - face_mask_resized
 
 
-def get_size(height: int | None, width: int | None, ref_image: Image.Image, target_area: int = 1024 * 704, divisor: int = 64):
+def get_size(
+    height: int | None, width: int | None, ref_image: Image.Image, target_area: int = 1024 * 704, divisor: int = 64
+):
     if height is not None and width is not None:
         return height, width
 
@@ -192,10 +191,10 @@ def get_size(height: int | None, width: int | None, ref_image: Image.Image, targ
     return target_height, target_width
 
 
-class WanSound2VideoPipeline(WanVideoPipeline):
+class WanSpeech2VideoPipeline(WanVideoPipeline):
     def __init__(
         self,
-        config: WanSound2VideoPipelineConfig,
+        config: WanSpeech2VideoPipelineConfig,
         tokenizer: WanT5Tokenizer,
         text_encoder: WanTextEncoder,
         audio_encoder: Wav2Vec2Model,
@@ -236,9 +235,7 @@ class WanSound2VideoPipeline(WanVideoPipeline):
 
         return ref_latents, motion_latents, motion_frames
 
-    def encode_pose(
-        self, pose_video_path: str, num_clips: int, num_frames_per_clip: int, height: int, width: int
-    ):
+    def encode_pose(self, pose_video_path: str, num_clips: int, num_frames_per_clip: int, height: int, width: int):
         self.load_models_to_device(["vae"])
         max_num_pose_frames = num_frames_per_clip * num_clips
         pose_video = read_n_frames(pose_video_path, max_num_pose_frames, target_fps=self.config.fps)
@@ -400,7 +397,7 @@ class WanSound2VideoPipeline(WanVideoPipeline):
             audio_mask=audio_mask,
             void_audio_input=void_audio_input,
         )
-        return noise_pred 
+        return noise_pred
 
     @torch.no_grad()
     def __call__(
@@ -473,7 +470,7 @@ class WanSound2VideoPipeline(WanVideoPipeline):
                 device="cpu",
                 dtype=torch.float32,
             ).to(self.device)
-            init_latents, latents, sigmas, timesteps = self.prepare_latents(
+            _, latents, sigmas, timesteps = self.prepare_latents(
                 latents=noise,
                 input_video=None,
                 denoising_strength=None,
@@ -483,13 +480,17 @@ class WanSound2VideoPipeline(WanVideoPipeline):
             self.sampler.initialize(sigmas=sigmas)
 
             # Index audio emb and pose latents
-            audio_emb_curr_clip = audio_emb[..., (clip_idx * num_frames_per_clip) : ((clip_idx + 1) * num_frames_per_clip)]
+            audio_emb_curr_clip = audio_emb[
+                ..., (clip_idx * num_frames_per_clip) : ((clip_idx + 1) * num_frames_per_clip)
+            ]
             pose_latents_curr_clip = (
                 pose_latents_all_clips[clip_idx] if pose_video_path is not None else torch.zeros_like(latents)
             )
             pose_latents_curr_clip = pose_latents_curr_clip.to(dtype=self.dtype, device=self.device)
             if len(speaking_duration) > 0:
-                audio_mask_curr_clip = audio_mask[None, :, (clip_idx * num_latents_per_clip) : ((clip_idx + 1) * num_latents_per_clip)]
+                audio_mask_curr_clip = audio_mask[
+                    None, :, (clip_idx * num_latents_per_clip) : ((clip_idx + 1) * num_latents_per_clip)
+                ]
             else:
                 audio_mask_curr_clip, void_audio_emb = None, None
 
@@ -529,7 +530,9 @@ class WanSound2VideoPipeline(WanVideoPipeline):
             else:
                 decode_latents = torch.cat([motion_latents, latents], dim=2)
             self.load_models_to_device(["vae"])
-            output_frames_curr_clip = torch.stack(self.decode_video(decode_latents, progress_callback=progress_callback))
+            output_frames_curr_clip = torch.stack(
+                self.decode_video(decode_latents, progress_callback=progress_callback)
+            )
             output_frames_curr_clip = output_frames_curr_clip[:, :, -(num_frames_per_clip):]
             if drop_motion_frames:
                 output_frames_curr_clip = output_frames_curr_clip[:, :, 3:]
@@ -548,9 +551,9 @@ class WanSound2VideoPipeline(WanVideoPipeline):
         return output_frames_all_clips
 
     @classmethod
-    def from_pretrained(cls, model_path_or_config: WanSound2VideoPipelineConfig) -> "WanSound2VideoPipeline":
+    def from_pretrained(cls, model_path_or_config: WanSpeech2VideoPipelineConfig) -> "WanSpeech2VideoPipeline":
         if isinstance(model_path_or_config, str):
-            config = WanSound2VideoPipelineConfig(model_path=model_path_or_config)
+            config = WanSpeech2VideoPipelineConfig(model_path=model_path_or_config)
         else:
             config = model_path_or_config
 
@@ -563,7 +566,9 @@ class WanSound2VideoPipeline(WanVideoPipeline):
         if config.vae_path is None:
             config.vae_path = fetch_model("muse/wan2.1-vae", path="vae.safetensors")
         if config.audio_encoder_path is None:
-            config.audio_encoder_path = fetch_model("Wan-AI/Wan2.2-S2V-14B", path="wav2vec2-large-xlsr-53-english/model.safetensors")
+            config.audio_encoder_path = fetch_model(
+                "Wan-AI/Wan2.2-S2V-14B", path="wav2vec2-large-xlsr-53-english/model.safetensors"
+            )
 
         logger.info(f"loading t5 state dict from {config.t5_path} ...")
         t5_state_dict = cls.load_model_checkpoint(config.t5_path, device="cpu", dtype=config.t5_dtype)
@@ -573,7 +578,9 @@ class WanSound2VideoPipeline(WanVideoPipeline):
         vae_type = "wan2.1-vae"
 
         logger.info(f"loading audio encoder state dict from {config.audio_encoder_path} ...")
-        wav2vec_state_dict = cls.load_model_checkpoint(config.audio_encoder_path, device="cpu", dtype=config.audio_encoder_dtype)
+        wav2vec_state_dict = cls.load_model_checkpoint(
+            config.audio_encoder_path, device="cpu", dtype=config.audio_encoder_dtype
+        )
 
         # default params from model config
         vae_config: dict = WanVideoVAE.get_model_config(vae_type)
@@ -588,7 +595,9 @@ class WanSound2VideoPipeline(WanVideoPipeline):
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
         text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=config.t5_dtype)
         vae = WanVideoVAE.from_state_dict(vae_state_dict, config=vae_config, device=init_device, dtype=config.vae_dtype)
-        audio_encoder = Wav2Vec2Model.from_state_dict(wav2vec_state_dict, config=Wav2Vec2Config(), device=init_device, dtype=config.audio_encoder_dtype)
+        audio_encoder = Wav2Vec2Model.from_state_dict(
+            wav2vec_state_dict, config=Wav2Vec2Config(), device=init_device, dtype=config.audio_encoder_dtype
+        )
 
         with LoRAContext():
             attn_kwargs = {

@@ -3,6 +3,7 @@ import imageio.v3 as iio
 import numpy as np
 from PIL import Image
 from typing import List
+from moviepy import ImageSequenceClip, AudioFileClip, VideoClip
 
 
 class VideoReader:
@@ -54,9 +55,8 @@ def read_n_frames(video_path: str, n_frames: int, target_fps: int = 16) -> List[
     return video_reader.frames[sampled_indices]
 
 
-def save_video_with_audio(frames: List[Image.Image], audio_path: str, target_video_path: str, fps: int=16):
+def save_video_with_audio(frames: List[Image.Image], audio_path: str, target_video_path: str, fps: int = 16):
     # combine all frames
-    from moviepy import ImageSequenceClip, AudioFileClip, VideoClip
     video = [np.array(frame) for frame in frames]  # shape: t* (b*h, w, c)
     video_clip = ImageSequenceClip(video, fps=fps)
     audio_clip = AudioFileClip(audio_path)
@@ -65,4 +65,4 @@ def save_video_with_audio(frames: List[Image.Image], audio_path: str, target_vid
     else:
         video_clip: VideoClip = video_clip.subclipped(0, audio_clip.duration)
     video_with_audio: VideoClip = video_clip.with_audio(audio_clip)
-    video_with_audio.write_videofile(target_video_path, codec='libx264')
+    video_with_audio.write_videofile(target_video_path, codec="libx264")

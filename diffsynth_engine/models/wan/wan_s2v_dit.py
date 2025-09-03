@@ -8,7 +8,14 @@ import torch.nn.functional as F
 from einops import rearrange
 
 from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm
-from diffsynth_engine.models.wan.wan_dit import WanDiT, DiTBlock, CrossAttention, sinusoidal_embedding_1d, precompute_freqs_cis_3d, modulate
+from diffsynth_engine.models.wan.wan_dit import (
+    WanDiT,
+    DiTBlock,
+    CrossAttention,
+    sinusoidal_embedding_1d,
+    precompute_freqs_cis_3d,
+    modulate,
+)
 from diffsynth_engine.utils.constants import WAN2_2_DIT_S2V_14B_CONFIG_FILE
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.parallel import (
@@ -99,9 +106,9 @@ class FramePackMotioner(nn.Module):
         clean_latents_4x = rearrange(self.proj_4x(clean_latents_4x), "b c f h w -> b (f h w) c").contiguous()
         motion_latents = torch.cat([clean_latents_post, clean_latents_2x, clean_latents_4x], dim=1)
 
-        def get_grid_sizes(i: int): # rope, 0: post, 1: 2x, 2: 4x
-            start_time_id = -sum(self.zip_frame_buckets[:(i + 1)])
-            end_time_id = start_time_id + self.zip_frame_buckets[i] // (2 ** i)
+        def get_grid_sizes(i: int):  # rope, 0: post, 1: 2x, 2: 4x
+            start_time_id = -sum(self.zip_frame_buckets[: (i + 1)])
+            end_time_id = start_time_id + self.zip_frame_buckets[i] // (2**i)
             return [
                 [
                     torch.tensor([start_time_id, 0, 0]),
@@ -209,12 +216,12 @@ class CausalAudioEncoder(nn.Module):
         out_dim: int = 2048,
         num_token: int = 4,
         dtype: torch.dtype = torch.bfloat16,
-        device: str = "cuda:0"
+        device: str = "cuda:0",
     ):
         super().__init__()
         self.encoder = MotionEncoder(in_dim=dim, hidden_dim=out_dim, num_heads=num_token, device=device, dtype=dtype)
-        self.weights = torch.nn.Parameter(torch.ones((1, num_layers, 1, 1), device=device, dtype=dtype) * 0.01)
-        self.act = torch.nn.SiLU()
+        self.weights = nn.Parameter(torch.ones((1, num_layers, 1, 1), device=device, dtype=dtype) * 0.01)
+        self.act = nn.SiLU()
 
     def forward(self, features: torch.Tensor):
         # features: b num_layers dim video_length
@@ -252,14 +259,7 @@ class AudioInjector(nn.Module):
             ]
         )
         self.injector_adain_layers = nn.ModuleList(
-            [
-                AdaLayerNorm(
-                    dim=adain_dim,
-                    device=device,
-                    dtype=dtype
-                )
-                for _ in range(len(inject_layers))
-            ]
+            [AdaLayerNorm(dim=adain_dim, device=device, dtype=dtype) for _ in range(len(inject_layers))]
         )
 
 
@@ -286,26 +286,26 @@ class DiTBlockS2V(nn.Module):
             t for t in (self.modulation + t_mod_0).chunk(6, dim=1)
         ]
         norm1_x = self.norm1(x)
-        input_x = torch.cat([
-            modulate(norm1_x[:, :x_seq_len], shift_msa, scale_msa),
-            modulate(norm1_x[:, x_seq_len:], shift_msa_0, scale_msa_0),
-        ], dim=1)
+        input_x = torch.cat(
+            [
+                modulate(norm1_x[:, :x_seq_len], shift_msa, scale_msa),
+                modulate(norm1_x[:, x_seq_len:], shift_msa_0, scale_msa_0),
+            ],
+            dim=1,
+        )
         self_attn_x = self.self_attn(input_x, freqs)
-        x += torch.cat([
-            self_attn_x[:, :x_seq_len] * gate_msa,
-            self_attn_x[:, x_seq_len:] * gate_msa_0
-        ], dim=1)
+        x += torch.cat([self_attn_x[:, :x_seq_len] * gate_msa, self_attn_x[:, x_seq_len:] * gate_msa_0], dim=1)
         x += self.cross_attn(self.norm3(x), context)
         norm2_x = self.norm2(x)
-        input_x = torch.cat([
-            modulate(norm2_x[:, :x_seq_len], shift_mlp, scale_mlp),
-            modulate(norm2_x[:, x_seq_len:], shift_mlp_0, scale_mlp_0)
-        ], dim=1)
+        input_x = torch.cat(
+            [
+                modulate(norm2_x[:, :x_seq_len], shift_mlp, scale_mlp),
+                modulate(norm2_x[:, x_seq_len:], shift_mlp_0, scale_mlp_0),
+            ],
+            dim=1,
+        )
         ffn_x = self.ffn(input_x)
-        x += torch.cat([
-            ffn_x[:, :x_seq_len] * gate_mlp,
-            ffn_x[:, x_seq_len:] * gate_mlp_0
-        ], dim=1)
+        x += torch.cat([ffn_x[:, :x_seq_len] * gate_mlp, ffn_x[:, x_seq_len:] * gate_mlp_0], dim=1)
         return x
 
 
@@ -408,8 +408,8 @@ class WanS2VDiT(WanDiT):
         audio_input: torch.Tensor,  # b c d tx
         num_motion_frames: int = 73,
         num_motion_latents: int = 19,
-        drop_motion_frames: bool = False, # !(ref_as_first_frame || clip_idx)
-        audio_mask: Optional[torch.Tensor] = None, # b c tx h w
+        drop_motion_frames: bool = False,  # !(ref_as_first_frame || clip_idx)
+        audio_mask: Optional[torch.Tensor] = None,  # b c tx h w
         void_audio_input: Optional[torch.Tensor] = None,
     ):
         use_cfg = x.shape[0] > 1
@@ -417,8 +417,8 @@ class WanS2VDiT(WanDiT):
             gguf_inference(),
             cfg_parallel((x, context, audio_input), use_cfg=use_cfg),
         ):
-            audio_emb_global, merged_audio_emb, void_audio_emb_global, void_merged_audio_emb, audio_mask = self.get_audio_emb(
-                audio_input, num_motion_frames, num_motion_latents, audio_mask, void_audio_input
+            audio_emb_global, merged_audio_emb, void_audio_emb_global, void_merged_audio_emb, audio_mask = (
+                self.get_audio_emb(audio_input, num_motion_frames, num_motion_latents, audio_mask, void_audio_input)
             )
             t = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep))  # (s, d)
             t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
@@ -436,12 +436,12 @@ class WanS2VDiT(WanDiT):
                         torch.tensor([0, 0, 0]),
                         torch.tensor([f, h, w]),
                         torch.tensor([f, h, w]),
-                    ], # grid size of x
+                    ],  # grid size of x
                     [
                         torch.tensor([30, 0, 0]),
                         torch.tensor([31, h, w]),
                         torch.tensor([1, h, w]),
-                    ] # grid size of ref. why do they fix 30?
+                    ],  # grid size of ref. why do they fix 30?
                 ],
                 freqs=self.freqs,
             )
@@ -468,21 +468,16 @@ class WanS2VDiT(WanDiT):
                     merged_audio_emb,
                     audio_mask,
                     void_audio_emb_global,
-                    void_merged_audio_emb
+                    void_merged_audio_emb,
                 ),
-                seq_dims=(1, 1, 1, 1, 1, 1, 1, 1)
+                seq_dims=(1, 1, 1, 1, 1, 1, 1, 1),
             ):
                 x_seq_len_local = x_img.shape[1]
                 x = torch.concat([x_img, x_ref_motion], dim=1)
                 freqs = torch.concat([freqs_img, freqs_ref_motion], dim=1)
                 for idx, block in enumerate(self.blocks):
                     x = block(
-                        x=x,
-                        x_seq_len=x_seq_len_local,
-                        context=context,
-                        t_mod=t_mod,
-                        t_mod_0=t_mod_0,
-                        freqs=freqs
+                        x=x, x_seq_len=x_seq_len_local, context=context, t_mod=t_mod, t_mod_0=t_mod_0, freqs=freqs
                     )
                     if idx in self.audio_injector.injected_block_id.keys():
                         x = self.inject_audio(
@@ -498,7 +493,7 @@ class WanS2VDiT(WanDiT):
                         )
 
                 x = x[:, :x_seq_len_local]
-                x = self.head(x, t) 
+                x = self.head(x, t)
                 # TODO: why is CrossAttn also going through ulysses? isn't it unnecessary?
                 # Even if we are going across ulysses, why is context not being partitioned over seq_len dim?
                 (x,) = sequence_parallel_unshard((x,), seq_dims=(1,), seq_lens=(x_seq_len,))

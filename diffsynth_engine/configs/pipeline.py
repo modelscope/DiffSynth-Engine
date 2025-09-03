@@ -185,7 +185,7 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
 
 
 @dataclass
-class WanSound2VideoPipelineConfig(WanPipelineConfig):
+class WanSpeech2VideoPipelineConfig(WanPipelineConfig):
     audio_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
     audio_encoder_dtype: torch.dtype = torch.bfloat16
 
@@ -197,7 +197,7 @@ class WanSound2VideoPipelineConfig(WanPipelineConfig):
         device: str = "cuda",
         parallelism: int = 1,
         offload_mode: Optional[str] = None,
-    ) -> "WanSound2VideoPipelineConfig":
+    ) -> "WanSpeech2VideoPipelineConfig":
         return cls(
             model_path=model_path,
             audio_encoder_path=audio_encoder_path,

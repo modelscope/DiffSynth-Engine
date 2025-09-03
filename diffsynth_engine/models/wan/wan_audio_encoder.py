@@ -277,7 +277,9 @@ def extract_audio_feat(audio_path: str, model: Wav2Vec2Model, dtype=torch.float3
     return feat.to(dtype)  # Encoding for the motion
 
 
-def get_audio_embed_bucket_fps(audio_embed: torch.Tensor, num_frames_per_batch: int, fps: int = 16) -> Tuple[torch.Tensor, int]:
+def get_audio_embed_bucket_fps(
+    audio_embed: torch.Tensor, num_frames_per_batch: int, fps: int = 16
+) -> Tuple[torch.Tensor, int]:
     video_rate = 30
     scale = video_rate / fps
     num_layers, num_audio_frames, audio_dim = audio_embed.shape

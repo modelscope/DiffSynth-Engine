@@ -1,12 +1,12 @@
 from PIL import Image
 import torch
-from diffsynth_engine import WanSound2VideoPipelineConfig
-from diffsynth_engine.pipelines import WanSound2VideoPipeline
+from diffsynth_engine import WanSpeech2VideoPipelineConfig
+from diffsynth_engine.pipelines import WanSpeech2VideoPipeline
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.video import save_video_with_audio
 
 
-def wan_rs2v(pipe: WanSound2VideoPipeline):
+def wan_rs2v(pipe: WanSpeech2VideoPipeline):
     audio_path = "examples/input_s2v/sing.mp3"
     frames = pipe(
         ref_image=Image.open("examples/input_s2v/woman.png").convert('RGB'),
@@ -23,7 +23,7 @@ def wan_rs2v(pipe: WanSound2VideoPipeline):
     save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rs2v.mp4")
 
 
-def wan_rsp2v(pipe: WanSound2VideoPipeline):
+def wan_rsp2v(pipe: WanSpeech2VideoPipeline):
     audio_path = "examples/input_s2v/sing.mp3"
     frames = pipe(
         ref_image=Image.open("examples/input_s2v/pose.png").convert('RGB'),
@@ -41,7 +41,7 @@ def wan_rsp2v(pipe: WanSound2VideoPipeline):
     save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rsp2v.mp4")
 
 
-def wan_rs2v_multi_people(pipe: WanSound2VideoPipeline):
+def wan_rs2v_multi_people(pipe: WanSpeech2VideoPipeline):
     audio_path = "examples/input_s2v/sing2.mp3"
     frames = pipe(
         ref_image=Image.open("examples/input_s2v/2girl.png").convert('RGB'),
@@ -65,7 +65,7 @@ if __name__ == "__main__":
     # there seems to be some tensor requiring grad. I have no idea what
     # optimally may need time to search for such tensor, but if we add this no_grad wrapper, we can at least run it.
     with torch.no_grad():
-        config = WanSound2VideoPipelineConfig.basic_config(
+        config = WanSpeech2VideoPipelineConfig.basic_config(
             model_path=fetch_model(
                 "Wan-AI/Wan2.2-S2V-14B",
                 path=[
@@ -78,7 +78,7 @@ if __name__ == "__main__":
             parallelism=8,
         )
         config.audio_encoder_dtype = torch.float32
-        pipe = WanSound2VideoPipeline.from_pretrained(config)
+        pipe = WanSpeech2VideoPipeline.from_pretrained(config)
         wan_rs2v(pipe)
 
         del pipe
