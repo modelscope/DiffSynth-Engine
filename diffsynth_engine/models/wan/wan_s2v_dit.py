@@ -291,7 +291,7 @@ class DiTBlockS2V(nn.Module):
             modulate(norm1_x[:, x_seq_len:], shift_msa_0, scale_msa_0),
         ], dim=1)
         self_attn_x = self.self_attn(input_x, freqs)
-        x += + torch.cat([
+        x += torch.cat([
             self_attn_x[:, :x_seq_len] * gate_msa,
             self_attn_x[:, x_seq_len:] * gate_msa_0
         ], dim=1)

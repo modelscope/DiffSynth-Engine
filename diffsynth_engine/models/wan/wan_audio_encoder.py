@@ -123,9 +123,7 @@ class Wav2Vec2Attention(nn.Module):
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias, device=device, dtype=dtype)
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias, device=device, dtype=dtype)
 
-    def forward(
-        self, hidden_states: torch.Tensor
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Input shape: Batch x Time x Channel"""
         q = self.q_proj(hidden_states)
         k = self.k_proj(hidden_states)
@@ -332,6 +330,6 @@ def get_audio_embed_bucket_fps(audio_embed: torch.Tensor, fps=16, batch_frames=8
                 else torch.zeros([num_layers, audio_dim * (2 * m + 1)], device=audio_embed.device)
             )
         batch_audio_eb.append(frame_audio_embed)
-    batch_audio_eb = torch.cat([c.unsqueeze(0) for c in batch_audio_eb], dim=0)
+    batch_audio_eb = torch.stack(batch_audio_eb, dim=0)
 
     return batch_audio_eb, min_batch_num

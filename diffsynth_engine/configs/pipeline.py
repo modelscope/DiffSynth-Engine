@@ -197,7 +197,6 @@ class WanSound2VideoPipelineConfig(WanPipelineConfig):
         device: str = "cuda",
         parallelism: int = 1,
         offload_mode: Optional[str] = None,
-        offload_to_disk: bool = False,
     ) -> "WanSound2VideoPipelineConfig":
         return cls(
             model_path=model_path,
@@ -207,7 +206,6 @@ class WanSound2VideoPipelineConfig(WanPipelineConfig):
             use_cfg_parallel=True,
             use_fsdp=True,
             offload_mode=offload_mode,
-            offload_to_disk=offload_to_disk,
         )
 
     def __post_init__(self):
