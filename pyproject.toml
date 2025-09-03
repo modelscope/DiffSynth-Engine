@@ -35,7 +35,6 @@ dependencies = [
     "moviepy",
     "librosa",
     "mediapipe",
-    "decord",
     "scikit-image",
     "trimesh"
 ]
