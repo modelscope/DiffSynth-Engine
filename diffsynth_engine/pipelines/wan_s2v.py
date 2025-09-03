@@ -260,7 +260,8 @@ class WanSound2VideoPipeline(WanVideoPipeline):
         self.load_models_to_device(["audio_encoder"])
         audio_embed_bucket, max_num_clips = get_audio_embed_bucket_fps(
             audio_embed=extract_audio_feat(audio_path, self.audio_encoder, device=self.device),
-            batch_frames=num_frames_per_clip,
+            num_frames_per_batch=num_frames_per_clip,
+            fps=self.config.fps,
         )
         audio_embed_bucket = audio_embed_bucket[None].to(self.device, self.dtype)
         audio_embed_bucket = audio_embed_bucket.permute(0, 2, 3, 1)
@@ -270,7 +271,8 @@ class WanSound2VideoPipeline(WanVideoPipeline):
         self.load_models_to_device(["audio_encoder"])
         void_audio_embed_bucket, _ = get_audio_embed_bucket_fps(
             audio_embed=extract_audio_feat(void_audio_path, self.audio_encoder, device=self.device),
-            batch_frames=num_frames_per_clip,
+            num_frames_per_batch=num_frames_per_clip,
+            fps=self.config.fps,
         )
         void_audio_embed_bucket = void_audio_embed_bucket[None].to(self.device, self.dtype)
         void_audio_embed_bucket = void_audio_embed_bucket.permute(0, 2, 3, 1)

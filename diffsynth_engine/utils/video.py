@@ -61,13 +61,13 @@ def read_n_frames(video_path: str, n_frames: int, target_fps=16, last_n=False):
 
 def save_video_with_audio(frames: List[Image.Image], audio_path: str, target_video_path: str, fps: int=16):
     # combine all frames
-    from moviepy.editor import ImageSequenceClip, AudioFileClip, VideoClip
-    frames = [np.array(frame) for frame in frames]
-    video = np.stack(frames, axis=0)  # shape: (t, b*h, w, c)
-    video_clip = ImageSequenceClip([*video], fps=fps)
+    from moviepy import ImageSequenceClip, AudioFileClip, VideoClip
+    video = [np.array(frame) for frame in frames]  # shape: t* (b*h, w, c)
+    video_clip = ImageSequenceClip(video, fps=fps)
     audio_clip = AudioFileClip(audio_path)
     if audio_clip.duration > video_clip.duration:
-        audio_clip = audio_clip.subclip(0, video_clip.duration)  # clip audio
-    video_clip: VideoClip = video_clip.set_duration(min(video_clip.duration, audio_clip.duration))
-    video_with_audio: VideoClip = video_clip.set_audio(audio_clip)
+        audio_clip: AudioFileClip = audio_clip.subclipped(0, video_clip.duration)  # clip audio
+    else:
+        video_clip: VideoClip = video_clip.subclipped(0, audio_clip.duration)
+    video_with_audio: VideoClip = video_clip.with_audio(audio_clip)
     video_with_audio.write_videofile(target_video_path, codec='libx264')
