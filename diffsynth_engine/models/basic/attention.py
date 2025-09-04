@@ -138,12 +138,10 @@ def attention(
             if flash_attn3_compatible and attn_mask is None:
                 return flash_attn3(q, k, v, softmax_scale=scale)
             else:
-                msg = (
-                    f"head_dim={q.shape[-1]}, but flash_attn_3 only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
-                    if not flash_attn3_compatible
-                    else "flash_attn_3 does not support attention mask, will use fallback attention implementation"
-                )
-                logger.warning(msg)
+                if not flash_attn3_compatible:
+                    logger.warning(f"head_dim={q.shape[-1]}, but flash_attn_3 only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation")
+                else:
+                    logger.debug("flash_attn_3 does not support attention mask, will use fallback attention implementation")
         if XFORMERS_AVAILABLE:
             return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         if SDPA_AVAILABLE:
