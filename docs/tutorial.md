@@ -74,6 +74,7 @@ Diffusion models come in a wide variety of architectures. Each model is loaded a
 | Qwen-Image         | [Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image) | `QwenImagePipeline` |
 | Wan2.1             | [Wan2.1-T2V-1.3B](https://modelscope.cn/models/Wan-AI/Wan2.1-T2V-1.3B) | `WanVideoPipeline`    |
 | Wan2.2             | [Wan2.2-TI2V-5B](https://modelscope.cn/models/Wan-AI/Wan2.2-TI2V-5B) | `WanVideoPipeline` |
+| Wan2.2 S2V      | [Wan2.2-S2V-14B](https://modelscope.cn/models/Wan-AI/Wan2.2-S2V-14B) | `WanSpeech2VideoPipeline` |
 | SD1.5 LoRA         | [Detail Tweaker](https://www.modelscope.cn/models/MusePublic/Detail_Tweaker_LoRA_xijietiaozheng_LoRA_SD_1_5) | `SDImagePipeline`     |
 | SDXL LoRA          | [Aesthetic Anime](https://www.modelscope.cn/models/MusePublic/100_lora_SD_XL) | `SDXLImagePipeline`   |
 | FLUX LoRA          | [ArtAug](https://www.modelscope.cn/models/DiffSynth-Studio/ArtAug-lora-FLUX.1dev-v1) | `FluxImagePipeline`   |
