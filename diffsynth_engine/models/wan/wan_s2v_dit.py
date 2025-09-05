@@ -440,10 +440,12 @@ class WanS2VDiT(WanDiT):
                         torch.tensor([30, 0, 0]),
                         torch.tensor([31, h, w]),
                         torch.tensor([1, h, w]),
-                    ],  # grid size of ref. why do they fix 30?
+                    ],  # grid size of ref
                 ],
                 freqs=self.freqs,
             )
+            # why do they fix 30?
+            # seems that they just want self.freqs[0][30]
 
             x_seq_len = f * h * w
             x, freqs = self.inject_motion(
