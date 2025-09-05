@@ -1,5 +1,5 @@
 import json
-from typing import List, Optional, Callable
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -24,7 +24,6 @@ from diffsynth_engine.utils.parallel import (
     sequence_parallel,
     sequence_parallel_unshard,
 )
-import diffsynth_engine.models.basic.attention as attention_ops
 
 
 def rope_precompute(x: torch.Tensor, grid_sizes: List[List[torch.Tensor]], freqs: torch.Tensor):
@@ -458,7 +457,6 @@ class WanS2VDiT(WanDiT):
             # f must be divisible by ulysses world size
             x_img, freqs_img = x[:, :x_seq_len], freqs[:, :x_seq_len]
             x_ref_motion, freqs_ref_motion = x[:, x_seq_len:], freqs[:, x_seq_len:]
-            original_attention = attention_ops.attention
             with sequence_parallel(
                 tensors=(
                     x_img,
@@ -484,7 +482,6 @@ class WanS2VDiT(WanDiT):
                             x=x,
                             x_seq_len=x_seq_len_local,
                             block_idx=idx,
-                            original_attention=original_attention,
                             audio_emb_global=audio_emb_global,
                             merged_audio_emb=merged_audio_emb,
                             audio_mask=audio_mask,
@@ -494,8 +491,6 @@ class WanS2VDiT(WanDiT):
 
                 x = x[:, :x_seq_len_local]
                 x = self.head(x, t)
-                # TODO: why is CrossAttn also going through ulysses? isn't it unnecessary?
-                # Even if we are going across ulysses, why is context not being partitioned over seq_len dim?
                 (x,) = sequence_parallel_unshard((x,), seq_dims=(1,), seq_lens=(x_seq_len,))
             x = self.unpatchify(x, (f, h, w))
             (x,) = cfg_parallel_unshard((x,), use_cfg=use_cfg)
@@ -530,15 +525,12 @@ class WanS2VDiT(WanDiT):
         x: torch.Tensor,
         x_seq_len: int,
         block_idx: int,
-        original_attention: Callable[..., torch.Tensor],
         audio_emb_global: torch.Tensor,
         merged_audio_emb: torch.Tensor,
         audio_mask: Optional[torch.Tensor] = None,
         void_audio_emb_global: Optional[torch.Tensor] = None,
         void_merged_audio_emb: Optional[torch.Tensor] = None,
     ):
-        long_context_attention = attention_ops.attention
-        attention_ops.attention = original_attention
         audio_attn_id = self.audio_injector.injected_block_id[block_idx]
         num_latents_per_clip = merged_audio_emb.shape[1]
 
@@ -568,5 +560,4 @@ class WanS2VDiT(WanDiT):
         else:
             x[:, :x_seq_len] += x_cond_residual
 
-        attention_ops.attention = long_context_attention
         return x

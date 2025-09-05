@@ -6,6 +6,7 @@ from typing import Any, Dict, Tuple, Optional
 from einops import rearrange
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
+from diffsynth_engine.models.basic.attention import attention
 from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
 from diffsynth_engine.utils.constants import (
@@ -142,12 +143,12 @@ class CrossAttention(nn.Module):
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
 
-        x = attention_ops.attention(q, k, v, **self.attn_kwargs).flatten(2)
+        x = attention(q, k, v, **self.attn_kwargs).flatten(2)
         if self.has_image_input:
             k_img, v_img = self.norm_k_img(self.k_img(img)), self.v_img(img)
             k_img = rearrange(k_img, "b s (n d) -> b s n d", n=num_heads)
             v_img = rearrange(v_img, "b s (n d) -> b s n d", n=num_heads)
-            y = attention_ops.attention(q, k_img, v_img, **self.attn_kwargs).flatten(2)
+            y = attention(q, k_img, v_img, **self.attn_kwargs).flatten(2)
             x = x + y
         return self.o(x)
 
