@@ -187,7 +187,7 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
 @dataclass
 class WanSpeech2VideoPipelineConfig(WanPipelineConfig):
     audio_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
-    audio_encoder_dtype: torch.dtype = torch.bfloat16
+    audio_encoder_dtype: torch.dtype = torch.float32
 
     @classmethod
     def basic_config(

@@ -45,13 +45,14 @@ def read_n_frames(video_reader: VideoReader, n_frames: int, target_fps: int = 16
     original_fps = video_reader.reader.get_meta_data()["fps"]
     num_frames = len(video_reader)
     interval = max(1, round(original_fps / target_fps))
-    sampled_indices = []
+    sampled_frames: List[Image.Image] = []
+    frames = video_reader.frames
     for i in range(n_frames):
         frame_idx = i * interval
         if frame_idx >= num_frames:
             break
-        sampled_indices.append(frame_idx)
-    return video_reader.frames[sampled_indices]
+        sampled_frames.append(frames[frame_idx])
+    return sampled_frames
 
 
 def save_video_with_audio(frames: List[Image.Image], audio_path: str, target_video_path: str, fps: int = 16):
