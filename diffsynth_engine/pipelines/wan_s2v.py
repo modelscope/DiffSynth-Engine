@@ -164,7 +164,6 @@ def restrict_size_below_area(
         max_scale = math.sqrt(max_upper_area / (height * width))  # Scale without any padding
 
     # We want to choose the largest possible scale such that the final padded area does not exceed max_upper_area
-    # Use binary search-like iteration to find this scale
     for i in range(100):
         scale = max_scale - (max_scale - min_scale) * i / 100
         new_height, new_width = int(height * scale), int(width * scale)
