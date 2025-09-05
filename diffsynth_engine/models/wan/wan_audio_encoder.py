@@ -268,10 +268,9 @@ def linear_interpolation(features: torch.Tensor, input_fps: int, output_fps: int
     return output_features.transpose(1, 2)  # [1, output_len, 512]
 
 
-def extract_audio_feat(audio_path: str, model: Wav2Vec2Model, dtype=torch.float32, device="cuda:0") -> torch.Tensor:
-    video_rate = 30  # TODO: maybe later we can have a node to load audio, and move this outside
-    audio_input, _ = librosa.load(audio_path, sr=16000)
-    input_values = torch.stack([torch.from_numpy(x - x.mean()) / np.sqrt(x.var() + 1e-7) for x in audio_input[None]])
+def extract_audio_feat(audio_input: torch.Tensor, model: Wav2Vec2Model, dtype=torch.float32, device="cuda:0") -> torch.Tensor:
+    video_rate = 30
+    input_values = (audio_input - audio_input.mean(dim=1, keepdim=True)) / torch.sqrt(audio_input.var(dim=1, keepdim=True) + 1e-7)
     feat = torch.cat(model(input_values.to(device)))
     feat = linear_interpolation(feat, input_fps=50, output_fps=video_rate)
     return feat.to(dtype)  # Encoding for the motion

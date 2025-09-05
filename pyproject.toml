@@ -34,7 +34,6 @@ dependencies = [
     "opencv-python",
     "moviepy",
     "librosa",
-    "mediapipe",
     "scikit-image",
     "trimesh"
 ]

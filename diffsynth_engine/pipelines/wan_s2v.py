@@ -1,5 +1,4 @@
 import math
-from mediapipe.python.solutions.face_detection import FaceDetection
 
 import numpy as np
 import torch
@@ -27,104 +26,44 @@ from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils.image import resize_and_center_crop
-from diffsynth_engine.utils.video import read_n_frames
+from diffsynth_engine.utils.video import read_n_frames, VideoReader
 from diffsynth_engine.utils import logging
 
 
 logger = logging.get_logger(__name__)
 
 
-def face_bbox_detect(image: np.ndarray, bbox_scale=1.0):
-    mp_face_detector = FaceDetection(min_detection_confidence=0.1)
-    results = mp_face_detector.process(image)
-    bboxes = []
-    if results.detections:
-        for detection in results.detections:
-            bboxC = detection.location_data.relative_bounding_box
-            ih, iw, _ = image.shape
-            x_min = int(bboxC.xmin * iw)
-            y_min = int(bboxC.ymin * ih)
-            x_max = int((bboxC.xmin + bboxC.width) * iw)
-            y_max = int((bboxC.ymin + bboxC.height) * ih)
-
-            # Adjust bbox size
-            width = x_max - x_min
-            height = y_max - y_min
-            x_min = max(0, x_min - int((bbox_scale - 1.0) * width / 2))
-            y_min = max(0, y_min - int((bbox_scale - 1.0) * height / 2))
-            x_max = min(iw, x_max + int((bbox_scale - 1.0) * width / 2))
-            y_max = min(ih, y_max + int((bbox_scale - 1.0) * height / 2))
-
-            bboxes.append([x_min, y_min, x_max, y_max])
-
-    if len(bboxes) == 0:
-        mp_face_range_detector = FaceDetection(min_detection_confidence=0.1, model_selection=1)
-        range_results = mp_face_range_detector.process(image)
-        if range_results.detections:
-            for detection in range_results.detections:
-                bboxC = detection.location_data.relative_bounding_box
-                ih, iw, _ = image.shape
-                x_min = int(bboxC.xmin * iw)
-                y_min = int(bboxC.ymin * ih)
-                x_max = int((bboxC.xmin + bboxC.width) * iw)
-                y_max = int((bboxC.ymin + bboxC.height) * ih)
-
-                # Adjust bbox size
-                width = x_max - x_min
-                height = y_max - y_min
-                x_min = max(0, x_min - int((bbox_scale - 1.0) * width / 2))
-                y_min = max(0, y_min - int((bbox_scale - 1.0) * height / 2))
-                x_max = min(iw, x_max + int((bbox_scale - 1.0) * width / 2))
-                y_max = min(ih, y_max + int((bbox_scale - 1.0) * height / 2))
-
-                bboxes.append([x_min, y_min, x_max, y_max])
-
-    return bboxes
-
-
-def generate_bbox_mask(image: np.ndarray, bboxes: List[List[int]], skip_person_ids: List[int], y_offset=0.0):
-    mask = np.zeros(image.shape[:2], dtype=np.uint8)
-    for id, bbox in enumerate(bboxes):
-        if id in skip_person_ids:
-            continue
-        x_min, y_min, x_max, y_max = bbox
-        height_offset = int((y_max - y_min) * y_offset)
-        y_min = max(0, y_min + height_offset)
-        y_max = min(mask.shape[0], y_max + height_offset)
-        mask[y_min:y_max, x_min:x_max] = 255
-    return mask
-
-
 def get_face_mask(
     ref_image: Image.Image,
-    speaking_duration: List[List[int]],
+    speaker_end_sec: List[List[int]],
+    speaker_bbox: List[List[int]],
     num_frames_total: int,
     fps=16,
-    bbox_scale=1.3,
     temporal_scale=4,
     spatial_scale=16,
     dtype=torch.bfloat16,
-    device="cuda",
 ):
+    mask_height, mask_width = ref_image.height, ref_image.width
     ref_image = np.array(ref_image)
-    mask_height, mask_width = ref_image.shape[0], ref_image.shape[1]
     face_mask = torch.zeros(
         [1, num_frames_total, mask_height, mask_width],
         dtype=dtype,
     )
-    face_bboxs = face_bbox_detect(ref_image, bbox_scale=bbox_scale)
     prev_time = 0
-    for person_id, end_time in speaking_duration:
-        start_id = int(prev_time * fps)
-        end_id = int(end_time * fps)
-        mask_img = generate_bbox_mask(
-            image=ref_image,
-            bboxes=face_bboxs,
-            skip_person_ids=[person_id],
-        )
-        face_mask[0, start_id:end_id] = torch.from_numpy(mask_img)[None].to(dtype=dtype, device=device) / 255
+    for speaker_id, end_time in speaker_end_sec:
+        start_frame = int(prev_time * fps)
+        end_frame = int(end_time * fps)
+        mask = torch.zeros(ref_image.shape[:2], dtype=dtype)
+        for id, bbox in enumerate(speaker_bbox):
+            if id == speaker_id:
+                continue
+            x_min, y_min, x_max, y_max = bbox
+            y_min = max(0, y_min)
+            y_max = min(mask.shape[0], y_max)
+            mask[y_min:y_max, x_min:x_max] = 1
+        face_mask[0, start_frame:end_frame] = mask[None]
         prev_time = end_time
-        if end_id > num_frames_total:
+        if end_frame > num_frames_total:
             break
 
     face_mask_resized = F.interpolate(
@@ -135,11 +74,71 @@ def get_face_mask(
             mask_width // spatial_scale,
         ),
         mode="nearest",
-    )[0].to(dtype=dtype, device=device)
+    )[0]
     return 1 - face_mask_resized
 
 
-def get_size(
+def transform_bbox(
+    bboxes: List[List[int]],
+    original_height: int,
+    original_width: int,
+    target_height: int,
+    target_width: int,
+) -> Optional[List[float]]:
+    transformed_bboxes = []
+    for x_min, y_min, x_max, y_max in bboxes:
+        # --- 1. The Resize Operation ---
+        # The image is resized so its smaller edge is min(target_h, target_w).
+        resize_size = min(target_height, target_width)
+
+        # Determine the scaling factor.
+        if original_width < original_height:
+            # If width is the smaller edge
+            scale_factor = resize_size / original_width
+            resized_w = resize_size
+            resized_h = int(original_height * scale_factor)
+        else:
+            # If height is the smaller edge or they are equal
+            scale_factor = resize_size / original_height
+            resized_h = resize_size
+            resized_w = int(original_width * scale_factor)
+
+        # Apply the scaling factor to the bbox coordinates.
+        scaled_x_min = x_min * scale_factor
+        scaled_y_min = y_min * scale_factor
+        scaled_x_max = x_max * scale_factor
+        scaled_y_max = y_max * scale_factor
+
+        # --- 2. The Center Crop Operation ---
+        # Calculate the top-left corner (offset) of the crop area.
+        crop_offset_x = (resized_w - target_width) / 2.0
+        crop_offset_y = (resized_h - target_height) / 2.0
+
+        # Translate the bbox coordinates by subtracting the crop offset.
+        # The new coordinate system's origin (0,0) is the top-left of the crop.
+        final_x_min = scaled_x_min - crop_offset_x
+        final_y_min = scaled_y_min - crop_offset_y
+        final_x_max = scaled_x_max - crop_offset_x
+        final_y_max = scaled_y_max - crop_offset_y
+
+        # --- 3. Clipping ---
+        # The bbox might now be partially or fully outside the crop.
+        # Clip the coordinates to the crop dimensions [0, target_w] and [0, target_h].
+        final_x_min = max(0, final_x_min)
+        final_y_min = max(0, final_y_min)
+        final_x_max = min(target_width, final_x_max)
+        final_y_max = min(target_height, final_y_max)
+
+        # Check if the bbox is still valid (has a positive area).
+        if final_x_min >= final_x_max or final_y_min >= final_y_max:
+            transformed_bboxes.append([0, 0, 0, 0])  # The bbox is completely outside the crop.
+        else:
+            transformed_bboxes.append([final_x_min, final_y_min, final_x_max, final_y_max])
+
+    return transformed_bboxes
+
+
+def restrict_size_below_area(
     height: int | None, width: int | None, ref_image: Image.Image, target_area: int = 1024 * 704, divisor: int = 64
 ):
     if height is not None and width is not None:
@@ -235,10 +234,10 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
 
         return ref_latents, motion_latents, motion_frames
 
-    def encode_pose(self, pose_video_path: str, num_clips: int, num_frames_per_clip: int, height: int, width: int):
+    def encode_pose(self, pose_video: VideoReader, num_clips: int, num_frames_per_clip: int, height: int, width: int):
         self.load_models_to_device(["vae"])
         max_num_pose_frames = num_frames_per_clip * num_clips
-        pose_video = read_n_frames(pose_video_path, max_num_pose_frames, target_fps=self.config.fps)
+        pose_video = read_n_frames(pose_video, max_num_pose_frames, target_fps=self.config.fps)
         pose_frames = torch.from_numpy([np.array(frame) for frame in pose_video])
         pose_frames = pose_frames.permute(0, 3, 1, 2) / 255.0 * 2 - 1.0
         pose_frames = resize_and_center_crop(pose_frames, height, width).permute(1, 0, 2, 3)[None]
@@ -253,10 +252,10 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
             pose_latents_all_clips.append(pose_latents_per_clip)
         return pose_latents_all_clips
 
-    def encode_audio(self, audio_path: str, num_frames_per_clip: int, num_clips: int):
+    def encode_audio(self, audio: torch.Tensor, num_frames_per_clip: int, num_clips: int):
         self.load_models_to_device(["audio_encoder"])
         audio_embed_bucket, max_num_clips = get_audio_embed_bucket_fps(
-            audio_embed=extract_audio_feat(audio_path, self.audio_encoder, device=self.device),
+            audio_embed=extract_audio_feat(audio, self.audio_encoder, device=self.device),
             num_frames_per_batch=num_frames_per_clip,
             fps=self.config.fps,
         )
@@ -264,10 +263,10 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         audio_embed_bucket = audio_embed_bucket.permute(0, 2, 3, 1)
         return audio_embed_bucket, min(max_num_clips, num_clips)
 
-    def encode_void_audio(self, void_audio_path: str, num_frames_per_clip: int):
+    def encode_void_audio(self, void_audio: torch.Tensor, num_frames_per_clip: int):
         self.load_models_to_device(["audio_encoder"])
         void_audio_embed_bucket, _ = get_audio_embed_bucket_fps(
-            audio_embed=extract_audio_feat(void_audio_path, self.audio_encoder, device=self.device),
+            audio_embed=extract_audio_feat(void_audio, self.audio_encoder, device=self.device),
             num_frames_per_batch=num_frames_per_clip,
             fps=self.config.fps,
         )
@@ -402,7 +401,7 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
     @torch.no_grad()
     def __call__(
         self,
-        audio_path: str,
+        audio: torch.Tensor,
         prompt: str,
         negative_prompt: str = "",
         cfg_scale: float | None = None,
@@ -412,17 +411,19 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         width: int | None = None,
         num_frames_per_clip: int = 80,
         ref_image: Image.Image | None = None,
-        pose_video_path: str | None = None,
-        void_audio_path: str | None = None,
+        pose_video: VideoReader | None = None,
+        void_audio: torch.Tensor | None = None,
         num_clips: int = 1,
         ref_as_first_frame: bool = False,
-        speaking_duration: List[List[int]] = [],
+        speaker_bbox: List[List[int]] = [],
+        speaker_end_sec: List[List[int]] = [],
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
         assert ref_image is not None, "ref_image must be provided"
         cfg_scale = self.config.cfg_scale if cfg_scale is None else cfg_scale
         num_inference_steps = self.config.num_inference_steps if num_inference_steps is None else num_inference_steps
-        height, width = get_size(height, width, ref_image)
+        original_height, original_width = ref_image.height, ref_image.width
+        height, width = restrict_size_below_area(height, width, ref_image)
 
         # Initialize noise
         if dist.is_initialized() and seed is None:
@@ -440,20 +441,26 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         ref_latents, motion_latents, motion_frames = self.encode_ref_and_motion(
             ref_image, height, width, num_motion_frames, ref_as_first_frame
         )
-        audio_emb, num_clips = self.encode_audio(audio_path, num_frames_per_clip, num_clips)
-        if len(speaking_duration) > 0:
-            void_audio_emb = self.encode_void_audio(void_audio_path, num_frames_per_clip)
+        audio_emb, num_clips = self.encode_audio(audio, num_frames_per_clip, num_clips)
+        if len(speaker_end_sec) > 0:
+            void_audio_emb = self.encode_void_audio(void_audio, num_frames_per_clip)
+            speaker_bbox = transform_bbox(
+                speaker_bbox,
+                original_height,
+                original_width,
+                height,
+                width,
+            )
             audio_mask = get_face_mask(
-                ref_image,
-                speaking_duration,
+                ref_image=ref_image,
+                speaker_end_sec=speaker_end_sec,
+                speaker_bbox=speaker_bbox,
                 num_frames_total=num_clips * num_frames_per_clip,
                 fps=self.config.fps,
-                bbox_scale=1.3,
-                device=self.device,
                 dtype=self.dtype,
-            )
-        if pose_video_path is not None:
-            pose_latents_all_clips = self.encode_pose(pose_video_path, num_clips, num_frames_per_clip, height, width)
+            ).to(self.device)
+        if pose_video is not None:
+            pose_latents_all_clips = self.encode_pose(pose_video, num_clips, num_frames_per_clip, height, width)
 
         output_frames_all_clips = []
         for clip_idx in range(num_clips):
@@ -484,10 +491,10 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
                 ..., (clip_idx * num_frames_per_clip) : ((clip_idx + 1) * num_frames_per_clip)
             ]
             pose_latents_curr_clip = (
-                pose_latents_all_clips[clip_idx] if pose_video_path is not None else torch.zeros_like(latents)
+                pose_latents_all_clips[clip_idx] if pose_video is not None else torch.zeros_like(latents)
             )
             pose_latents_curr_clip = pose_latents_curr_clip.to(dtype=self.dtype, device=self.device)
-            if len(speaking_duration) > 0:
+            if len(speaker_end_sec) > 0:
                 audio_mask_curr_clip = audio_mask[
                     None, :, (clip_idx * num_latents_per_clip) : ((clip_idx + 1) * num_latents_per_clip)
                 ]

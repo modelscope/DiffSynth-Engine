@@ -1,16 +1,19 @@
 from PIL import Image
+import librosa
 import torch
 from diffsynth_engine import WanSpeech2VideoPipelineConfig
 from diffsynth_engine.pipelines import WanSpeech2VideoPipeline
 from diffsynth_engine.utils.download import fetch_model
-from diffsynth_engine.utils.video import save_video_with_audio
+from diffsynth_engine.utils.video import save_video_with_audio, load_video
 
 
 def wan_rs2v(pipe: WanSpeech2VideoPipeline):
     audio_path = "examples/input_s2v/sing.mp3"
+    audio = librosa.load(audio_path, sr=16000)[0]
+    audio = torch.from_numpy(audio)[None]  # (1, audio_len)
     frames = pipe(
         ref_image=Image.open("examples/input_s2v/woman.png").convert('RGB'),
-        audio_path=audio_path,
+        audio=audio,
         prompt="画面清晰，视频中，一个女人正在唱歌，表情动作十分投入",
         negative_prompt="画面模糊，最差质量，画面模糊，细节模糊不清，情绪激动剧烈，手快速抖动，字幕，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
         cfg_scale=4.5,
@@ -25,10 +28,12 @@ def wan_rs2v(pipe: WanSpeech2VideoPipeline):
 
 def wan_rsp2v(pipe: WanSpeech2VideoPipeline):
     audio_path = "examples/input_s2v/sing.mp3"
+    audio = librosa.load(audio_path, sr=16000)[0]
+    audio = torch.from_numpy(audio)[None]  # (1, audio_len)
     frames = pipe(
         ref_image=Image.open("examples/input_s2v/pose.png").convert('RGB'),
-        audio_path=audio_path,
-        pose_video_path="examples/input_s2v/pose.mp4",
+        audio=audio,
+        pose_video=load_video("examples/input_s2v/pose.mp4"),
         prompt="画面清晰，视频中，一个女生正准备开始跳舞，她穿着短裤，她慢慢扭动自己的身体，表情自信阳光，她唱着歌，镜头慢慢拉远",
         negative_prompt="画面模糊，最差质量，画面模糊，细节模糊不清，情绪激动剧烈，手快速抖动，字幕，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
         cfg_scale=4.5,
@@ -43,17 +48,22 @@ def wan_rsp2v(pipe: WanSpeech2VideoPipeline):
 
 def wan_rs2v_multi_people(pipe: WanSpeech2VideoPipeline):
     audio_path = "examples/input_s2v/sing2.mp3"
+    audio = librosa.load(audio_path, sr=16000)[0]
+    audio = torch.from_numpy(audio)[None]  # (1, audio_len)
+    void_audio = librosa.load("examples/input_s2v/void_audio.mp3", sr=16000)[0]
+    void_audio = torch.from_numpy(void_audio)[None]  # (1, void_audio_len)
     frames = pipe(
         ref_image=Image.open("examples/input_s2v/2girl.png").convert('RGB'),
-        audio_path=audio_path,
-        void_audio_path="examples/input_s2v/void_audio.mp3",
+        audio=audio,
+        void_audio=void_audio,
         prompt="画面清晰，视频中，两个女生正在唱歌，十分深情投入，她们感受着轻柔舒缓的音乐，慢慢摇晃，享受着音乐，表情投入微笑，其中一个女生唱歌，另一个充满深情地看着对方",
         negative_prompt="画面模糊，最差质量，画面模糊，细节模糊不清，情绪激动剧烈，手快速抖动，字幕，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
         cfg_scale=5,
         num_inference_steps=40,
         seed=123,
         num_frames_per_clip=80,
-        speaking_duration=[[0,6],[1,14],[0,23],[1,100]],
+        speaker_end_sec=[[0,6],[1,14],[0,23],[1,100]],
+        speaker_bbox=[[310, 72, 591, 353], [759, 127, 918, 286]], # speaker_id: (w_min, h_min, w_max, h_max)
         num_clips=2,
         ref_as_first_frame=False,
     )
