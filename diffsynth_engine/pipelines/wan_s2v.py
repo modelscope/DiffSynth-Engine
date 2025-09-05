@@ -244,7 +244,7 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         max_num_pose_frames = num_frames_per_clip * num_clips
         pose_video = read_n_frames(pose_video, max_num_pose_frames, target_fps=self.config.fps)
         pose_frames = torch.stack([pil_to_tensor(frame) for frame in pose_video])
-        pose_frames = pose_frames.permute(0, 3, 1, 2) / 255.0 * 2 - 1.0
+        pose_frames = pose_frames / 255.0 * 2 - 1.0
         pose_frames = resize_and_center_crop(pose_frames, height, width).permute(1, 0, 2, 3)[None]
         pose_frames_padding = torch.zeros([1, 3, max_num_pose_frames - pose_frames.shape[2], height, width])
         pose_frames = torch.cat([pose_frames, pose_frames_padding], dim=2)
