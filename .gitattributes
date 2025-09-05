@@ -24,3 +24,4 @@ tests/data/expect/algorithm/ddim_20steps.safetensors filter=lfs diff=lfs merge=l
 tests/data/expect/algorithm/flow_match_euler_i10.safetensors filter=lfs diff=lfs merge=lfs -text
 tests/data/expect/algorithm/output.safetensors filter=lfs diff=lfs merge=lfs -text
 tests/data/expect/flux/flux_text_encoder_1.safetensors filter=lfs diff=lfs merge=lfs -text
+tests/data/input/wan_s2v/* filter=lfs diff=lfs merge=lfs -text
