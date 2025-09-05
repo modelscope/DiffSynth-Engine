@@ -461,7 +461,6 @@ class WanS2VDiT(WanDiT):
                 tensors=(
                     x_img,
                     freqs_img,
-                    context,
                     audio_emb_global,
                     merged_audio_emb,
                     audio_mask,
