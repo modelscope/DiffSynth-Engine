@@ -50,7 +50,7 @@ def wan_rsp2v(pipe: WanSpeech2VideoPipeline):
     save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rsp2v.mp4")
 
 
-def wan_rs2v_multi_people(pipe: WanSpeech2VideoPipeline):
+def wan_rs2v_multi_speaker(pipe: WanSpeech2VideoPipeline):
     audio_path = f"{input_data_dir}/sing2.mp3"
     audio = librosa.load(audio_path, sr=16000)[0]
     audio = torch.from_numpy(audio)[None]  # (1, audio_len)
@@ -71,7 +71,7 @@ def wan_rs2v_multi_people(pipe: WanSpeech2VideoPipeline):
         num_clips=2,
         ref_as_first_frame=False,
     )
-    save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rs2v_multi_people.mp4")
+    save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rs2v_multi_speaker.mp4")
 
 
 if __name__ == "__main__":
@@ -79,8 +79,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--example",
         type=str,
-        choices=["rs2v", "rsp2v", "rs2v_multi_people"],
-        help="Which example to run: 'rs2v', 'rsp2v', or 'rs2v_multi_people'."
+        choices=["rs2v", "rsp2v", "rs2v_multi_speaker"],
+        help="Which example to run: 'rs2v', 'rsp2v', or 'rs2v_multi_speaker'."
     )
     parser.add_argument("--device", type=str, default="cuda", help="Device to run the model on.")
     parser.add_argument("--parallelism", type=int, default=1, help="Number of parallel devices to use.")
@@ -103,8 +103,8 @@ if __name__ == "__main__":
             wan_rs2v(pipe)
         elif args.example == "rsp2v":
             wan_rsp2v(pipe)
-        elif args.example == "rs2v_multi_people":
-            wan_rs2v_multi_people(pipe)
+        elif args.example == "rs2v_multi_speaker":
+            wan_rs2v_multi_speaker(pipe)
         else:
             raise ValueError(f"Unknown example: {args.example}")
 

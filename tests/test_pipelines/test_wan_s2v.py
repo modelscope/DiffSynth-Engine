@@ -62,7 +62,7 @@ class TestWanSpeech2Video(VideoTestCase):
         )
         save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rsp2v.mp4")
 
-    def test_ref_speech_to_video_multi_people(self):
+    def test_ref_speech_to_video_multi_speaker(self):
         audio_path = f"{input_data_dir}/sing2.mp3"
         audio, _ = librosa.load(audio_path, sr=16000)
         audio = torch.from_numpy(audio)[None]  # (1, audio_len)
@@ -83,7 +83,7 @@ class TestWanSpeech2Video(VideoTestCase):
             num_clips=2,
             ref_as_first_frame=False,
         )
-        save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rs2v_multi_people.mp4")
+        save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rs2v_multi_speaker.mp4")
 
 
 if __name__ == "__main__":
