@@ -134,6 +134,11 @@ def transform_bbox(
         if final_x_min >= final_x_max or final_y_min >= final_y_max:
             transformed_bboxes.append([0, 0, 0, 0])  # The bbox is completely outside the crop.
         else:
+            # make bbox integer
+            final_x_min = int(final_x_min)
+            final_y_min = int(final_y_min)
+            final_x_max = int(final_x_max)
+            final_y_max = int(final_y_max)
             transformed_bboxes.append([final_x_min, final_y_min, final_x_max, final_y_max])
 
     return transformed_bboxes
