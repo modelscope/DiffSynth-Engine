@@ -77,10 +77,12 @@ def wan_rs2v_multi_people(pipe: WanSpeech2VideoPipeline):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Select the wan speech-to-video pipeline example to run.")
     parser.add_argument(
-        "feature",
+        "example",
         choices=["rs2v", "rsp2v", "rs2v_multi_people"],
         help="Which example to run: 'rs2v', 'rsp2v', or 'rs2v_multi_people'."
     )
+    parser.add_argument("--device", type=str, default="cuda", help="Device to run the model on.")
+    parser.add_argument("--parallelism", type=int, default=1, help="Number of parallel devices to use.")
     args = parser.parse_args()
     # serialization will refuse to proceed if we don't do such here.
     # there seems to be some tensor requiring grad. I have no idea what
@@ -91,15 +93,18 @@ if __name__ == "__main__":
                 "Wan-AI/Wan2.2-S2V-14B",
                 path="diffusion_pytorch_model-0000*-of-00004.safetensors",
             ),
-            parallelism=8,
+            parallelism=args.parallelism,
+            device=args.device,
         )
         pipe = WanSpeech2VideoPipeline.from_pretrained(config)
 
-        if args.feature == "rs2v":
+        if args.example == "rs2v":
             wan_rs2v(pipe)
-        elif args.feature == "rsp2v":
+        elif args.example == "rsp2v":
             wan_rsp2v(pipe)
-        elif args.feature == "rs2v_multi_people":
+        elif args.example == "rs2v_multi_people":
             wan_rs2v_multi_people(pipe)
+        else:
+            raise ValueError(f"Unknown example: {args.example}")
 
         del pipe
