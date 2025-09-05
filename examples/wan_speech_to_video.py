@@ -92,7 +92,12 @@ if __name__ == "__main__":
         config = WanSpeech2VideoPipelineConfig.basic_config(
             model_path=fetch_model(
                 "Wan-AI/Wan2.2-S2V-14B",
-                path="diffusion_pytorch_model-0000*-of-00004.safetensors",
+                path=[
+                    "diffusion_pytorch_model-00001-of-00004.safetensors",
+                    "diffusion_pytorch_model-00002-of-00004.safetensors",
+                    "diffusion_pytorch_model-00003-of-00004.safetensors",
+                    "diffusion_pytorch_model-00004-of-00004.safetensors",
+                ],
             ),
             parallelism=args.parallelism,
             device=args.device,
