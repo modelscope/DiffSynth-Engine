@@ -77,7 +77,8 @@ def wan_rs2v_multi_people(pipe: WanSpeech2VideoPipeline):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Select the wan speech-to-video pipeline example to run.")
     parser.add_argument(
-        "example",
+        "--example",
+        type=str,
         choices=["rs2v", "rsp2v", "rs2v_multi_people"],
         help="Which example to run: 'rs2v', 'rsp2v', or 'rs2v_multi_people'."
     )
