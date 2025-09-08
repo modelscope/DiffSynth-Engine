@@ -31,10 +31,12 @@ def wan_rsp2v(pipe: WanSpeech2VideoPipeline, input_data_dir: str):
     audio_path = f"{input_data_dir}/sing.mp3"
     audio = librosa.load(audio_path, sr=16000)[0]
     audio = torch.from_numpy(audio)[None]  # (1, audio_len)
+    pose_video = load_video(f"{input_data_dir}/pose.mp4")
     frames = pipe(
         ref_image=Image.open(f"{input_data_dir}/pose.png").convert("RGB"),
         audio=audio,
-        pose_video=load_video(f"{input_data_dir}/pose.mp4"),
+        pose_video=pose_video.frames,
+        pose_video_fps=pose_video.reader.get_meta_data()["fps"],
         prompt="画面清晰，视频中，一个女生正准备开始跳舞，她穿着短裤，她慢慢扭动自己的身体，表情自信阳光，她唱着歌，镜头慢慢拉远",
         negative_prompt="画面模糊，最差质量，画面模糊，细节模糊不清，情绪激动剧烈，手快速抖动，字幕，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
         cfg_scale=4.5,

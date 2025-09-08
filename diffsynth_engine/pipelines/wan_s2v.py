@@ -238,10 +238,10 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
 
         return ref_latents, motion_latents, motion_frames
 
-    def encode_pose(self, pose_video: VideoReader, num_clips: int, num_frames_per_clip: int, height: int, width: int):
+    def encode_pose(self, pose_video: List[Image.Image], pose_video_fps: int, num_clips: int, num_frames_per_clip: int, height: int, width: int):
         self.load_models_to_device(["vae"])
         max_num_pose_frames = num_frames_per_clip * num_clips
-        pose_video = read_n_frames(pose_video, max_num_pose_frames, target_fps=self.config.fps)
+        pose_video = read_n_frames(pose_video, pose_video_fps, max_num_pose_frames, target_fps=self.config.fps)
         pose_frames = torch.stack([pil_to_tensor(frame) for frame in pose_video])
         pose_frames = pose_frames / 255.0 * 2 - 1.0
         pose_frames = resize_and_center_crop(pose_frames, height, width).permute(1, 0, 2, 3)[None]
@@ -415,7 +415,8 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         width: int | None = None,
         num_frames_per_clip: int = 80,
         ref_image: Image.Image | None = None,
-        pose_video: VideoReader | None = None,
+        pose_video: List[Image.Image] | None = None,
+        pose_video_fps: int | None = None,
         void_audio: torch.Tensor | None = None,
         num_clips: int = 1,
         ref_as_first_frame: bool = False,
@@ -464,7 +465,7 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
                 dtype=self.dtype,
             ).to(self.device)
         if pose_video is not None:
-            pose_latents_all_clips = self.encode_pose(pose_video, num_clips, num_frames_per_clip, height, width)
+            pose_latents_all_clips = self.encode_pose(pose_video, pose_video_fps, num_clips, num_frames_per_clip, height, width)
 
         output_frames_all_clips = []
         for clip_idx in range(num_clips):
