@@ -8,10 +8,7 @@ from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.video import save_video_with_audio, load_video
 
 
-input_data_dir = "tests/data/input/wan_s2v"
-
-
-def wan_rs2v(pipe: WanSpeech2VideoPipeline):
+def wan_rs2v(pipe: WanSpeech2VideoPipeline, input_data_dir: str):
     audio_path = f"{input_data_dir}/sing.mp3"
     audio = librosa.load(audio_path, sr=16000)[0]
     audio = torch.from_numpy(audio)[None]  # (1, audio_len)
@@ -30,7 +27,7 @@ def wan_rs2v(pipe: WanSpeech2VideoPipeline):
     save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rs2v.mp4")
 
 
-def wan_rsp2v(pipe: WanSpeech2VideoPipeline):
+def wan_rsp2v(pipe: WanSpeech2VideoPipeline, input_data_dir: str):
     audio_path = f"{input_data_dir}/sing.mp3"
     audio = librosa.load(audio_path, sr=16000)[0]
     audio = torch.from_numpy(audio)[None]  # (1, audio_len)
@@ -50,7 +47,7 @@ def wan_rsp2v(pipe: WanSpeech2VideoPipeline):
     save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rsp2v.mp4")
 
 
-def wan_rs2v_multi_speaker(pipe: WanSpeech2VideoPipeline):
+def wan_rs2v_multi_speaker(pipe: WanSpeech2VideoPipeline, input_data_dir: str):
     audio_path = f"{input_data_dir}/sing2.mp3"
     audio = librosa.load(audio_path, sr=16000)[0]
     audio = torch.from_numpy(audio)[None]  # (1, audio_len)
@@ -84,11 +81,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--device", type=str, default="cuda", help="Device to run the model on.")
     parser.add_argument("--parallelism", type=int, default=1, help="Number of parallel devices to use.")
+    parser.add_argument("--input_data_dir", type=str, default="tests/data/input/wan_s2v", help="Directory for input data.")
     args = parser.parse_args()
-    # serialization will refuse to proceed if we don't do such here.
-    # there seems to be some tensor requiring grad. I have no idea what
-    # optimally may need time to search for such tensor, but if we add this no_grad wrapper, we can at least run it.
-    # with torch.no_grad():
     config = WanSpeech2VideoPipelineConfig.basic_config(
         model_path=fetch_model(
             "Wan-AI/Wan2.2-S2V-14B",

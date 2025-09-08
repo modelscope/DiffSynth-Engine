@@ -203,8 +203,8 @@ class WanSpeech2VideoPipelineConfig(WanPipelineConfig):
             audio_encoder_path=audio_encoder_path,
             device=device,
             parallelism=parallelism,
-            use_cfg_parallel=True,
-            use_fsdp=True,
+            use_cfg_parallel=True if parallelism > 1 else False,
+            use_fsdp=True if parallelism > 1 else False,
             offload_mode=offload_mode,
         )
 
