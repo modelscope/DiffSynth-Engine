@@ -469,7 +469,7 @@ class WanS2VDiT(WanDiT):
                     void_audio_emb_global,
                     void_merged_audio_emb,
                 ),
-                seq_dims=(1, 1, 1, 1, 1, 1, 1, 1),
+                seq_dims=(1, 1, 1, 1, 1, 1, 1),
             ):
                 x_seq_len_local = x_img.shape[1]
                 x = torch.concat([x_img, x_ref_motion], dim=1)

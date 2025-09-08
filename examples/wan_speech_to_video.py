@@ -88,29 +88,29 @@ if __name__ == "__main__":
     # serialization will refuse to proceed if we don't do such here.
     # there seems to be some tensor requiring grad. I have no idea what
     # optimally may need time to search for such tensor, but if we add this no_grad wrapper, we can at least run it.
-    with torch.no_grad():
-        config = WanSpeech2VideoPipelineConfig.basic_config(
-            model_path=fetch_model(
-                "Wan-AI/Wan2.2-S2V-14B",
-                path=[
-                    "diffusion_pytorch_model-00001-of-00004.safetensors",
-                    "diffusion_pytorch_model-00002-of-00004.safetensors",
-                    "diffusion_pytorch_model-00003-of-00004.safetensors",
-                    "diffusion_pytorch_model-00004-of-00004.safetensors",
-                ],
-            ),
-            parallelism=args.parallelism,
-            device=args.device,
-        )
-        pipe = WanSpeech2VideoPipeline.from_pretrained(config)
+    # with torch.no_grad():
+    config = WanSpeech2VideoPipelineConfig.basic_config(
+        model_path=fetch_model(
+            "Wan-AI/Wan2.2-S2V-14B",
+            path=[
+                "diffusion_pytorch_model-00001-of-00004.safetensors",
+                "diffusion_pytorch_model-00002-of-00004.safetensors",
+                "diffusion_pytorch_model-00003-of-00004.safetensors",
+                "diffusion_pytorch_model-00004-of-00004.safetensors",
+            ],
+        ),
+        parallelism=args.parallelism,
+        device=args.device,
+    )
+    pipe = WanSpeech2VideoPipeline.from_pretrained(config)
 
-        if args.example == "rs2v":
-            wan_rs2v(pipe)
-        elif args.example == "rsp2v":
-            wan_rsp2v(pipe)
-        elif args.example == "rs2v_multi_speaker":
-            wan_rs2v_multi_speaker(pipe)
-        else:
-            raise ValueError(f"Unknown example: {args.example}")
+    if args.example == "rs2v":
+        wan_rs2v(pipe)
+    elif args.example == "rsp2v":
+        wan_rsp2v(pipe)
+    elif args.example == "rs2v_multi_speaker":
+        wan_rs2v_multi_speaker(pipe)
+    else:
+        raise ValueError(f"Unknown example: {args.example}")
 
-        del pipe
+    del pipe

@@ -9,7 +9,7 @@ from typing import Callable, List, Optional
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.configs import WanSpeech2VideoPipelineConfig
+from diffsynth_engine.configs import WanSpeech2VideoPipelineConfig, WanS2VStateDicts
 from diffsynth_engine.models.wan.wan_s2v_dit import WanS2VDiT
 from diffsynth_engine.models.wan.wan_text_encoder import WanTextEncoder
 from diffsynth_engine.models.wan.wan_audio_encoder import (
@@ -571,7 +571,6 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
 
         logger.info(f"loading dit state dict from {config.model_path} ...")
         dit_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
-        dit_type = "wan2.2-s2v-14b"
 
         if config.t5_path is None:
             config.t5_path = fetch_model("muse/wan2.1-umt5", path="umt5.safetensors")
@@ -587,14 +586,25 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
 
         logger.info(f"loading vae state dict from {config.vae_path} ...")
         vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
-        vae_type = "wan2.1-vae"
 
         logger.info(f"loading audio encoder state dict from {config.audio_encoder_path} ...")
         wav2vec_state_dict = cls.load_model_checkpoint(
             config.audio_encoder_path, device="cpu", dtype=config.audio_encoder_dtype
         )
 
+        state_dicts = WanS2VStateDicts(
+            model=dit_state_dict,
+            t5=t5_state_dict,
+            vae=vae_state_dict,
+            audio_encoder=wav2vec_state_dict,
+        )
+        return cls.from_state_dict(state_dicts, config)
+
+    @classmethod
+    def _from_state_dict(cls, state_dicts: WanS2VStateDicts, config: WanSpeech2VideoPipelineConfig) -> "WanSpeech2VideoPipeline":
         # default params from model config
+        vae_type = "wan2.1-vae"
+        dit_type = "wan2.2-s2v-14b"
         vae_config: dict = WanVideoVAE.get_model_config(vae_type)
         model_config: dict = WanS2VDiT.get_model_config(dit_type)
         config.boundary = model_config.pop("boundary", -1.0)
@@ -603,12 +613,12 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         config.num_inference_steps = model_config.pop("num_inference_steps", 50)
         config.fps = model_config.pop("fps", 16)
 
-        init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
+        init_device = "cpu" if config.offload_mode is not None else config.device
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
-        text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=config.t5_dtype)
-        vae = WanVideoVAE.from_state_dict(vae_state_dict, config=vae_config, device=init_device, dtype=config.vae_dtype)
+        text_encoder = WanTextEncoder.from_state_dict(state_dicts.t5, device=init_device, dtype=config.t5_dtype)
+        vae = WanVideoVAE.from_state_dict(state_dicts.vae, config=vae_config, device=init_device, dtype=config.vae_dtype)
         audio_encoder = Wav2Vec2Model.from_state_dict(
-            wav2vec_state_dict, config=Wav2Vec2Config(), device=init_device, dtype=config.audio_encoder_dtype
+            state_dicts.audio_encoder, config=Wav2Vec2Config(), device=init_device, dtype=config.audio_encoder_dtype
         )
 
         with LoRAContext():
@@ -620,7 +630,7 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
                 "sparge_pvthreshd": config.sparge_pvthreshd,
             }
             dit = WanS2VDiT.from_state_dict(
-                dit_state_dict,
+                state_dicts.model,
                 config=model_config,
                 device=init_device,
                 dtype=config.model_dtype,
@@ -654,16 +664,6 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
                 model_names=["text_encoder"], compute_dtype=pipe.dtype, use_fp8_linear=config.use_fp8_linear
             )
 
-        if config.parallelism > 1:
-            return ParallelWrapper(
-                pipe,
-                cfg_degree=config.cfg_degree,
-                sp_ulysses_degree=config.sp_ulysses_degree,
-                sp_ring_degree=config.sp_ring_degree,
-                tp_degree=config.tp_degree,
-                use_fsdp=config.use_fsdp,
-                device="cuda",
-            )
         if config.use_torch_compile:
             pipe.compile()
         return pipe

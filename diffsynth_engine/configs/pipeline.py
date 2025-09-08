@@ -303,6 +303,14 @@ class WanStateDicts:
 
 
 @dataclass
+class WanS2VStateDicts:
+    model: Dict[str, torch.Tensor] | Dict[str, Dict[str, torch.Tensor]]
+    t5: Dict[str, torch.Tensor]
+    vae: Dict[str, torch.Tensor]
+    audio_encoder: Dict[str, torch.Tensor]
+
+
+@dataclass
 class QwenImageStateDicts:
     model: Dict[str, torch.Tensor]
     encoder: Dict[str, torch.Tensor]
