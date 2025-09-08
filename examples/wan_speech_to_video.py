@@ -99,11 +99,11 @@ if __name__ == "__main__":
     pipe = WanSpeech2VideoPipeline.from_pretrained(config)
 
     if args.example == "rs2v":
-        wan_rs2v(pipe)
+        wan_rs2v(pipe, args.input_data_dir)
     elif args.example == "rsp2v":
-        wan_rsp2v(pipe)
+        wan_rsp2v(pipe, args.input_data_dir)
     elif args.example == "rs2v_multi_speaker":
-        wan_rs2v_multi_speaker(pipe)
+        wan_rs2v_multi_speaker(pipe, args.input_data_dir)
     else:
         raise ValueError(f"Unknown example: {args.example}")
 

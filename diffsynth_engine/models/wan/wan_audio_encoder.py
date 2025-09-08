@@ -80,7 +80,7 @@ class Wav2Vec2PositionalConvEmbedding(nn.Module):
             dtype=dtype,
         )
 
-        self.conv = nn.utils.weight_norm(self.conv, name="weight", dim=2)
+        self.conv = nn.utils.parametrizations.weight_norm(self.conv, name="weight", dim=2)
         self.padding = Wav2Vec2SamePadLayer(config.num_conv_pos_embeddings)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
