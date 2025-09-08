@@ -217,8 +217,8 @@ def parallelize_module(
     return module
 
 
-NCCL_TIMEOUT_SEC = int(os.environ.get("NCCL_TIMEOUT_SEC", 600))
-PARALLEL_FWD_TIMEOUT_SEC = int(os.environ.get("PARALLEL_FWD_TIMEOUT_SEC", 3600))
+NCCL_TIMEOUT_SEC = int(os.environ.get("NCCL_TIMEOUT_SEC", 6000))
+PARALLEL_FWD_TIMEOUT_SEC = int(os.environ.get("PARALLEL_FWD_TIMEOUT_SEC", 360000))
 
 
 def _worker_loop(
