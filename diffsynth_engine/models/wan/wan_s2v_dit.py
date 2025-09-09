@@ -18,6 +18,7 @@ from diffsynth_engine.models.wan.wan_dit import (
 )
 from diffsynth_engine.utils.constants import WAN2_2_DIT_S2V_14B_CONFIG_FILE
 from diffsynth_engine.utils.gguf import gguf_inference
+from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.parallel import (
     cfg_parallel,
     cfg_parallel_unshard,
@@ -411,8 +412,10 @@ class WanS2VDiT(WanDiT):
         audio_mask: Optional[torch.Tensor] = None,  # b c tx h w
         void_audio_input: Optional[torch.Tensor] = None,
     ):
+        fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         use_cfg = x.shape[0] > 1
         with (
+            fp8_inference(fp8_linear_enabled),
             gguf_inference(),
             cfg_parallel((x, context, audio_input), use_cfg=use_cfg),
         ):

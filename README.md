@@ -23,7 +23,7 @@ and offloading strategies, enabling loading of larger diffusion models (e.g., Fl
 
 ## News
 
-- **[v0.6.0](https://github.com/modelscope/DiffSynth-Engine/releases/tag/v0.6.0)** | **September 8, 2025**: ![Image](assets/tongyi.svg) Supports [Wan2.2-S2V](https://modelscope.cn/models/Wan-AI/Wan2.2-S2V-14B), a video generation model designed for audio-driven cinematic video generation
+- **[v0.6.0](https://github.com/modelscope/DiffSynth-Engine/releases/tag/v0.6.0)** | **September 9, 2025**: ![Image](assets/tongyi.svg) Supports [Wan2.2-S2V](https://modelscope.cn/models/Wan-AI/Wan2.2-S2V-14B), a video generation model designed for audio-driven cinematic video generation
 - **[v0.5.0](https://github.com/modelscope/DiffSynth-Engine/releases/tag/v0.5.0)** | **August 27, 2025**: ![Image](assets/tongyi.svg) Supports [Qwen-Image-Edit](https://modelscope.cn/models/Qwen/Qwen-Image-Edit), the image editing version of Qwen-Image, enabling semantic/appearance visual editing, and precise text editing
 - **[v0.4.1](https://github.com/modelscope/DiffSynth-Engine/releases/tag/v0.4.1)** | **August 4, 2025**: ![Image](assets/tongyi.svg) Supports [Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image), an image generation model excels at complex text rendering and creating images in a wide range of artistic styles
 - **[v0.4.0](https://github.com/modelscope/DiffSynth-Engine/releases/tag/v0.4.0)** | **August 1, 2025**:

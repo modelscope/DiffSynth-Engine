@@ -27,6 +27,7 @@ from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.image import resize_and_center_crop
 from diffsynth_engine.utils.video import read_n_frames
+from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
 
 
@@ -599,6 +600,21 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
             audio_encoder=wav2vec_state_dict,
         )
         return cls.from_state_dict(state_dicts, config)
+
+    @classmethod
+    def from_state_dict(cls, state_dicts: WanS2VStateDicts, config: WanSpeech2VideoPipelineConfig) -> "WanSpeech2VideoPipeline":
+        if config.parallelism > 1:
+            pipe = ParallelWrapper(
+                cfg_degree=config.cfg_degree,
+                sp_ulysses_degree=config.sp_ulysses_degree,
+                sp_ring_degree=config.sp_ring_degree,
+                tp_degree=config.tp_degree,
+                use_fsdp=config.use_fsdp,
+            )
+            pipe.load_module(cls._from_state_dict, state_dicts=state_dicts, config=config)
+        else:
+            pipe = cls._from_state_dict(state_dicts, config)
+        return pipe
 
     @classmethod
     def _from_state_dict(cls, state_dicts: WanS2VStateDicts, config: WanSpeech2VideoPipelineConfig) -> "WanSpeech2VideoPipeline":

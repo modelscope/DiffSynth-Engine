@@ -19,6 +19,7 @@ from diffsynth_engine.utils.constants import (
     WAN2_2_DIT_T2V_A14B_CONFIG_FILE,
 )
 from diffsynth_engine.utils.gguf import gguf_inference
+from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.parallel import (
     cfg_parallel,
     cfg_parallel_unshard,
@@ -344,8 +345,10 @@ class WanDiT(PreTrainedModel):
         clip_feature: Optional[torch.Tensor] = None,  # clip_vision_encoder(img)
         y: Optional[torch.Tensor] = None,  # vae_encoder(img)
     ):
+        fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         use_cfg = x.shape[0] > 1
         with (
+            fp8_inference(fp8_linear_enabled),
             gguf_inference(),
             cfg_parallel((x, context, timestep, clip_feature, y), use_cfg=use_cfg),
         ):
