@@ -267,6 +267,16 @@ class HunyuanPipelineConfig(BaseConfig):
 
 
 @dataclass
+class ACEStepPipelineConfig(BaseConfig):
+    model_path: str | os.PathLike | List[str | os.PathLike]
+    model_dtype: torch.dtype = torch.float16
+    vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    vae_dtype: torch.dtype = torch.float16
+    image_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    image_encoder_dtype: torch.dtype = torch.float16
+
+
+@dataclass
 class BaseStateDicts:
     pass
 
