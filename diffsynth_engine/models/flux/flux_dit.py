@@ -243,7 +243,9 @@ class FluxDoubleTransformerBlock(nn.Module):
         self.norm_msa_a = AdaLayerNormZero(dim, device=device, dtype=dtype)
         self.norm_mlp_a = AdaLayerNormZero(dim, device=device, dtype=dtype)
         self.ff_a = nn.Sequential(
-            nn.Linear(dim, dim * 4), nn.GELU(approximate="tanh"), nn.Linear(dim * 4, dim, device=device, dtype=dtype)
+            nn.Linear(dim, dim * 4, device=device, dtype=dtype),
+            nn.GELU(approximate="tanh"),
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
         )
         # Text
         self.norm_msa_b = AdaLayerNormZero(dim, device=device, dtype=dtype)
@@ -313,10 +315,10 @@ class FluxSingleTransformerBlock(nn.Module):
         self.norm = AdaLayerNormZero(dim, device=device, dtype=dtype)
         self.attn = FluxSingleAttention(dim, num_heads, attn_kwargs=attn_kwargs, device=device, dtype=dtype)
         self.mlp = nn.Sequential(
-            nn.Linear(dim, dim * 4),
+            nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
         )
-        self.proj_out = nn.Linear(dim * 5, dim)
+        self.proj_out = nn.Linear(dim * 5, dim, device=device, dtype=dtype)
 
     def forward(self, x, t_emb, rope_emb, image_emb=None):
         h, gate = self.norm(x, emb=t_emb)
