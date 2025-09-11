@@ -1,7 +1,9 @@
+from typing import Any, Dict, List, Optional
+import json
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict, List, Optional
 from einops import rearrange
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
@@ -10,6 +12,7 @@ from diffsynth_engine.models.basic.attention import attention
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
 from diffsynth_engine.models.wan.wan_dit import rope_apply, modulate
 from diffsynth_engine.models.ace_step.ace_lyric_encoder import ConformerEncoder
+from diffsynth_engine.utils.constants import ACE_DIT_CONFIG_FILE
 
 
 class Qwen2RotaryEmbedding(nn.Module):
@@ -286,7 +289,7 @@ class FinalLayer(nn.Module):
 
 
 class ACEStepDiTStateDictConverter(StateDictConverter):
-    def convert(self, state_dict): # TODO
+    def convert(self, state_dict):  # TODO
         return state_dict
 
 
@@ -390,17 +393,25 @@ class ACEStepDiT(PreTrainedModel):
     def encode(
         self,
         context_prompt: torch.Tensor,
-        context_speaker: torch.FloatTensor,
         context_lyric: torch.LongTensor,
         attn_mask_prompt: torch.LongTensor,
         attn_mask_lyric: torch.LongTensor,
     ):
-        context_speaker = self.speaker_embedder(context_speaker).unsqueeze(1)
+        b = context_prompt.shape[0]
+        device, dtype = context_prompt.device, context_prompt.dtype
+        context_speaker = torch.zeros(
+            b,
+            1,
+            self.speaker_embedder.in_features,
+            device=device,
+            dtype=dtype,
+        )
+        context_speaker = self.speaker_embedder(context_speaker)
         context_prompt = self.genre_embedder(context_prompt)
         context_lyric = self.forward_lyric_encoder(context_lyric=context_lyric, attn_mask_lyric=attn_mask_lyric)
         context = torch.cat([context_speaker, context_prompt, context_lyric], dim=1)
 
-        attn_mask_speaker = torch.ones(context_speaker.shape[0], 1, device=context_speaker.device)
+        attn_mask_speaker = torch.ones(b, 1, device=device)
         context_mask = torch.cat([attn_mask_speaker, attn_mask_prompt, attn_mask_lyric], dim=1)
         return context, context_mask
 
@@ -410,7 +421,7 @@ class ACEStepDiT(PreTrainedModel):
         timestep: Optional[torch.Tensor],
         context: torch.Tensor,
         attn_mask: torch.Tensor,
-        attn_mask_ctx: torch.Tensor, 
+        attn_mask_ctx: torch.Tensor,
     ):
         t = self.time_embedder(timestep)
         t_mod = self.t_block(t)
@@ -440,7 +451,6 @@ class ACEStepDiT(PreTrainedModel):
         x: torch.Tensor,
         timestep: torch.Tensor,
         context_prompt: torch.Tensor,
-        context_speaker: torch.FloatTensor,
         context_lyric: torch.LongTensor,
         attn_mask: torch.Tensor,
         attn_mask_prompt: torch.LongTensor,
@@ -448,9 +458,8 @@ class ACEStepDiT(PreTrainedModel):
     ):
         context, attn_mask_ctx = self.encode(
             context_prompt=context_prompt,
-            attn_mask_prompt=attn_mask_prompt,
-            context_speaker=context_speaker,
             context_lyric=context_lyric,
+            attn_mask_prompt=attn_mask_prompt,
             attn_mask_lyric=attn_mask_lyric,
         )
         output_length = x.shape[-1]
@@ -468,3 +477,30 @@ class ACEStepDiT(PreTrainedModel):
         elif output_length < output.shape[-1]:
             output = output[:, :, :, :output_length]
         return output
+    
+    @classmethod
+    def from_state_dict(
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        config: Dict[str, Any],
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
+        assign: bool = True,
+    ):
+        model = cls(**config, device="meta", dtype=dtype, attn_kwargs=attn_kwargs)
+        model = model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=assign)
+        model.to(device=device, dtype=dtype, non_blocking=True)
+        return model
+
+    @staticmethod
+    def get_model_config() -> dict:
+        config_file = ACE_DIT_CONFIG_FILE
+        with open(config_file, "r") as f:
+            config = json.load(f)
+        return config
+
+    def compile_repeated_blocks(self, *args, **kwargs):
+        for block in self.transformer_blocks:
+            block.compile(*args, **kwargs)

@@ -1,5 +1,6 @@
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, Dict, Any
 import math
+import json
 from functools import partial
 
 import numpy as np
@@ -8,6 +9,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.parametrizations import weight_norm
 from torchaudio.transforms import MelScale
+
+from diffsynth_engine.models.base import PreTrainedModel
+from diffsynth_engine.utils.constants import ACE_VAE_VOCODER_CONFIG_FILE
 
 
 class LinearSpectrogram(nn.Module):
@@ -543,7 +547,7 @@ class HiFiGANGenerator(nn.Module):
         return x
 
 
-class ADaMoSHiFiGANV1(nn.Module):
+class ADaMoSHiFiGANV1(PreTrainedModel):
     def __init__(
         self,
         input_channels: int = 128,
@@ -621,3 +625,24 @@ class ADaMoSHiFiGANV1(nn.Module):
         y = self.backbone(mel)
         y = self.head(y)
         return y
+
+    @classmethod
+    def from_state_dict(
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        config: Dict[str, Any],
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
+    ) -> "ADaMoSHiFiGANV1":
+        model = cls(**config, device="meta", dtype=dtype)
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
+        return model
+
+    @staticmethod
+    def get_model_config() -> dict:
+        config_file = ACE_VAE_VOCODER_CONFIG_FILE
+        with open(config_file, "r") as f:
+            config = json.load(f)
+        return config

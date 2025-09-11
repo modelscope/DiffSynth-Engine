@@ -11,13 +11,13 @@ from .dcae import DCAE # TODO: rewrite above 2 files
 class MusicDCAE(PreTrainedModel):
     def __init__(
         self,
-        dace: DCAE,
+        dcae: DCAE,
         vocoder: ADaMoSHiFiGANV1,
         source_sample_rate: int = 48000,
     ):
         super(MusicDCAE, self).__init__()
 
-        self.dcae = dace
+        self.dcae = dcae
         self.vocoder = vocoder
         self.resampler = torchaudio.transforms.Resample(source_sample_rate, 44100)
         self.transform = transforms.Compose([transforms.Normalize(0.5, 0.5)])
@@ -73,7 +73,7 @@ class MusicDCAE(PreTrainedModel):
 
         pred_wavs = []
         for latent in latents:
-            mels = self.dcae.decoder(latent.unsqueeze(0))
+            mels = self.dcae.decoder(latent[None])
             mels = mels * 0.5 + 0.5
             mels = mels * (self.max_mel_value - self.min_mel_value) + self.min_mel_value
 
@@ -86,4 +86,4 @@ class MusicDCAE(PreTrainedModel):
             wav = resampler(wav.cpu().float())
             pred_wavs.append(wav)
 
-        return sr, pred_wavs
+        return pred_wavs

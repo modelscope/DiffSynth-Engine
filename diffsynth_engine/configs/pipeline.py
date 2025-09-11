@@ -267,13 +267,19 @@ class HunyuanPipelineConfig(BaseConfig):
 
 
 @dataclass
-class ACEStepPipelineConfig(BaseConfig):
+class ACEStepPipelineConfig(AttentionConfig, OptimizationConfig, BaseConfig):
     model_path: str | os.PathLike | List[str | os.PathLike]
-    model_dtype: torch.dtype = torch.float16
-    vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
-    vae_dtype: torch.dtype = torch.float16
-    image_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
-    image_encoder_dtype: torch.dtype = torch.float16
+    model_dtype: torch.dtype = torch.bfloat16
+    dcae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    vocoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    vae_dtype: torch.dtype = torch.bfloat16
+    t5_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    t5_dtype: torch.dtype = torch.bfloat16
+
+    # default params set by model type
+    shift: Optional[float] = field(default=None, init=False)  # RecifitedFlowScheduler shift factor
+    cfg_scale: Optional[float | Tuple[float, float]] = field(default=None, init=False)  # default CFG scale
+    num_inference_steps: Optional[int] = field(default=None, init=False)  # default inference steps
 
 
 @dataclass
@@ -318,6 +324,14 @@ class WanS2VStateDicts:
     t5: Dict[str, torch.Tensor]
     vae: Dict[str, torch.Tensor]
     audio_encoder: Dict[str, torch.Tensor]
+
+
+@dataclass
+class ACEStateDicts:
+    model: Dict[str, torch.Tensor]
+    t5: Dict[str, torch.Tensor]
+    dcae: Dict[str, torch.Tensor]
+    vocoder: Dict[str, torch.Tensor]
 
 
 @dataclass

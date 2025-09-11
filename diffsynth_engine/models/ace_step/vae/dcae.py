@@ -1,7 +1,12 @@
+from typing import Any, Dict, Tuple, Union
+import json
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Union
+
+from diffsynth_engine.models.base import PreTrainedModel
+from diffsynth_engine.utils.constants import ACE_VAE_DCAE_CONFIG_FILE
 
 
 class RMSNorm(nn.RMSNorm):
@@ -572,7 +577,7 @@ class Decoder(nn.Module):
         return hidden_states
 
 
-class DCAE(nn.Module):
+class DCAE(PreTrainedModel):
     def __init__(
         self,
         in_channels: int = 2,
@@ -623,3 +628,24 @@ class DCAE(nn.Module):
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
         return self.decoder(z)
+
+    @classmethod
+    def from_state_dict(
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        config: Dict[str, Any],
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
+    ) -> "DCAE":
+        model = cls(**config, device="meta", dtype=dtype)
+        model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
+        return model
+
+    @staticmethod
+    def get_model_config() -> dict:
+        config_file = ACE_VAE_DCAE_CONFIG_FILE
+        with open(config_file, "r") as f:
+            config = json.load(f)
+        return config
