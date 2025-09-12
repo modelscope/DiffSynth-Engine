@@ -306,9 +306,7 @@ class ACEStepMusicPipeline(BasePipeline):
             lyric_mask = torch.zeros((1, 1), device=self.device, dtype=torch.long)
 
         num_frames = int(audio_duration * 44100 / 512 / 8)
-        noise = self.generate_noise((1, 8, 16, num_frames), seed=seed, device="cpu", dtype=torch.float32).to(
-            self.device
-        )
+        noise = self.generate_noise((1, 8, 16, num_frames), seed=seed, device="cpu", dtype=torch.float32).to(self.device)
         attn_mask = torch.ones(1, num_frames, device=self.device, dtype=self.dtype)
         _, latents, sigmas, timesteps = self.prepare_latents(
             latents=noise,
@@ -332,7 +330,7 @@ class ACEStepMusicPipeline(BasePipeline):
                 "attn_mask_lyric": lyric_mask,
             },
             model_fwd_func=self.dit.encode,
-            get_hooked_layer_func=lambda i: self.dit.lyric_encoder.encoders[i].self_attn.linear_q,
+            get_hooked_layer_func=lambda i: self.dit.lyric_encoder.encoders[i].self_attn.q,
             layer_start_idx=4,
             layer_end_idx=6,
         )

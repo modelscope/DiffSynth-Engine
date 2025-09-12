@@ -289,7 +289,48 @@ class FinalLayer(nn.Module):
 
 
 class ACEStepDiTStateDictConverter(StateDictConverter):
-    def convert(self, state_dict):  # TODO
+    def convert(self, state_dict):
+        for key in list(state_dict.keys()):
+            # change all linear_q / linear_k / linear_v / linear_p to q / k / v / p
+            if "linear_q" in key:
+                new_key = key.replace("linear_q", "q")
+                state_dict[new_key] = state_dict.pop(key)
+            elif "linear_k" in key:
+                new_key = key.replace("linear_k", "k")
+                state_dict[new_key] = state_dict.pop(key)
+            elif "linear_v" in key:
+                new_key = key.replace("linear_v", "v")
+                state_dict[new_key] = state_dict.pop(key)
+            elif "linear_p" in key:
+                new_key = key.replace("linear_p", "p")
+                state_dict[new_key] = state_dict.pop(key)
+            elif "linear_out" in key:
+                new_key = key.replace("linear_out", "o")
+                state_dict[new_key] = state_dict.pop(key)
+            # change all to_q / to_k / to_v / to_out to q / k / v / o
+            elif "to_q" in key:
+                new_key = key.replace("to_q", "q")
+                state_dict[new_key] = state_dict.pop(key)
+            elif "to_k" in key:
+                new_key = key.replace("to_k", "k")
+                state_dict[new_key] = state_dict.pop(key)
+            elif "to_v" in key:
+                new_key = key.replace("to_v", "v")
+                state_dict[new_key] = state_dict.pop(key)
+            elif "to_out" in key:
+                new_key = key.replace("to_out", "o")
+                state_dict[new_key] = state_dict.pop(key)
+            # remove all add_{q/k/v}_proj
+            elif "add_q_proj" in key or "add_k_proj" in key or "add_v_proj" in key:
+                state_dict.pop(key)
+            # rename timestep_embedder.linear_1 into time_embedder.timestep_embedder.0
+            elif "timestep_embedder.linear_1" in key:
+                new_key = key.replace("timestep_embedder.linear_1", "time_embedder.timestep_embedder.0")
+                state_dict[new_key] = state_dict.pop(key)
+            # rename timestep_embedder.linear_2 into time_embedder.timestep_embedder.2
+            elif "timestep_embedder.linear_2" in key:
+                new_key = key.replace("timestep_embedder.linear_2", "time_embedder.timestep_embedder.2")
+                state_dict[new_key] = state_dict.pop(key)
         return state_dict
 
 

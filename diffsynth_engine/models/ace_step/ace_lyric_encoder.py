@@ -26,11 +26,11 @@ class RelPositionMultiHeadedAttention(nn.Module):
     def __init__(self, n_head: int, n_feat: int):
         self.n_head = n_head
         self.d_k = n_feat // n_head
-        self.linear_q = nn.Linear(n_feat, n_feat)
-        self.linear_k = nn.Linear(n_feat, n_feat)
-        self.linear_v = nn.Linear(n_feat, n_feat)
-        self.linear_out = nn.Linear(n_feat, n_feat)
-        self.linear_pos = nn.Linear(n_feat, n_feat, bias=False)
+        self.q = nn.Linear(n_feat, n_feat)
+        self.k = nn.Linear(n_feat, n_feat)
+        self.v = nn.Linear(n_feat, n_feat)
+        self.o = nn.Linear(n_feat, n_feat)
+        self.p = nn.Linear(n_feat, n_feat, bias=False)
         self.pos_bias_u = nn.Parameter(torch.Tensor(n_head, self.d_k))
         self.pos_bias_v = nn.Parameter(torch.Tensor(n_head, self.d_k))
 
@@ -63,10 +63,10 @@ class RelPositionMultiHeadedAttention(nn.Module):
         Returns:
             torch.Tensor: Output tensor (#batch, time1, d_model).
         """
-        q = self.linear_q(x)
-        k = self.linear_k(x)
-        v = self.linear_v(x)
-        p = self.linear_pos(pos_emb)
+        q = self.q(x)
+        k = self.k(x)
+        v = self.v(x)
+        p = self.p(pos_emb)
         q = rearrange(q, "b t (h d) -> b h t d", h=self.n_head)
         k = rearrange(k, "b t (h d) -> b h d t", h=self.n_head)
         v = rearrange(v, "b t (h d) -> b h t d", h=self.n_head)
@@ -85,7 +85,7 @@ class RelPositionMultiHeadedAttention(nn.Module):
         attn = torch.softmax(scores, dim=-1).masked_fill(mask, 0.0)
         x = torch.matmul(attn, v)
         x = rearrange(x, "b h t d -> b t (h d)")
-        return self.linear_out(x)
+        return self.o(x)
 
 
 class ConformerEncoderLayer(nn.Module):

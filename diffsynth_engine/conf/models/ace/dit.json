@@ -1,5 +1,5 @@
 {
-  "attention_head_dim": 128,
+  "head_dim": 128,
   "in_channels": 8,
   "inner_dim": 2560,
   "lyric_encoder_vocab_size": 6693,
@@ -8,7 +8,7 @@
   "max_position": 32768,
   "max_width": 32768,
   "mlp_ratio": 2.5,
-  "num_attention_heads": 20,
+  "num_heads": 20,
   "num_layers": 24,
   "out_channels": 8,
   "patch_size": [
@@ -24,10 +24,6 @@
   "ssl_latent_dims": [
     1024,
     768
-  ],
-  "ssl_names": [
-    "mert",
-    "m-hubert"
   ],
   "text_embedding_dim": 768
 }
