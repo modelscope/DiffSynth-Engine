@@ -1,12 +1,8 @@
 {
   "head_dim": 128,
-  "in_channels": 8,
-  "inner_dim": 2560,
   "lyric_encoder_vocab_size": 6693,
   "lyric_hidden_size": 1024,
-  "max_height": 16,
   "max_position": 32768,
-  "max_width": 32768,
   "mlp_ratio": 2.5,
   "num_heads": 20,
   "num_layers": 24,
@@ -17,13 +13,5 @@
   ],
   "rope_theta": 1000000.0,
   "speaker_embedding_dim": 512,
-  "ssl_encoder_depths": [
-    8,
-    8
-  ],
-  "ssl_latent_dims": [
-    1024,
-    768
-  ],
   "text_embedding_dim": 768
 }

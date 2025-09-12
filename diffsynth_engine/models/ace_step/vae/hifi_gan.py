@@ -576,6 +576,8 @@ class ADaMoSHiFiGANV1(PreTrainedModel):
         f_min: int = 40,
         f_max: int = 16000,
         n_mels: int = 128,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
 
@@ -609,7 +611,6 @@ class ADaMoSHiFiGANV1(PreTrainedModel):
             f_max=f_max,
             n_mels=n_mels,
         )
-        self.eval()
 
     @torch.no_grad()
     def decode(self, mel):

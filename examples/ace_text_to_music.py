@@ -1,4 +1,4 @@
-import random
+# import random
 
 from diffsynth_engine.configs import ACEStepPipelineConfig
 from diffsynth_engine.pipelines.ace_step import ACEStepMusicPipeline
@@ -12,8 +12,9 @@ if __name__ == "__main__":
             model_uri="ACE-Step/ACE-Step-v1-3.5B",
             path="ace_step_transformer/diffusion_pytorch_model.safetensors",
         ),
+        device="cuda:2",
     )
-    seed = random.randint(0, 2**32 - 1)
+    seed = 3299954530
 
     pipe = ACEStepMusicPipeline.from_pretrained(config)
     audio = pipe.text2audio(

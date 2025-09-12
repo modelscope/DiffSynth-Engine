@@ -24,6 +24,7 @@ class RelPositionMultiHeadedAttention(nn.Module):
     """
 
     def __init__(self, n_head: int, n_feat: int):
+        super().__init__()
         self.n_head = n_head
         self.d_k = n_feat // n_head
         self.q = nn.Linear(n_feat, n_feat)

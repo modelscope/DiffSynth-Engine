@@ -36,6 +36,11 @@ dependencies = [
     "librosa",
     "scikit-image",
     "trimesh"
+    "py3langid",
+    "pypinyin",
+    "hangul_romanize",
+    "num2words",
+    "spacy"
 ]
 
 [project.optional-dependencies]

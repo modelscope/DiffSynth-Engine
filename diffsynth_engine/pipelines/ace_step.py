@@ -444,7 +444,7 @@ class ACEStepMusicPipeline(BasePipeline):
 
         init_device = "cpu" if config.offload_mode is not None else config.device
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=256, clean="whitespace")
-        text_encoder = ACETextEncoder.from_state_dict(state_dicts.t5, config=t5_config, device=init_device, dtype=config.t5_dtype)
+        text_encoder = ACETextEncoder.from_state_dict(state_dicts.t5, device=init_device, dtype=config.t5_dtype, **t5_config)
         dcae = DCAE.from_state_dict(state_dicts.dcae, config=dcae_config, device=init_device, dtype=config.vae_dtype)
         hifi_gan = ADaMoSHiFiGANV1.from_state_dict(state_dicts.vocoder, config=vocoder_config, device=init_device, dtype=config.vae_dtype)
         vae = MusicDCAE(dcae=dcae, vocoder=hifi_gan)

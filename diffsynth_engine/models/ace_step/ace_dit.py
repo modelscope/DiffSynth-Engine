@@ -19,7 +19,7 @@ class Qwen2RotaryEmbedding(nn.Module):
     def __init__(self, dim, max_position_embeddings=2048, base=10000, device="cuda:0"):
         super().__init__()
         self.inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, device=device, dtype=torch.int64).float() / dim))
-        self._set_cos_sin_cache(seq_len=max_position_embeddings, device=device)
+        self._set_cos_sin_cache(seq_len=max_position_embeddings)
 
     def _set_cos_sin_cache(self, seq_len):
         self.max_seq_len_cached = seq_len
@@ -302,7 +302,7 @@ class ACEStepDiTStateDictConverter(StateDictConverter):
                 new_key = key.replace("linear_v", "v")
                 state_dict[new_key] = state_dict.pop(key)
             elif "linear_p" in key:
-                new_key = key.replace("linear_p", "p")
+                new_key = key.replace("linear_pos", "p")
                 state_dict[new_key] = state_dict.pop(key)
             elif "linear_out" in key:
                 new_key = key.replace("linear_out", "o")
@@ -317,11 +317,14 @@ class ACEStepDiTStateDictConverter(StateDictConverter):
             elif "to_v" in key:
                 new_key = key.replace("to_v", "v")
                 state_dict[new_key] = state_dict.pop(key)
-            elif "to_out" in key:
-                new_key = key.replace("to_out", "o")
+            elif "to_out.0" in key:
+                new_key = key.replace("to_out.0", "o")
                 state_dict[new_key] = state_dict.pop(key)
             # remove all add_{q/k/v}_proj
-            elif "add_q_proj" in key or "add_k_proj" in key or "add_v_proj" in key:
+            elif "add_q_proj" in key or "add_k_proj" in key or "add_v_proj" in key or "to_add_out" in key:
+                state_dict.pop(key)
+            # remove all projectors.
+            elif "projectors" in key:
                 state_dict.pop(key)
             # rename timestep_embedder.linear_1 into time_embedder.timestep_embedder.0
             elif "timestep_embedder.linear_1" in key:
@@ -349,12 +352,9 @@ class ACEStepDiT(PreTrainedModel):
         rope_theta: float = 1000000.0,
         speaker_embedding_dim: int = 512,
         text_embedding_dim: int = 768,
-        ssl_latent_dims: List[int] = [1024, 768],
         lyric_encoder_vocab_size: int = 6693,
         lyric_hidden_size: int = 1024,
         patch_size: List[int] = [16, 1],
-        max_height: int = 16,
-        max_width: int = 32768,
         attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
@@ -390,30 +390,7 @@ class ACEStepDiT(PreTrainedModel):
         self.lyric_embs = nn.Embedding(lyric_encoder_vocab_size, lyric_hidden_size, device=device, dtype=dtype)
         self.lyric_encoder = ConformerEncoder(input_size=lyric_hidden_size)
         self.lyric_proj = nn.Linear(lyric_hidden_size, inner_dim, device=device, dtype=dtype)
-
-        projector_dim = 2 * inner_dim
-        self.projectors = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Linear(inner_dim, projector_dim, device=device, dtype=dtype),
-                    nn.SiLU(),
-                    nn.Linear(projector_dim, projector_dim, device=device, dtype=dtype),
-                    nn.SiLU(),
-                    nn.Linear(projector_dim, ssl_dim, device=device, dtype=dtype),
-                )
-                for ssl_dim in ssl_latent_dims
-            ]
-        )
-
-        self.proj_in = PatchEmbed(
-            height=max_height,
-            width=max_width,
-            patch_size=patch_size,
-            embed_dim=inner_dim,
-            device=device,
-            dtype=dtype,
-        )
-
+        self.proj_in = PatchEmbed(patch_size=patch_size, embed_dim=inner_dim, device=device, dtype=dtype)
         self.final_layer = FinalLayer(inner_dim, patch_size=patch_size, out_channels=out_channels)
 
     def forward_lyric_encoder(self, context_lyric: torch.LongTensor, attn_mask_lyric: torch.LongTensor):

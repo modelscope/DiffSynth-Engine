@@ -61,6 +61,5 @@
     ],
     "in_channels": 2,
     "latent_channels": 8,
-    "scaling_factor": 0.41407,
     "upsample_block_type": "interpolate"
 }

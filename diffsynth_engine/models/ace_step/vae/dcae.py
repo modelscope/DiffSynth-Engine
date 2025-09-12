@@ -595,6 +595,8 @@ class DCAE(PreTrainedModel):
         downsample_block_type: str = "Conv",
         decoder_norm_types: Union[str, Tuple[str]] = "rms_norm",
         decoder_act_fns: Union[str, Tuple[str]] = "silu",
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ) -> None:
         super().__init__()
 

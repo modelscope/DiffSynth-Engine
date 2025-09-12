@@ -1,7 +1,7 @@
 {
-  "dim_ffn": 2048,
-  "dim": 768,
-  "dim_attn": 768,
+  "d_ff": 2048,
+  "embed_dim": 768,
   "num_heads": 12,
-  "num_layers": 12
+  "num_encoder_layers": 12,
+  "vocab_size": 256384
 }
