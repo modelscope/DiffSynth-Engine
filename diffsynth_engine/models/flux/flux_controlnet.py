@@ -119,18 +119,16 @@ class FluxControlNet(PreTrainedModel):
 
     def forward(
         self,
-        hidden_states,
-        control_condition,
-        control_scale,
-        timestep,
-        prompt_emb,
-        pooled_prompt_emb,
-        guidance,
-        image_ids,
-        text_ids,
+        hidden_states: torch.Tensor,
+        control_condition: torch.Tensor,
+        control_scale: float,
+        timestep: torch.Tensor,
+        prompt_emb: torch.Tensor,
+        pooled_prompt_emb: torch.Tensor,
+        image_ids: torch.Tensor,
+        text_ids: torch.Tensor,
+        guidance: torch.Tensor,
     ):
-        hidden_states = self.patchify(hidden_states)
-        control_condition = self.patchify(control_condition)
         hidden_states = self.x_embedder(hidden_states) + self.controlnet_x_embedder(control_condition)
         condition = (
             self.time_embedder(timestep, hidden_states.dtype)

@@ -2,7 +2,7 @@ import json
 import torch
 import torch.nn as nn
 import numpy as np
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from einops import rearrange
 
 from diffsynth_engine.models.basic.transformer_helper import (
@@ -245,7 +245,7 @@ class FluxDoubleTransformerBlock(nn.Module):
         self.ff_a = nn.Sequential(
             nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype),
         )
         # Text
         self.norm_msa_b = AdaLayerNormZero(dim, device=device, dtype=dtype)
@@ -395,21 +395,19 @@ class FluxDiT(PreTrainedModel):
 
     def forward(
         self,
-        hidden_states,
-        timestep,
-        prompt_emb,
-        pooled_prompt_emb,
-        image_emb,
-        guidance,
-        text_ids,
-        image_ids=None,
-        controlnet_double_block_output=None,
-        controlnet_single_block_output=None,
+        hidden_states: torch.Tensor,
+        timestep: torch.Tensor,
+        prompt_emb: torch.Tensor,
+        pooled_prompt_emb: torch.Tensor,
+        image_ids: torch.Tensor,
+        text_ids: torch.Tensor,
+        guidance: torch.Tensor,
+        image_emb: torch.Tensor | None = None,
+        controlnet_double_block_output: List[torch.Tensor] | None = None,
+        controlnet_single_block_output: List[torch.Tensor] | None = None,
         **kwargs,
     ):
-        h, w = hidden_states.shape[-2:]
-        if image_ids is None:
-            image_ids = self.prepare_image_ids(hidden_states)
+        image_seq_len = hidden_states.shape[1]
         controlnet_double_block_output = (
             controlnet_double_block_output if controlnet_double_block_output is not None else ()
         )
@@ -428,10 +426,10 @@ class FluxDiT(PreTrainedModel):
                     timestep,
                     prompt_emb,
                     pooled_prompt_emb,
-                    image_emb,
-                    guidance,
-                    text_ids,
                     image_ids,
+                    text_ids,
+                    guidance,
+                    image_emb,
                     *controlnet_double_block_output,
                     *controlnet_single_block_output,
                 ),
@@ -448,7 +446,6 @@ class FluxDiT(PreTrainedModel):
             rope_emb = self.pos_embedder(torch.cat((text_ids, image_ids), dim=1))
             text_rope_emb = rope_emb[:, :, : text_ids.size(1)]
             image_rope_emb = rope_emb[:, :, text_ids.size(1) :]
-            hidden_states = self.patchify(hidden_states)
 
             with sequence_parallel(
                 (
@@ -489,9 +486,8 @@ class FluxDiT(PreTrainedModel):
                 hidden_states = hidden_states[:, prompt_emb.shape[1] :]
                 hidden_states = self.final_norm_out(hidden_states, conditioning)
                 hidden_states = self.final_proj_out(hidden_states)
-                (hidden_states,) = sequence_parallel_unshard((hidden_states,), seq_dims=(1,), seq_lens=(h * w // 4,))
+                (hidden_states,) = sequence_parallel_unshard((hidden_states,), seq_dims=(1,), seq_lens=(image_seq_len,))
 
-            hidden_states = self.unpatchify(hidden_states, h, w)
             (hidden_states,) = cfg_parallel_unshard((hidden_states,), use_cfg=use_cfg)
             return hidden_states
 
