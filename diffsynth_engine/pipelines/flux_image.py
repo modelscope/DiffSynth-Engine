@@ -573,6 +573,24 @@ class FluxImagePipeline(BasePipeline):
             pipe.compile()
         return pipe
 
+    def update_weights(self, state_dicts: FluxStateDicts):
+        if state_dicts.model and self.dit:
+            self.dit.load_state_dict(state_dicts.model, assign=True)
+            self.dit.to(device=self.config.device, dtype=self.config.model_dtype, non_blocking=True)
+        if state_dicts.clip and self.text_encoder_1:
+            self.text_encoder_1.load_state_dict(state_dicts.clip, assign=True)
+            self.text_encoder_1.to(device=self.config.device, dtype=self.config.clip_dtype, non_blocking=True)
+        if state_dicts.t5 and self.text_encorder_2:
+            self.text_encoder_2.load_state_dict(state_dicts.t5, assign=True)
+            self.text_encoder_2.to(device=self.config.device, dtype=self.config.t5_dtype, non_blocking=True)
+        if state_dicts.vae:
+            if self.vae_decoder:
+                self.vae_decoder.load_state_dict(state_dicts.vae, assign=True)
+                self.vae_decoder.to(device=self.config.device, dtype=self.config.vae_dtype, non_blocking=True)
+            if self.vae_encoder:
+                self.vae_encoder.load_state_dict(state_dicts.vae, assign=True)
+                self.vae_encoder.to(device=self.config.device, dtype=self.config.vae_dtype, non_blocking=True)
+
     def compile(self):
         self.dit.compile_repeated_blocks(dynamic=True)
 

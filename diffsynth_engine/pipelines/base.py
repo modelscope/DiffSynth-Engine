@@ -51,6 +51,9 @@ class BasePipeline:
     def from_state_dict(cls, state_dicts: BaseStateDicts, pipeline_config: BaseConfig) -> "BasePipeline":
         raise NotImplementedError()
 
+    def update_weights(self, BaseStateDicts):
+        raise NotImplementedError()
+
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         for lora_path, lora_scale in lora_list:
             logger.info(f"loading lora from {lora_path} with scale {lora_scale}")
