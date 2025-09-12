@@ -17,7 +17,8 @@ from diffsynth_engine.utils.constants import ACE_DIT_CONFIG_FILE
 
 class Qwen2RotaryEmbedding(nn.Module):
     def __init__(self, dim, max_position_embeddings=2048, base=10000, device="cuda:0"):
-        super().__init__()
+        super().__init__() # TODO: how to deal with meta device issue?
+        device = "cuda:2"
         self.inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, device=device, dtype=torch.int64).float() / dim))
         self._set_cos_sin_cache(seq_len=max_position_embeddings)
 
@@ -25,19 +26,14 @@ class Qwen2RotaryEmbedding(nn.Module):
         self.max_seq_len_cached = seq_len
         t = torch.arange(self.max_seq_len_cached, device=self.inv_freq.device, dtype=torch.int64).float()
         freqs = torch.outer(t, self.inv_freq)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.cos_cached = emb.cos()
-        self.sin_cached = emb.sin()
+        self.freqs_cis_cached = torch.polar(torch.ones_like(freqs), freqs)
 
     def forward(self, x: torch.Tensor):
         seq_len = x.shape[1]
         if seq_len > self.max_seq_len_cached:
             self._set_cos_sin_cache(seq_len=seq_len)
 
-        return (
-            self.cos_cached[:seq_len].to(x.dtype),
-            self.sin_cached[:seq_len].to(x.dtype),
-        )
+        return self.freqs_cis_cached[:seq_len][None, :, None, :].to(x.device)
 
 
 class SelfAttention(nn.Module):
@@ -365,6 +361,7 @@ class ACEStepDiT(PreTrainedModel):
             dim=head_dim,
             max_position_embeddings=max_position,
             base=rope_theta,
+            device=device,
         )
 
         inner_dim = num_heads * head_dim

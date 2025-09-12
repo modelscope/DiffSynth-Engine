@@ -228,7 +228,7 @@ class ACEStepMusicPipeline(BasePipeline):
     ):
         if cfg_scale <= 1.0:
             return self.predict_noise(
-                model=model,
+                model=model.decode,
                 latents=latents,
                 timestep=timestep,
                 context=context,
@@ -237,7 +237,7 @@ class ACEStepMusicPipeline(BasePipeline):
             )
         # cfg by predict noise one by one
         positive_noise_pred = self.predict_noise(
-            model=model,
+            model=model.decode,
             latents=latents,
             timestep=timestep,
             context=context,
@@ -246,7 +246,7 @@ class ACEStepMusicPipeline(BasePipeline):
         )
         negative_noise_pred = fwd_with_temperature(
             inputs={
-                "model": model,
+                "model": model.decode,
                 "latents": latents,
                 "timestep": timestep,
                 "context": context_null,
