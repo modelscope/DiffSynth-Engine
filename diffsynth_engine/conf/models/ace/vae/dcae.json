@@ -30,7 +30,6 @@
             5
         ]
     ],
-    "downsample_block_type": "Conv",
     "encoder_block_out_channels": [
         128,
         256,

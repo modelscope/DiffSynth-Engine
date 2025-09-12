@@ -225,7 +225,7 @@ class DiTBlock(nn.Module):
     def forward(self, x, context, t_mod, freqs, freqs_ctx, attn_mask, attn_mask_ctx):
         # msa: multi-head self-attention  mlp: multi-layer perceptron
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = [
-            t.squeeze(1) for t in (self.scale_shift_table[None] + t_mod).chunk(6, dim=1)
+            t.squeeze(1) for t in (self.scale_shift_table[None] + rearrange(t_mod, "b (c d) -> b c d", c=6)).chunk(6, dim=1)
         ]
         input_x = modulate(self.norm1(x), shift_msa, scale_msa)
         x += gate_msa * self.attn(input_x, freqs, attn_mask)
@@ -441,7 +441,7 @@ class ACEStepDiT(PreTrainedModel):
         attn_mask: torch.Tensor,
         attn_mask_ctx: torch.Tensor,
     ):
-        t = self.time_embedder(timestep)
+        t = self.time_embedder(timestep, x.dtype)
         t_mod = self.t_block(t)
 
         x = self.proj_in(x)

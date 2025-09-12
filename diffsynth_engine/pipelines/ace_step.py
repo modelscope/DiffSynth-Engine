@@ -155,20 +155,23 @@ class ACEStepMusicPipeline(BasePipeline):
     def encode_prompt(self, prompt):
         self.load_models_to_device(["text_encoder"])
         ids, mask = self.tokenizer(prompt, return_mask=True, add_special_tokens=True)
-        ids = ids.to(self.device)
-        mask = mask.to(self.device)
+        ids = ids.to(self.device)[:, :17]
+        mask = mask.to(self.device)[:, :17]
         prompt_emb = self.text_encoder(ids, mask)
         return prompt_emb, mask
 
     def encode_prompt_null(self, prompt):
         self.load_models_to_device(["text_encoder"])
         ids, mask = self.tokenizer(prompt, return_mask=True, add_special_tokens=True)
-        ids = ids.to(self.device)
-        mask = mask.to(self.device)
+        ids = ids.to(self.device)[:, :17]
+        mask = mask.to(self.device)[:, :17] # for test purpose. I don't know why this tokenizer will enforce padding.
         prompt_emb = fwd_with_temperature(
-            inputs=(ids, mask),
+            inputs={
+                "input_ids": ids,
+                "attention_mask": mask
+            },
             model_fwd_func=self.text_encoder,
-            get_hooked_layer_func=lambda i: self.text_encoder.blocks[i].attn.q,
+            get_hooked_layer_func=lambda i: self.text_encoder.encoders[i].attn.to_q,
             layer_start_idx=4,
             layer_end_idx=6,
         )
@@ -310,7 +313,7 @@ class ACEStepMusicPipeline(BasePipeline):
         attn_mask = torch.ones(1, num_frames, device=self.device, dtype=self.dtype)
         _, latents, sigmas, timesteps = self.prepare_latents(
             latents=noise,
-            input_video=None,
+            input_image=None,
             denoising_strength=None,
             num_inference_steps=num_inference_steps,
         )
@@ -338,7 +341,7 @@ class ACEStepMusicPipeline(BasePipeline):
         self.load_models_to_device(["dit"])
         hide_progress = dist.is_initialized() and dist.get_rank() != 0
         for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
-            timestep = timestep.to(dtype=self.dtype, device=self.device)
+            timestep = timestep[None].to(dtype=self.dtype, device=self.device)
             # Classifier-free guidance
             if cfg_start_step <= i < cfg_end_step:
                 noise_pred = self.predict_noise_with_cfg(

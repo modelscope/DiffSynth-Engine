@@ -12,7 +12,7 @@ from torchaudio.transforms import MelScale
 
 from diffsynth_engine.models.base import PreTrainedModel
 from diffsynth_engine.utils.constants import ACE_VAE_VOCODER_CONFIG_FILE
-
+# TODO: this is still shitty. need modification
 
 class LinearSpectrogram(nn.Module):
     def __init__(
@@ -22,6 +22,8 @@ class LinearSpectrogram(nn.Module):
         hop_length=512,
         center=False,
         mode="pow2_sqrt",
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
 
@@ -31,13 +33,13 @@ class LinearSpectrogram(nn.Module):
         self.center = center
         self.mode = mode
 
-        self.register_buffer("window", torch.hann_window(win_length))
+        self.register_buffer("window", torch.hann_window(win_length, device=device, dtype=dtype))
 
     def forward(self, y: torch.Tensor) -> torch.Tensor:
         if y.ndim == 3:
             y = y.squeeze(1)
 
-        y = torch.nn.functional.pad(
+        y = F.pad(
             y.unsqueeze(1),
             (
                 (self.win_length - self.hop_length) // 2,
@@ -77,6 +79,8 @@ class LogMelSpectrogram(nn.Module):
         center=False,
         f_min=0.0,
         f_max=None,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
 
@@ -89,7 +93,7 @@ class LogMelSpectrogram(nn.Module):
         self.f_min = f_min
         self.f_max = f_max or sample_rate // 2
 
-        self.spectrogram = LinearSpectrogram(n_fft, win_length, hop_length, center)
+        self.spectrogram = LinearSpectrogram(n_fft, win_length, hop_length, center, device=device, dtype=dtype)
         self.mel_scale = MelScale(
             self.n_mels,
             self.sample_rate,
@@ -117,42 +121,6 @@ class LogMelSpectrogram(nn.Module):
         return x
 
 
-def drop_path(x, drop_prob: float = 0.0, training: bool = False, scale_by_keep: bool = True):
-    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
-
-    This is the same as the DropConnect impl I created for EfficientNet, etc networks, however,
-    the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper...
-    See discussion: https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for
-    changing the layer and argument names to 'drop path' rather than mix DropConnect as a layer name and use
-    'survival rate' as the argument.
-
-    """  # noqa: E501
-
-    if drop_prob == 0.0 or not training:
-        return x
-    keep_prob = 1 - drop_prob
-    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
-    random_tensor = x.new_empty(shape).bernoulli_(keep_prob)
-    if keep_prob > 0.0 and scale_by_keep:
-        random_tensor.div_(keep_prob)
-    return x * random_tensor
-
-
-class DropPath(nn.Module):
-    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks)."""  # noqa: E501
-
-    def __init__(self, drop_prob: float = 0.0, scale_by_keep: bool = True):
-        super(DropPath, self).__init__()
-        self.drop_prob = drop_prob
-        self.scale_by_keep = scale_by_keep
-
-    def forward(self, x):
-        return drop_path(x, self.drop_prob, self.training, self.scale_by_keep)
-
-    def extra_repr(self):
-        return f"drop_prob={round(self.drop_prob, 3):0.3f}"
-
-
 class LayerNorm(nn.Module):
     r"""LayerNorm that supports two data formats: channels_last (default) or channels_first.
     The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
@@ -160,10 +128,10 @@ class LayerNorm(nn.Module):
     with shape (batch_size, channels, height, width).
     """  # noqa: E501
 
-    def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
+    def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last", device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(normalized_shape))
-        self.bias = nn.Parameter(torch.zeros(normalized_shape))
+        self.weight = nn.Parameter(torch.ones(normalized_shape, device=device, dtype=dtype))
+        self.bias = nn.Parameter(torch.zeros(normalized_shape, device=device, dtype=dtype))
         self.eps = eps
         self.data_format = data_format
         if self.data_format not in ["channels_last", "channels_first"]:
@@ -199,11 +167,12 @@ class ConvNeXtBlock(nn.Module):
     def __init__(
         self,
         dim: int,
-        drop_path: float = 0.0,
         layer_scale_init_value: float = 1e-6,
         mlp_ratio: float = 4.0,
         kernel_size: int = 7,
         dilation: int = 1,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
 
@@ -213,17 +182,18 @@ class ConvNeXtBlock(nn.Module):
             kernel_size=kernel_size,
             padding=int(dilation * (kernel_size - 1) / 2),
             groups=dim,
+            device=device,
+            dtype=dtype,
         )  # depthwise conv
-        self.norm = LayerNorm(dim, eps=1e-6)
-        self.pwconv1 = nn.Linear(dim, int(mlp_ratio * dim))  # pointwise/1x1 convs, implemented with linear layers
+        self.norm = LayerNorm(dim, eps=1e-6, device=device, dtype=dtype)
+        self.pwconv1 = nn.Linear(dim, int(mlp_ratio * dim), device=device, dtype=dtype)  # pointwise/1x1 convs, implemented with linear layers
         self.act = nn.GELU()
-        self.pwconv2 = nn.Linear(int(mlp_ratio * dim), dim)
+        self.pwconv2 = nn.Linear(int(mlp_ratio * dim), dim, device=device, dtype=dtype)
         self.gamma = (
-            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            nn.Parameter(layer_scale_init_value * torch.ones((dim), device=device, dtype=dtype))
             if layer_scale_init_value > 0
             else None
         )
-        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
     def forward(self, x, apply_residual: bool = True):
         input = x
@@ -239,7 +209,6 @@ class ConvNeXtBlock(nn.Module):
             x = self.gamma * x
 
         x = x.permute(0, 2, 1)  # (N, L, C) -> (N, C, L)
-        x = self.drop_path(x)
 
         if apply_residual:
             x = input + x
@@ -267,9 +236,10 @@ class ConvNeXtEncoder(nn.Module):
         input_channels=3,
         depths=[3, 3, 9, 3],
         dims=[96, 192, 384, 768],
-        drop_path_rate=0.0,
         layer_scale_init_value=1e-6,
         kernel_sizes: Tuple[int] = (7,),
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
         assert len(depths) == len(dims)
@@ -282,26 +252,27 @@ class ConvNeXtEncoder(nn.Module):
                 kernel_size=7,
                 padding=3,
                 padding_mode="replicate",
+                device=device,
+                dtype=dtype,
             ),
-            LayerNorm(dims[0], eps=1e-6, data_format="channels_first"),
+            LayerNorm(dims[0], eps=1e-6, data_format="channels_first", device=device, dtype=dtype),
         )
         self.channel_layers.append(stem)
 
         for i in range(len(depths) - 1):
             mid_layer = nn.Sequential(
-                LayerNorm(dims[i], eps=1e-6, data_format="channels_first"),
-                nn.Conv1d(dims[i], dims[i + 1], kernel_size=1),
+                LayerNorm(dims[i], eps=1e-6, data_format="channels_first", device=device, dtype=dtype),
+                nn.Conv1d(dims[i], dims[i + 1], kernel_size=1, device=device, dtype=dtype),
             )
             self.channel_layers.append(mid_layer)
 
         block_fn = (
-            partial(ConvNeXtBlock, kernel_size=kernel_sizes[0])
+            partial(ConvNeXtBlock, kernel_size=kernel_sizes[0], device=device, dtype=dtype)
             if len(kernel_sizes) == 1
-            else partial(ParallelConvNeXtBlock, kernel_sizes=kernel_sizes)
+            else partial(ParallelConvNeXtBlock, kernel_sizes=kernel_sizes, device=device, dtype=dtype)
         )
 
         self.stages = nn.ModuleList()
-        drop_path_rates = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
 
         cur = 0
         for i in range(len(depths)):
@@ -309,16 +280,15 @@ class ConvNeXtEncoder(nn.Module):
                 *[
                     block_fn(
                         dim=dims[i],
-                        drop_path=drop_path_rates[cur + j],
                         layer_scale_init_value=layer_scale_init_value,
                     )
-                    for j in range(depths[i])
+                    for _ in range(depths[i])
                 ]
             )
             self.stages.append(stage)
             cur += depths[i]
 
-        self.norm = LayerNorm(dims[-1], eps=1e-6, data_format="channels_first")
+        self.norm = LayerNorm(dims[-1], eps=1e-6, data_format="channels_first", device=device, dtype=dtype)
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -348,7 +318,7 @@ def get_padding(kernel_size, dilation=1):
 
 
 class ResBlock1(torch.nn.Module):
-    def __init__(self, channels, kernel_size=3, dilation=(1, 3, 5)):
+    def __init__(self, channels, kernel_size=3, dilation=(1, 3, 5), device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
 
         self.convs1 = nn.ModuleList(
@@ -361,6 +331,8 @@ class ResBlock1(torch.nn.Module):
                         1,
                         dilation=dilation[0],
                         padding=get_padding(kernel_size, dilation[0]),
+                        device=device,
+                        dtype=dtype,
                     )
                 ),
                 weight_norm(
@@ -371,6 +343,8 @@ class ResBlock1(torch.nn.Module):
                         1,
                         dilation=dilation[1],
                         padding=get_padding(kernel_size, dilation[1]),
+                        device=device,
+                        dtype=dtype,
                     )
                 ),
                 weight_norm(
@@ -381,6 +355,8 @@ class ResBlock1(torch.nn.Module):
                         1,
                         dilation=dilation[2],
                         padding=get_padding(kernel_size, dilation[2]),
+                        device=device,
+                        dtype=dtype,
                     )
                 ),
             ]
@@ -397,6 +373,8 @@ class ResBlock1(torch.nn.Module):
                         1,
                         dilation=1,
                         padding=get_padding(kernel_size, 1),
+                        device=device,
+                        dtype=dtype,
                     )
                 ),
                 weight_norm(
@@ -407,6 +385,8 @@ class ResBlock1(torch.nn.Module):
                         1,
                         dilation=1,
                         padding=get_padding(kernel_size, 1),
+                        device=device,
+                        dtype=dtype,
                     )
                 ),
                 weight_norm(
@@ -417,6 +397,8 @@ class ResBlock1(torch.nn.Module):
                         1,
                         dilation=1,
                         padding=get_padding(kernel_size, 1),
+                        device=device,
+                        dtype=dtype,
                     )
                 ),
             ]
@@ -448,6 +430,8 @@ class HiFiGANGenerator(nn.Module):
         pre_conv_kernel_size: int = 7,
         post_conv_kernel_size: int = 7,
         post_activation: Callable = partial(nn.SiLU, inplace=True),
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
 
@@ -460,6 +444,8 @@ class HiFiGANGenerator(nn.Module):
                 pre_conv_kernel_size,
                 1,
                 padding=get_padding(pre_conv_kernel_size),
+                device=device,
+                dtype=dtype,
             )
         )
 
@@ -480,6 +466,8 @@ class HiFiGANGenerator(nn.Module):
                         k,
                         u,
                         padding=(k - u) // 2,
+                        device=device,
+                        dtype=dtype,
                     )
                 )
             )
@@ -496,16 +484,18 @@ class HiFiGANGenerator(nn.Module):
                         kernel_size=stride_f0 * 2,
                         stride=stride_f0,
                         padding=stride_f0 // 2,
+                        device=device,
+                        dtype=dtype,
                     )
                 )
             else:
-                self.noise_convs.append(nn.Conv1d(1, c_cur, kernel_size=1))
+                self.noise_convs.append(nn.Conv1d(1, c_cur, kernel_size=1, device=device, dtype=dtype))
 
         self.resblocks = nn.ModuleList()
         for i in range(len(self.ups)):
             ch = upsample_initial_channel // (2 ** (i + 1))
             for k, d in zip(resblock_kernel_sizes, resblock_dilation_sizes):
-                self.resblocks.append(ResBlock1(ch, k, d))
+                self.resblocks.append(ResBlock1(ch, k, d, device=device, dtype=dtype))
 
         self.activation_post = post_activation()
         self.conv_post = weight_norm(
@@ -515,6 +505,8 @@ class HiFiGANGenerator(nn.Module):
                 post_conv_kernel_size,
                 1,
                 padding=get_padding(post_conv_kernel_size),
+                device=device,
+                dtype=dtype,
             )
         )
         self.ups.apply(init_weights)
@@ -553,7 +545,6 @@ class ADaMoSHiFiGANV1(PreTrainedModel):
         input_channels: int = 128,
         depths: List[int] = [3, 3, 9, 3],
         dims: List[int] = [128, 256, 384, 512],
-        drop_path_rate: float = 0.0,
         kernel_sizes: Tuple[int] = (7,),
         upsample_rates: Tuple[int] = (4, 4, 2, 2, 2, 2, 2),
         upsample_kernel_sizes: Tuple[int] = (8, 8, 4, 4, 4, 4, 4),
@@ -581,12 +572,14 @@ class ADaMoSHiFiGANV1(PreTrainedModel):
     ):
         super().__init__()
 
+        self.sampling_rate = sampling_rate
         self.backbone = ConvNeXtEncoder(
             input_channels=input_channels,
             depths=depths,
             dims=dims,
-            drop_path_rate=drop_path_rate,
             kernel_sizes=kernel_sizes,
+            device=device,
+            dtype=dtype,
         )
 
         self.head = HiFiGANGenerator(
@@ -600,8 +593,9 @@ class ADaMoSHiFiGANV1(PreTrainedModel):
             use_template=use_template,
             pre_conv_kernel_size=pre_conv_kernel_size,
             post_conv_kernel_size=post_conv_kernel_size,
+            device=device,
+            dtype=dtype,
         )
-        self.sampling_rate = sampling_rate
         self.mel_transform = LogMelSpectrogram(
             sample_rate=sampling_rate,
             n_fft=n_fft,
@@ -610,6 +604,8 @@ class ADaMoSHiFiGANV1(PreTrainedModel):
             f_min=f_min,
             f_max=f_max,
             n_mels=n_mels,
+            device=device,
+            dtype=dtype,
         )
 
     @torch.no_grad()

@@ -7,33 +7,16 @@ import torch.nn.functional as F
 
 from diffsynth_engine.models.base import PreTrainedModel
 from diffsynth_engine.utils.constants import ACE_VAE_DCAE_CONFIG_FILE
-
+# TODO: this is still shitty. need modification
 
 class RMSNorm(nn.RMSNorm):
-    def __init__(self, dim, eps=1e-5, elementwise_affine=True, bias=False):
-        super().__init__(dim, eps=eps, elementwise_affine=elementwise_affine)
-        if elementwise_affine:
-            self.bias = nn.Parameter(torch.empty(dim)) if bias else None
+    def __init__(self, dim, eps=1e-5, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
+        super().__init__(dim, eps=eps, elementwise_affine=True, device=device, dtype=dtype)
+        self.bias = nn.Parameter(torch.empty(dim, device=device, dtype=dtype))
 
     def forward(self, x):
-        x = super().forward(x)
-        if self.elementwise_affine:
-            if self.bias is not None:
-                x += self.bias,
+        x = super().forward(x) + self.bias
         return x
-
-
-def get_normalization(norm_type, num_features, num_groups=32, eps=1e-5):
-    if norm_type == "batch_norm":
-        return nn.BatchNorm2d(num_features)
-    elif norm_type == "group_norm":
-        return nn.GroupNorm(num_groups, num_features)
-    elif norm_type == "layer_norm":
-        return nn.LayerNorm(num_features)
-    elif norm_type == "rms_norm":
-        return RMSNorm(num_features, eps=eps, elementwise_affine=True, bias=True)
-    else:
-        raise ValueError(f"Unknown normalization type: {norm_type}")
 
 
 def get_activation(activation_type):
@@ -56,14 +39,16 @@ class ResBlock(nn.Module):
         out_channels: int,
         norm_type: str = "batch_norm",
         act_fn: str = "relu6",
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ) -> None:
         super().__init__()
 
         self.norm_type = norm_type
         self.nonlinearity = get_activation(act_fn) if act_fn is not None else nn.Identity()
-        self.conv1 = nn.Conv2d(in_channels, in_channels, 3, 1, 1)
-        self.conv2 = nn.Conv2d(in_channels, out_channels, 3, 1, 1, bias=False)
-        self.norm = get_normalization(norm_type, out_channels)
+        self.conv1 = nn.Conv2d(in_channels, in_channels, 3, 1, 1, device=device, dtype=dtype)
+        self.conv2 = nn.Conv2d(in_channels, out_channels, 3, 1, 1, bias=False, device=device, dtype=dtype)
+        self.norm = RMSNorm(out_channels, device=device, dtype=dtype)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         residual = hidden_states
@@ -85,6 +70,8 @@ class SanaMultiscaleAttentionProjection(nn.Module):
         in_channels: int,
         num_attention_heads: int,
         kernel_size: int,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ) -> None:
         super().__init__()
 
@@ -96,8 +83,10 @@ class SanaMultiscaleAttentionProjection(nn.Module):
             padding=kernel_size // 2,
             groups=channels,
             bias=False,
+            device=device,
+            dtype=dtype,
         )
-        self.proj_out = nn.Conv2d(channels, channels, 1, 1, 0, groups=3 * num_attention_heads, bias=False)
+        self.proj_out = nn.Conv2d(channels, channels, 1, 1, 0, groups=3 * num_attention_heads, bias=False, device=device, dtype=dtype)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states = self.proj_in(hidden_states)
@@ -116,6 +105,8 @@ class SanaMultiscaleLinearAttention(nn.Module):
         kernel_sizes: tuple = (5,),
         eps: float = 1e-15,
         residual_connection: bool = False,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
 
@@ -131,19 +122,19 @@ class SanaMultiscaleLinearAttention(nn.Module):
         )
         inner_dim = num_attention_heads * attention_head_dim
 
-        self.to_q = nn.Linear(in_channels, inner_dim, bias=False)
-        self.to_k = nn.Linear(in_channels, inner_dim, bias=False)
-        self.to_v = nn.Linear(in_channels, inner_dim, bias=False)
+        self.to_q = nn.Linear(in_channels, inner_dim, bias=False, device=device, dtype=dtype)
+        self.to_k = nn.Linear(in_channels, inner_dim, bias=False, device=device, dtype=dtype)
+        self.to_v = nn.Linear(in_channels, inner_dim, bias=False, device=device, dtype=dtype)
 
         self.to_qkv_multiscale = nn.ModuleList()
         for kernel_size in kernel_sizes:
             self.to_qkv_multiscale.append(
-                SanaMultiscaleAttentionProjection(inner_dim, num_attention_heads, kernel_size)
+                SanaMultiscaleAttentionProjection(inner_dim, num_attention_heads, kernel_size, device=device, dtype=dtype)
             )
 
         self.nonlinearity = nn.ReLU()
-        self.to_out = nn.Linear(inner_dim * (1 + len(kernel_sizes)), out_channels, bias=False)
-        self.norm_out = get_normalization(norm_type, out_channels)
+        self.to_out = nn.Linear(inner_dim * (1 + len(kernel_sizes)), out_channels, bias=False, device=device, dtype=dtype)
+        self.norm_out = RMSNorm(out_channels, device=device, dtype=dtype)
 
     def apply_linear_attention(self, query, key, value):
         value = F.pad(value, (0, 0, 0, 1), mode="constant", value=1)
@@ -224,6 +215,8 @@ class EfficientViTBlock(nn.Module):
         attention_head_dim: int = 32,
         qkv_multiscales: tuple = (5,),
         norm_type: str = "batch_norm",
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ) -> None:
         super().__init__()
 
@@ -235,12 +228,16 @@ class EfficientViTBlock(nn.Module):
             norm_type=norm_type,
             kernel_sizes=qkv_multiscales,
             residual_connection=True,
+            device=device,
+            dtype=dtype,
         )
 
         self.conv_out = GLUMBConv(
             in_channels=in_channels,
             out_channels=in_channels,
             norm_type="rms_norm",
+            device=device,
+            dtype=dtype,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -257,6 +254,8 @@ class GLUMBConv(nn.Module):
         expand_ratio: float = 4,
         norm_type: str = None,
         residual_connection: bool = True,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ) -> None:
         super().__init__()
 
@@ -265,13 +264,13 @@ class GLUMBConv(nn.Module):
         self.residual_connection = residual_connection
 
         self.nonlinearity = nn.SiLU()
-        self.conv_inverted = nn.Conv2d(in_channels, hidden_channels * 2, 1, 1, 0)
-        self.conv_depth = nn.Conv2d(hidden_channels * 2, hidden_channels * 2, 3, 1, 1, groups=hidden_channels * 2)
-        self.conv_point = nn.Conv2d(hidden_channels, out_channels, 1, 1, 0, bias=False)
+        self.conv_inverted = nn.Conv2d(in_channels, hidden_channels * 2, 1, 1, 0, device=device, dtype=dtype)
+        self.conv_depth = nn.Conv2d(hidden_channels * 2, hidden_channels * 2, 3, 1, 1, groups=hidden_channels * 2, device=device, dtype=dtype)
+        self.conv_point = nn.Conv2d(hidden_channels, out_channels, 1, 1, 0, bias=False, device=device, dtype=dtype)
 
         self.norm = None
         if norm_type == "rms_norm":
-            self.norm = RMSNorm(out_channels, eps=1e-5, elementwise_affine=True, bias=True)
+            self.norm = RMSNorm(out_channels)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if self.residual_connection:
@@ -303,16 +302,20 @@ def get_block(
     attention_head_dim: int,
     norm_type: str,
     act_fn: str,
-    qkv_mutliscales: tuple = (),
+    qkv_multiscales: tuple = (),
+    device: str = "cuda:0",
+    dtype: torch.dtype = torch.bfloat16,
 ):
     if block_type == "ResBlock":
-        block = ResBlock(in_channels, out_channels, norm_type, act_fn)
+        block = ResBlock(in_channels, out_channels, norm_type, act_fn, device=device, dtype=dtype)
     elif block_type == "EfficientViTBlock":
         block = EfficientViTBlock(
             in_channels,
             attention_head_dim=attention_head_dim,
             norm_type=norm_type,
-            qkv_multiscales=qkv_mutliscales
+            qkv_multiscales=qkv_multiscales,
+            device=device,
+            dtype=dtype,
         )
     else:
         raise ValueError(f"Block with {block_type=} is not supported.")
@@ -321,7 +324,7 @@ def get_block(
 
 
 class DCDownBlock2d(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, downsample: bool = False, shortcut: bool = True) -> None:
+    def __init__(self, in_channels: int, out_channels: int, downsample: bool = False, shortcut: bool = True, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16) -> None:
         super().__init__()
 
         self.downsample = downsample
@@ -341,6 +344,8 @@ class DCDownBlock2d(nn.Module):
             kernel_size=3,
             stride=self.stride,
             padding=1,
+            device=device,
+            dtype=dtype,
         )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -367,6 +372,8 @@ class DCUpBlock2d(nn.Module):
         interpolate: bool = False,
         shortcut: bool = True,
         interpolation_mode: str = "nearest",
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ) -> None:
         super().__init__()
 
@@ -380,7 +387,7 @@ class DCUpBlock2d(nn.Module):
         if not interpolate:
             out_channels = out_channels * out_ratio
 
-        self.conv = nn.Conv2d(in_channels, out_channels, 3, 1, 1)
+        self.conv = nn.Conv2d(in_channels, out_channels, 3, 1, 1, device=device, dtype=dtype)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if self.interpolate:
@@ -406,33 +413,32 @@ class Encoder(nn.Module):
         in_channels: int,
         latent_channels: int,
         attention_head_dim: int = 32,
-        block_type: str | tuple = "ResBlock",
-        block_out_channels: tuple = (128, 256, 512, 512, 1024, 1024),
-        layers_per_block: tuple = (2, 2, 2, 2, 2, 2),
-        qkv_multiscales: tuple = ((), (), (), (5,), (5,), (5,)),
-        downsample_block_type: str = "pixel_unshuffle",
-        out_shortcut: bool = True,
+        block_type: Tuple[str] = ("ResBlock", "ResBlock", "ResBlock", "EfficientViTBlock"),
+        block_out_channels: Tuple[int] = (128, 256, 512, 1024),
+        layers_per_block: Tuple[int] = (2, 2, 3, 3),
+        qkv_multiscales: Tuple[Tuple[int, ...], ...] = ((), (), (5,), (5,)),
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
-
         num_blocks = len(block_out_channels)
-        if isinstance(block_type, str):
-            block_type = (block_type,) * num_blocks
-
         if layers_per_block[0] > 0:
             self.conv_in = nn.Conv2d(
                 in_channels,
-                block_out_channels[0] if layers_per_block[0] > 0 else block_out_channels[1],
+                block_out_channels[0],
                 kernel_size=3,
-                stride=1,
                 padding=1,
+                device=device,
+                dtype=dtype,
             )
         else:
             self.conv_in = DCDownBlock2d(
                 in_channels=in_channels,
-                out_channels=block_out_channels[0] if layers_per_block[0] > 0 else block_out_channels[1],
-                downsample=downsample_block_type == "pixel_unshuffle",
+                out_channels=block_out_channels[0],
+                downsample=False,
                 shortcut=False,
+                device=device,
+                dtype=dtype,
             )
 
         down_blocks = []
@@ -447,7 +453,9 @@ class Encoder(nn.Module):
                     attention_head_dim=attention_head_dim,
                     norm_type="rms_norm",
                     act_fn="silu",
-                    qkv_mutliscales=qkv_multiscales[i],
+                    qkv_multiscales=qkv_multiscales[i],
+                    device=device,
+                    dtype=dtype,
                 )
                 down_block_list.append(block)
 
@@ -455,32 +463,27 @@ class Encoder(nn.Module):
                 downsample_block = DCDownBlock2d(
                     in_channels=out_channel,
                     out_channels=block_out_channels[i + 1],
-                    downsample=downsample_block_type == "pixel_unshuffle",
+                    downsample=False,
                     shortcut=True,
+                    device=device,
+                    dtype=dtype,
                 )
                 down_block_list.append(downsample_block)
 
             down_blocks.append(nn.Sequential(*down_block_list))
 
         self.down_blocks = nn.ModuleList(down_blocks)
-
-        self.conv_out = nn.Conv2d(block_out_channels[-1], latent_channels, 3, 1, 1)
-
-        self.out_shortcut = out_shortcut
-        if out_shortcut:
-            self.out_shortcut_average_group_size = block_out_channels[-1] // latent_channels
+        self.conv_out = nn.Conv2d(block_out_channels[-1], latent_channels, 3, 1, 1, device=device, dtype=dtype)
+        self.out_shortcut_average_group_size = block_out_channels[-1] // latent_channels
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states = self.conv_in(hidden_states)
         for down_block in self.down_blocks:
             hidden_states = down_block(hidden_states)
 
-        if self.out_shortcut:
-            x = hidden_states.unflatten(1, (-1, self.out_shortcut_average_group_size))
-            x = x.mean(dim=2)
-            hidden_states = self.conv_out(hidden_states) + x
-        else:
-            hidden_states = self.conv_out(hidden_states)
+        x = hidden_states.unflatten(1, (-1, self.out_shortcut_average_group_size))
+        x = x.mean(dim=2)
+        hidden_states = self.conv_out(hidden_states) + x
 
         return hidden_states
 
@@ -499,6 +502,8 @@ class Decoder(nn.Module):
         act_fn: str | tuple = "silu",
         upsample_block_type: str = "pixel_shuffle",
         in_shortcut: bool = True,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
 
@@ -527,6 +532,8 @@ class Decoder(nn.Module):
                     out_channel,
                     interpolate=upsample_block_type == "interpolate",
                     shortcut=True,
+                    device=device,
+                    dtype=dtype,
                 )
                 up_block_list.append(upsample_block)
 
@@ -538,7 +545,9 @@ class Decoder(nn.Module):
                     attention_head_dim=attention_head_dim,
                     norm_type=norm_type[i],
                     act_fn=act_fn[i],
-                    qkv_mutliscales=qkv_multiscales[i],
+                    qkv_multiscales=qkv_multiscales[i],
+                    device=device,
+                    dtype=dtype,
                 )
                 up_block_list.append(block)
 
@@ -548,15 +557,15 @@ class Decoder(nn.Module):
 
         channels = block_out_channels[0] if layers_per_block[0] > 0 else block_out_channels[1]
 
-        self.norm_out = RMSNorm(channels, 1e-5, elementwise_affine=True, bias=True)
+        self.norm_out = RMSNorm(channels, device=device, dtype=dtype)
         self.conv_act = nn.ReLU()
         self.conv_out = None
 
         if layers_per_block[0] > 0:
-            self.conv_out = nn.Conv2d(channels, in_channels, 3, 1, 1)
+            self.conv_out = nn.Conv2d(channels, in_channels, 3, 1, 1, device=device, dtype=dtype)
         else:
             self.conv_out = DCUpBlock2d(
-                channels, in_channels, interpolate=upsample_block_type == "interpolate", shortcut=False
+                channels, in_channels, interpolate=upsample_block_type == "interpolate", shortcut=False, device=device, dtype=dtype
             )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -583,8 +592,8 @@ class DCAE(PreTrainedModel):
         in_channels: int = 2,
         latent_channels: int = 8,
         attention_head_dim: int = 32,
-        encoder_block_types: Union[str, Tuple[str]] = ["ResBlock", "ResBlock", "ResBlock", "EfficientViTBlock"],
-        decoder_block_types: Union[str, Tuple[str]] = ["ResBlock", "ResBlock", "ResBlock", "EfficientViTBlock"],
+        encoder_block_types: Tuple[str] = ("ResBlock", "ResBlock", "ResBlock", "EfficientViTBlock"),
+        decoder_block_types: Tuple[str] = ("ResBlock", "ResBlock", "ResBlock", "EfficientViTBlock"),
         encoder_block_out_channels: Tuple[int, ...] = (128, 256, 512, 1024),
         decoder_block_out_channels: Tuple[int, ...] = (128, 256, 512, 1024),
         encoder_layers_per_block: Tuple[int] = (2, 2, 3, 3),
@@ -592,7 +601,6 @@ class DCAE(PreTrainedModel):
         encoder_qkv_multiscales: Tuple[Tuple[int, ...], ...] = ((), (), (5,), (5,)),
         decoder_qkv_multiscales: Tuple[Tuple[int, ...], ...] = ((), (), (5,), (5,)),
         upsample_block_type: str = "interpolate",
-        downsample_block_type: str = "Conv",
         decoder_norm_types: Union[str, Tuple[str]] = "rms_norm",
         decoder_act_fns: Union[str, Tuple[str]] = "silu",
         device: str = "cuda:0",
@@ -608,7 +616,8 @@ class DCAE(PreTrainedModel):
             block_out_channels=encoder_block_out_channels,
             layers_per_block=encoder_layers_per_block,
             qkv_multiscales=encoder_qkv_multiscales,
-            downsample_block_type=downsample_block_type,
+            device=device,
+            dtype=dtype,
         )
 
         self.decoder = Decoder(
@@ -622,6 +631,8 @@ class DCAE(PreTrainedModel):
             norm_type=decoder_norm_types,
             act_fn=decoder_act_fns,
             upsample_block_type=upsample_block_type,
+            device=device,
+            dtype=dtype,
         )
 
 

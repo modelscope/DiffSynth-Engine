@@ -224,7 +224,7 @@ class LinearEmbed(nn.Module):
             nn.Linear(idim, odim),
             nn.LayerNorm(odim, eps=1e-5),
         )
-        self.pos_enc = (EspnetRelPositionalEncoding(odim),)
+        self.pos_enc = EspnetRelPositionalEncoding(odim)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Input x.

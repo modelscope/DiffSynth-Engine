@@ -5,7 +5,7 @@ import torchaudio
 from diffsynth_engine.models.base import PreTrainedModel
 
 from .hifi_gan import ADaMoSHiFiGANV1
-from .dcae import DCAE # TODO: rewrite above 2 files
+from .dcae import DCAE
 
 
 class MusicDCAE(PreTrainedModel):
@@ -27,16 +27,10 @@ class MusicDCAE(PreTrainedModel):
         self.scale_factor = 0.1786
         self.shift_factor = -1.9091
 
-    def load_audio(self, audio_path):
-        audio, sr = torchaudio.load(audio_path)
-        if audio.shape[0] == 1:
-            audio = audio.repeat(2, 1)
-        return audio, sr
-
     def forward_mel(self, audios):
         mels = []
-        for i in range(len(audios)):
-            image = self.vocoder.mel_transform(audios[i])
+        for audio in audios:
+            image = self.vocoder.mel_transform(audio)
             mels.append(image)
         mels = torch.stack(mels)
         return mels
@@ -60,7 +54,7 @@ class MusicDCAE(PreTrainedModel):
         mels = self.transform(mels)
         latents = []
         for mel in mels:
-            latent = self.dcae.encoder(mel.unsqueeze(0))
+            latent = self.dcae.encoder(mel[None])
             latents.append(latent)
         latents = torch.cat(latents, dim=0)
         latent_lengths = (audio_lengths / sr * 44100 / 512 / self.time_dimention_multiple).long()
