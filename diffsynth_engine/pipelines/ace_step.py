@@ -1,5 +1,6 @@
 from typing import Tuple
 
+import math
 import torch
 import torch.nn.functional as F
 import torch.distributed as dist
@@ -51,11 +52,11 @@ def fwd_with_temperature(
             handlers.append(handler)
 
     with torch.no_grad():
-        prompt_emb = model_fwd_func(**inputs)
+        output = model_fwd_func(**inputs)
 
     for handler in handlers:
         handler.remove()
-    return prompt_emb
+    return output
 
 
 class MomentumBuffer:
@@ -124,7 +125,7 @@ class ACEStepMusicPipeline(BasePipeline):
         )
         self.config = config
         # sampler
-        self.noise_scheduler = RecifitedFlowScheduler(shift=3.0)
+        self.noise_scheduler = RecifitedFlowScheduler(shift=config.shift)
         self.sampler = FlowMatchEulerSampler()
         # models
         self.lyric_tokenizer = VoiceBpeTokenizer()
@@ -300,6 +301,10 @@ class ACEStepMusicPipeline(BasePipeline):
         guidance_interval: float = 0.5,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ):
+        def logistic(x, L=0.9, U=1.1, x_0=0.0, k=0.1):
+                return L + (U - L) / (1 + math.exp(-k * (x - x_0)))
+        omega = logistic(omega_scale)
+
         prompt_emb, prompt_attn_mask = self.encode_prompt(prompt)
         prompt_emb_null, prompt_attn_mask_null = self.encode_prompt_null(prompt)
         if len(lyrics.strip()) > 0:
@@ -319,7 +324,7 @@ class ACEStepMusicPipeline(BasePipeline):
         )
         # Initialize sampler
         self.sampler.initialize(sigmas=sigmas)
-        # guidance interval
+        # Guidance interval
         cfg_start_step = int(num_inference_steps * ((1 - guidance_interval) / 2))
         cfg_end_step = int(num_inference_steps * (guidance_interval / 2 + 0.5))
         momentum_buffer = MomentumBuffer()
@@ -369,7 +374,7 @@ class ACEStepMusicPipeline(BasePipeline):
             dx: torch.Tensor = noise_pred * (self.sampler.sigmas[i + 1] - self.sampler.sigmas[i])
             dx_mean = dx.mean(dim=(1, 2, 3), keepdim=True)
             latents = latents.to(dtype=torch.float32)
-            latents += (dx - dx_mean) * omega_scale + dx
+            latents += (dx - dx_mean) * omega + dx_mean
             latents = latents.to(dtype=noise_pred.dtype)
             if progress_callback is not None:
                 progress_callback(i + 1, len(timesteps), "DENOISING")

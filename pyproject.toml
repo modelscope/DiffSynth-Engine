@@ -35,7 +35,7 @@ dependencies = [
     "moviepy",
     "librosa",
     "scikit-image",
-    "trimesh"
+    "trimesh",
     "py3langid",
     "pypinyin",
     "hangul_romanize",
