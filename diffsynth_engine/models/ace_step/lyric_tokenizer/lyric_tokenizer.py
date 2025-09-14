@@ -688,3 +688,34 @@ class VoiceBpeTokenizer:
         txt = f"[{lang}]{txt}"
         txt = txt.replace(" ", "[SPACE]")
         return self.tokenizer.encode(txt).ids
+
+    def decode(self, seq):
+        import torch
+        if isinstance(seq, torch.Tensor):
+            seq = seq.cpu().numpy()
+        txt = self.tokenizer.decode(seq, skip_special_tokens=False).replace(" ", "")
+        txt = txt.replace("[SPACE]", " ")
+        txt = txt.replace("[STOP]", "")
+        # txt = txt.replace("[UNK]", "")
+        return txt
+
+    # copy from https://github.com/huggingface/transformers/blob/main/src/transformers/tokenization_utils_base.py#L3936
+    def batch_decode(
+        self,
+        sequences
+    ):
+        """
+        Convert a list of lists of token ids into a list of strings by calling decode.
+
+        Args:
+            sequences (`Union[List[int], List[List[int]], np.ndarray, torch.Tensor, tf.Tensor]`):
+                List of tokenized input ids. Can be obtained using the `__call__` method.
+            skip_special_tokens (`bool`, *optional*, defaults to `False`):
+                Whether or not to remove special tokens in the decoding.
+            kwargs (additional keyword arguments, *optional*):
+                Will be passed to the underlying model specific decode method.
+
+        Returns:
+            `List[str]`: The list of decoded sentences.
+        """
+        return [self.decode(seq) for seq in sequences]

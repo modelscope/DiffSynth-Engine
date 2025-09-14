@@ -61,9 +61,27 @@ def precompute_freqs_cis(dim: int, end: int = 1024, theta: float = 10000.0):
 
 
 def rope_apply(x, freqs):
-    b, s, n, d = x.shape
-    x_out = torch.view_as_complex(x.to(torch.float64).reshape(b, s, n, d // 2, 2))
-    x_out = torch.view_as_real(x_out * freqs)
+    # b, s, n, d = x.shape
+    # x_out = torch.view_as_complex(x.to(torch.float64).reshape(b, s, n, d // 2, 2))
+    # x_out = torch.view_as_real(x_out * freqs)
+    # # get real part and imag part from freqs
+    # cos = freqs.real
+    # sin = freqs.imag
+    # out = x_out.to(x.dtype).flatten(3)
+    cos, sin = freqs  # [S, D]
+    cos = cos[None, :, None, :]
+    sin = sin[None, :, None, :]
+    cos, sin = cos.to(x.device), sin.to(x.device)
+
+    x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
+    x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
+    x_out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
+    # rotary_debug = torch.load("/home/zhangchengsong.zcs/ACE-Step/rotary_debug.pt", map_location=x.device)
+    # print("x max diff:",(x - rotary_debug["x"].permute(0, 2, 1, 3)).abs().max())
+    # print("cos max diff:",(cos - rotary_debug["cos"].permute(0, 2, 1, 3)).abs().max())
+    # print("sin max diff:",(sin - rotary_debug["sin"].permute(0, 2, 1, 3)).abs().max())
+    # print("out max diff:",(x_out - rotary_debug["out"].permute(0, 2, 1, 3)).abs().max())
+
     return x_out.to(x.dtype).flatten(3)
 
 

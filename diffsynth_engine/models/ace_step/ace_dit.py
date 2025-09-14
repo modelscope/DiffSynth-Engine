@@ -26,14 +26,19 @@ class Qwen2RotaryEmbedding(nn.Module):
         self.max_seq_len_cached = seq_len
         t = torch.arange(self.max_seq_len_cached, device=self.inv_freq.device, dtype=torch.int64).float()
         freqs = torch.outer(t, self.inv_freq)
-        self.freqs_cis_cached = torch.polar(torch.ones_like(freqs), freqs)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.cos_cached = emb.cos()
+        self.sin_cached = emb.sin()
 
     def forward(self, x: torch.Tensor):
         seq_len = x.shape[1]
         if seq_len > self.max_seq_len_cached:
             self._set_cos_sin_cache(seq_len=seq_len)
 
-        return self.freqs_cis_cached[:seq_len][None, :, None, :].to(x.device)
+        return (
+            self.cos_cached[:seq_len].to(dtype=x.dtype),
+            self.sin_cached[:seq_len].to(dtype=x.dtype),
+        )
 
 
 class SelfAttention(nn.Module):
@@ -67,11 +72,13 @@ class SelfAttention(nn.Module):
         q = rearrange(q, "b s n d -> b n d s")
         k = rearrange(k, "b s n d -> b n s d")
         v = rearrange(v, "b s n d -> b n d s")
+        q, k, v = q.float(), k.float(), v.float()
         v = F.pad(v, (0, 0, 0, 1), mode="constant", value=1.0)  # b n (d+1) s
+        dtype = x.dtype
         x = torch.matmul(torch.matmul(v, k), q)  # inner: b n (d+1) d
         x = x[:, :, :-1] / (x[:, :, -1:] + 1e-15)  # b n d s
         x = rearrange(x, "b n d s -> b s (n d)")
-        return self.o(x)
+        return self.o(x.to(dtype=dtype))
 
 
 class CrossAttention(nn.Module):
@@ -175,7 +182,7 @@ class GLUMBConv(nn.Module):
             kernel_size=3,
             groups=hidden_features * 2,
             use_bias=True,
-            act="silu",
+            act=None,
             device=device,
             dtype=dtype,
         )
@@ -194,7 +201,8 @@ class GLUMBConv(nn.Module):
         x = self.inverted_conv(x)
         x = self.depth_conv(x)
         x, gate = torch.chunk(x, 2, dim=1)
-        x *= self.glu_act(gate)
+        gate = self.glu_act(gate)
+        x = x * gate
         x = self.point_conv(x)
         x = x.transpose(1, 2)
         return x

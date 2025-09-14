@@ -210,12 +210,12 @@ class BasePipeline:
             sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps)
             # k-diffusion
             # if you have any questions about this, please ask @dizhipeng.dzp for more details
-            latents = latents * sigmas[0] / ((sigmas[0] ** 2 + 1) ** 0.5)
+            # latents = latents * sigmas[0] / ((sigmas[0] ** 2 + 1) ** 0.5)
             init_latents = latents.clone()
-        sigmas, timesteps = (
-            sigmas.to(device=self.device, dtype=self.dtype),
-            timesteps.to(device=self.device, dtype=self.dtype),
-        )
+        # sigmas, timesteps = (
+        #     sigmas.to(device=self.device, dtype=self.dtype),
+        #     timesteps.to(device=self.device, dtype=self.dtype),
+        # )
         init_latents, latents = (
             init_latents.to(device=self.device, dtype=self.dtype),
             latents.to(device=self.device, dtype=self.dtype),
