@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -31,55 +31,6 @@ from diffsynth_engine.utils import logging
 
 
 logger = logging.get_logger(__name__)
-
-def randn_tensor(
-    shape: Union[Tuple, List],
-    generator: Optional[Union[List["torch.Generator"], "torch.Generator"]] = None,
-    device: Optional[Union[str, "torch.device"]] = None,
-    dtype: Optional["torch.dtype"] = None,
-    layout: Optional["torch.layout"] = None,
-):
-    """A helper function to create random tensors on the desired `device` with the desired `dtype`. When
-    passing a list of generators, you can seed each batch size individually. If CPU generators are passed, the tensor
-    is always created on the CPU.
-    """
-    # device on which tensor is created defaults to device
-    if isinstance(device, str):
-        device = torch.device(device)
-    rand_device = device
-    batch_size = shape[0]
-
-    layout = layout or torch.strided
-    device = device or torch.device("cpu")
-
-    if generator is not None:
-        gen_device_type = generator.device.type if not isinstance(generator, list) else generator[0].device.type
-        if gen_device_type != device.type and gen_device_type == "cpu":
-            rand_device = "cpu"
-            if device != "mps":
-                logger.info(
-                    f"The passed generator was created on 'cpu' even though a tensor on {device} was expected."
-                    f" Tensors will be created on 'cpu' and then moved to {device}. Note that one can probably"
-                    f" slightly speed up this function by passing a generator that was created on the {device} device."
-                )
-        elif gen_device_type != device.type and gen_device_type == "cuda":
-            raise ValueError(f"Cannot generate a {device} tensor from a generator of type {gen_device_type}.")
-
-    # make sure generator list of length 1 is treated like a non-list
-    if isinstance(generator, list) and len(generator) == 1:
-        generator = generator[0]
-
-    if isinstance(generator, list):
-        shape = (1,) + shape[1:]
-        latents = [
-            torch.randn(shape, generator=generator[i], device=rand_device, dtype=dtype, layout=layout)
-            for i in range(batch_size)
-        ]
-        latents = torch.cat(latents, dim=0).to(device)
-    else:
-        latents = torch.randn(shape, generator=generator, device=rand_device, dtype=dtype, layout=layout).to(device)
-
-    return latents
 
 
 def fwd_with_temperature(
@@ -207,7 +158,7 @@ class ACEStepMusicPipeline(BasePipeline):
         ids, mask = self.tokenizer(prompt, return_mask=True, add_special_tokens=True)
         ids = ids.to(self.device)[:, :17]
         mask = mask.to(self.device)[:, :17]
-        prompt_emb = self.text_encoder(ids, mask).last_hidden_state
+        prompt_emb = self.text_encoder(ids, mask)
         return prompt_emb, mask
 
     def encode_prompt_null(self, prompt):
@@ -221,13 +172,10 @@ class ACEStepMusicPipeline(BasePipeline):
                 "attention_mask": mask
             },
             model_fwd_func=self.text_encoder,
-            get_hooked_layer_func=lambda i: self.text_encoder
-                .encoder.block[i]
-                .layer[0]
-                .SelfAttention.q,
-            layer_start_idx=8,
-            layer_end_idx=10,
-        ).last_hidden_state
+            get_hooked_layer_func=lambda i: self.text_encoder.encoders[i].attn.to_q,
+            layer_start_idx=4,
+            layer_end_idx=6,
+        )
         return prompt_emb, mask
 
     def tokenize_lyric(self, lyrics: str):
@@ -259,10 +207,6 @@ class ACEStepMusicPipeline(BasePipeline):
                     token_idx = self.lyric_tokenizer.encode(line, "en")
                 else:
                     token_idx = self.lyric_tokenizer.encode(line, language)
-                toks = self.lyric_tokenizer.batch_decode(
-                    [[tok_id] for tok_id in token_idx]
-                )
-                logger.info(f"{line} --> {language} --> {toks}")
                 lyric_token_idx += token_idx + [2]
             except Exception as e:
                 logger.warning("tokenize error", e, "for line", line, "major_language", language)
@@ -366,13 +310,7 @@ class ACEStepMusicPipeline(BasePipeline):
             lyric_mask = torch.zeros((1, 1), device=self.device, dtype=torch.long)
 
         num_frames = int(audio_duration * 44100 / 512 / 8)
-        # noise = randn_tensor(
-        #     shape=(1, 8, 16, num_frames),
-        #     generator=torch.Generator(device=self.device).manual_seed(seed),
-        #     device=self.device,
-        #     dtype=self.dtype,
-        # )
-        noise = torch.randn(1, 8, 16, num_frames, device=self.device, dtype=self.dtype, generator=torch.Generator(device=self.device).manual_seed(42))
+        noise = self.generate_noise((1, 8, 16, num_frames), seed=seed, device="cpu", dtype=torch.float32).to(self.device)
         attn_mask = torch.ones(1, num_frames, device=self.device, dtype=self.dtype)
         _, latents, sigmas, timesteps = self.prepare_latents(
             latents=noise,
@@ -526,10 +464,7 @@ class ACEStepMusicPipeline(BasePipeline):
 
         init_device = "cpu" if config.offload_mode is not None else config.device
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=256, clean="whitespace")
-        # text_encoder = ACETextEncoder.from_state_dict(state_dicts.t5, device=init_device, dtype=config.t5_dtype, **t5_config)
-        from transformers import UMT5EncoderModel
-        text_encoder = UMT5EncoderModel.from_pretrained("/home/zhangchengsong.zcs/.cache/diffsynth/modelscope/ACE-Step/ACE-Step-v1-3.5B/__version/umt5-base")
-        text_encoder = text_encoder.to(config.device).eval().to(config.t5_dtype)
+        text_encoder = ACETextEncoder.from_state_dict(state_dicts.t5, device=init_device, dtype=config.t5_dtype, **t5_config)
         dcae = DCAE.from_state_dict(state_dicts.dcae, config=dcae_config, device=init_device, dtype=config.vae_dtype)
         hifi_gan = ADaMoSHiFiGANV1.from_state_dict(state_dicts.vocoder, config=vocoder_config, device=init_device, dtype=config.vae_dtype)
         vae = MusicDCAE(dcae=dcae, vocoder=hifi_gan)
