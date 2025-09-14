@@ -14,7 +14,7 @@ if __name__ == "__main__":
         ),
         device="cuda:2",
     )
-    seed = 3299954530
+    seed = 42
 
     pipe = ACEStepMusicPipeline.from_pretrained(config)
     audio = pipe.text2audio(

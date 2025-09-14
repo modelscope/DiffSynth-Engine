@@ -10,34 +10,41 @@ from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.basic.attention import attention
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
-from diffsynth_engine.models.wan.wan_dit import rope_apply, modulate
+from diffsynth_engine.models.wan.wan_dit import modulate
 from diffsynth_engine.models.ace_step.ace_lyric_encoder import ConformerEncoder
 from diffsynth_engine.utils.constants import ACE_DIT_CONFIG_FILE
 
 
-class Qwen2RotaryEmbedding(nn.Module):
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, device="cuda:0"):
-        super().__init__() # TODO: how to deal with meta device issue?
-        device = "cuda:2"
-        self.inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, device=device, dtype=torch.int64).float() / dim))
+def rope_apply(x, freqs): # TODO: edit this into complex calculation
+    cos, sin = freqs  # [1, S, 1, D]
+    x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
+    x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
+    x_out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
+    return x_out.to(x.dtype).flatten(3)
+
+
+class Qwen2RotaryEmbedding:
+    def __init__(self, dim, max_position_embeddings=2048, base=10000):
+        super().__init__()
+        self.inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
         self._set_cos_sin_cache(seq_len=max_position_embeddings)
 
     def _set_cos_sin_cache(self, seq_len):
         self.max_seq_len_cached = seq_len
-        t = torch.arange(self.max_seq_len_cached, device=self.inv_freq.device, dtype=torch.int64).float()
+        t = torch.arange(self.max_seq_len_cached, dtype=torch.float32)
         freqs = torch.outer(t, self.inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1)
         self.cos_cached = emb.cos()
         self.sin_cached = emb.sin()
 
-    def forward(self, x: torch.Tensor):
+    def __call__(self, x: torch.Tensor):
         seq_len = x.shape[1]
         if seq_len > self.max_seq_len_cached:
             self._set_cos_sin_cache(seq_len=seq_len)
 
         return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype),
-            self.sin_cached[:seq_len].to(dtype=x.dtype),
+            self.cos_cached[None, :seq_len, None, :].to(x),
+            self.sin_cached[None, :seq_len, None, :].to(x),
         )
 
 
@@ -366,7 +373,6 @@ class ACEStepDiT(PreTrainedModel):
             dim=head_dim,
             max_position_embeddings=max_position,
             base=rope_theta,
-            device=device,
         )
 
         inner_dim = num_heads * head_dim
