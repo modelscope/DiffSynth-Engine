@@ -297,7 +297,7 @@ class FinalLayer(nn.Module):
 
 
 class ACEStepDiTStateDictConverter(StateDictConverter):
-    def convert(self, state_dict):
+    def convert(self, state_dict): # TODO: can this be more elegant?
         for key in list(state_dict.keys()):
             # change all linear_q / linear_k / linear_v / linear_p to q / k / v / p
             if "linear_q" in key:

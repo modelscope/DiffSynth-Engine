@@ -1,6 +1,6 @@
 from typing import Tuple
 
-import numpy as np
+import math
 import torch
 import torch.nn.functional as F
 import torch.distributed as dist
@@ -301,6 +301,10 @@ class ACEStepMusicPipeline(BasePipeline):
         guidance_interval: float = 0.5,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ):
+        def logistic(x, L=0.9, U=1.1, x_0=0.0, k=0.1):
+                return L + (U - L) / (1 + math.exp(-k * (x - x_0)))
+        omega = logistic(omega_scale)
+
         prompt_emb, prompt_attn_mask = self.encode_prompt(prompt)
         prompt_emb_null, prompt_attn_mask_null = self.encode_prompt_null(prompt)
         if len(lyrics.strip()) > 0:
@@ -320,7 +324,7 @@ class ACEStepMusicPipeline(BasePipeline):
         )
         # Initialize sampler
         self.sampler.initialize(sigmas=sigmas)
-        # guidance interval
+        # Guidance interval
         cfg_start_step = int(num_inference_steps * ((1 - guidance_interval) / 2))
         cfg_end_step = int(num_inference_steps * (guidance_interval / 2 + 0.5))
         momentum_buffer = MomentumBuffer()
@@ -367,22 +371,6 @@ class ACEStepMusicPipeline(BasePipeline):
                     attn_mask_ctx=context_mask,
                 )
             # Scheduler
-            def logistic_function(x, L=0.9, U=1.1, x_0=0.0, k=1):
-                # L = Lower bound
-                # U = Upper bound
-                # x_0 = Midpoint (x corresponding to y = 1.0)
-                # k = Steepness, can adjust based on preference
-
-                if isinstance(x, torch.Tensor):
-                    device_ = x.device
-                    x = x.to(torch.float).cpu().numpy()
-
-                new_x = L + (U - L) / (1 + np.exp(-k * (x - x_0)))
-
-                if isinstance(new_x, np.ndarray):
-                    new_x = torch.from_numpy(new_x).to(device_)
-                return new_x
-            omega = logistic_function(omega_scale, k=0.1)
             dx: torch.Tensor = noise_pred * (self.sampler.sigmas[i + 1] - self.sampler.sigmas[i])
             dx_mean = dx.mean(dim=(1, 2, 3), keepdim=True)
             latents = latents.to(dtype=torch.float32)
