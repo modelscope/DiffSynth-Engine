@@ -72,13 +72,11 @@ class SelfAttention(nn.Module):
         q = rearrange(q, "b s n d -> b n d s")
         k = rearrange(k, "b s n d -> b n s d")
         v = rearrange(v, "b s n d -> b n d s")
-        q, k, v = q.float(), k.float(), v.float()
         v = F.pad(v, (0, 0, 0, 1), mode="constant", value=1.0)  # b n (d+1) s
-        dtype = x.dtype
         x = torch.matmul(torch.matmul(v, k), q)  # inner: b n (d+1) d
         x = x[:, :, :-1] / (x[:, :, -1:] + 1e-15)  # b n d s
         x = rearrange(x, "b n d s -> b s (n d)")
-        return self.o(x.to(dtype=dtype))
+        return self.o(x)
 
 
 class CrossAttention(nn.Module):
@@ -201,8 +199,7 @@ class GLUMBConv(nn.Module):
         x = self.inverted_conv(x)
         x = self.depth_conv(x)
         x, gate = torch.chunk(x, 2, dim=1)
-        gate = self.glu_act(gate)
-        x = x * gate
+        x = x * self.glu_act(gate)
         x = self.point_conv(x)
         x = x.transpose(1, 2)
         return x
