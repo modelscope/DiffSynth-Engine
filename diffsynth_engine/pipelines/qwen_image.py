@@ -255,15 +255,9 @@ class QwenImagePipeline(BasePipeline):
         return pipe
 
     def update_weights(self, state_dicts: QwenImageStateDicts):
-        if state_dicts.model and self.dit:
-            self.dit.load_state_dict(state_dicts.model, assign=True)
-            self.dit.to(device=self.config.device, dtype=self.config.model_dtype, non_blocking=True)
-        if state_dicts.encoder and self.encoder:
-            self.encoder.load_state_dict(state_dicts.encoder, assign=True)
-            self.encoder.to(device=self.config.device, dtype=self.config.encoder_dtype, non_blocking=True)
-        if state_dicts.vae and self.vae:
-            self.vae.load_state_dict(state_dicts.vae, assign=True)
-            self.vae.to(device=self.config.device, dtype=self.config.vae_dtype, non_blocking=True)
+        self.update_component(self.dit, state_dicts.model, self.config.device, self.config.model_dtype)
+        self.update_component(self.encoder, state_dicts.encoder, self.config.device, self.config.encoder_dtype)
+        self.update_component(self.vae, state_dicts.vae, self.config.device, self.config.vae_dtype)
 
     def compile(self):
         self.dit.compile_repeated_blocks(dynamic=True)

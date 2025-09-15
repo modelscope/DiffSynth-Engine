@@ -169,6 +169,17 @@ class BasePipeline:
         generator = None if seed is None else torch.Generator(device).manual_seed(seed)
         noise = torch.randn(shape, generator=generator, device=device, dtype=dtype)
         return noise
+    
+    @staticmethod
+    def update_component(
+        component: torch.nn.Module,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+    ):
+        if component and state_dict:
+            component.load_state_dict(state_dict, assign=True)
+            component.to(device=device, dtype=dtype, non_blocking=True)
 
     def encode_image(
         self, image: torch.Tensor, tiled: bool = False, tile_size: int = 64, tile_stride: int = 32
