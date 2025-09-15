@@ -176,7 +176,7 @@ class BasePipeline:
         state_dict: Dict[str, torch.Tensor],
         device: str,
         dtype: torch.dtype,
-    ):
+    ) -> None:
         if component and state_dict:
             component.load_state_dict(state_dict, assign=True)
             component.to(device=device, dtype=dtype, non_blocking=True)
