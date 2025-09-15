@@ -254,7 +254,7 @@ class QwenImagePipeline(BasePipeline):
             pipe.compile()
         return pipe
 
-    def update_weights(self, state_dicts: QwenImageStateDicts):
+    def update_weights(self, state_dicts: QwenImageStateDicts) -> None:
         self.update_component(self.dit, state_dicts.model, self.config.device, self.config.model_dtype)
         self.update_component(self.encoder, state_dicts.encoder, self.config.device, self.config.encoder_dtype)
         self.update_component(self.vae, state_dicts.vae, self.config.device, self.config.vae_dtype)
