@@ -573,7 +573,7 @@ class FluxImagePipeline(BasePipeline):
             pipe.compile()
         return pipe
 
-    def update_weights(self, state_dicts: FluxStateDicts):
+    def update_weights(self, state_dicts: FluxStateDicts) -> None:
         self.update_component(self.dit, state_dicts.model, self.config.device, self.config.model_dtype)
         self.update_component(self.text_encoder_1, state_dicts.clip, self.config.device, self.config.clip_dtype)
         self.update_component(self.text_encoder_2, state_dicts.t5, self.config.device, self.config.t5_dtype)
