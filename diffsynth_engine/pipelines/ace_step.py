@@ -302,7 +302,7 @@ class ACEStepMusicPipeline(BasePipeline):
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ):
         def logistic(x, L=0.9, U=1.1, x_0=0.0, k=0.1):
-                return L + (U - L) / (1 + math.exp(-k * (x - x_0)))
+            return L + (U - L) / (1 + math.exp(-k * (x - x_0)))
         omega = logistic(omega_scale)
 
         prompt_emb, prompt_attn_mask = self.encode_prompt(prompt)
