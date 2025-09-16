@@ -53,6 +53,17 @@ class BasePipeline:
 
     def update_weights(self, state_dicts: BaseStateDicts) -> None:
         raise NotImplementedError()
+    
+    @staticmethod
+    def update_component(
+        component: torch.nn.Module,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+    ) -> None:
+        if component and state_dict:
+            component.load_state_dict(state_dict, assign=True)
+            component.to(device=device, dtype=dtype, non_blocking=True)
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         for lora_path, lora_scale in lora_list:
@@ -169,17 +180,6 @@ class BasePipeline:
         generator = None if seed is None else torch.Generator(device).manual_seed(seed)
         noise = torch.randn(shape, generator=generator, device=device, dtype=dtype)
         return noise
-    
-    @staticmethod
-    def update_component(
-        component: torch.nn.Module,
-        state_dict: Dict[str, torch.Tensor],
-        device: str,
-        dtype: torch.dtype,
-    ) -> None:
-        if component and state_dict:
-            component.load_state_dict(state_dict, assign=True)
-            component.to(device=device, dtype=dtype, non_blocking=True)
 
     def encode_image(
         self, image: torch.Tensor, tiled: bool = False, tile_size: int = 64, tile_stride: int = 32
