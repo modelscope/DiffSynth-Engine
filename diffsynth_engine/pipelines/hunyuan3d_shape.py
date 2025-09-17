@@ -1,4 +1,5 @@
 import torch
+from typing import Optional, Callable
 from tqdm import tqdm
 from PIL import Image
 from diffsynth_engine.algorithm.noise_scheduler.flow_match.recifited_flow import RecifitedFlowScheduler
@@ -179,6 +180,7 @@ class Hunyuan3DShapePipeline(BasePipeline):
         num_inference_steps: int = 50,
         guidance_scale: float = 7.5,
         seed: int = 42,
+        progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
         image_emb = self.encode_image(image)
 
@@ -197,4 +199,6 @@ class Hunyuan3DShapePipeline(BasePipeline):
             noise_pred, noise_pred_uncond = model_outputs.chunk(2)
             model_outputs = noise_pred_uncond + guidance_scale * (noise_pred - noise_pred_uncond)
             latents = self.sampler.step(latents, model_outputs, i)
+            if progress_callback is not None:
+                progress_callback(i, len(timesteps), "DENOISING")            
         return self.decode_latents(latents)
