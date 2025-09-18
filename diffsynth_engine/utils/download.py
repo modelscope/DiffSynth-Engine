@@ -81,7 +81,13 @@ def fetch_modelscope_model(
         api.login(access_token)
     with HeartbeatFileLock(lock_file_path):
         directory = os.path.join(DIFFSYNTH_CACHE, "modelscope", model_id, revision if revision else "__version")
-        dirpath = snapshot_download(model_id, revision=revision, local_dir=directory, allow_patterns=path, local_files_only=MS_HUB_OFFLINE)
+        dirpath = snapshot_download(
+            model_id,
+            revision=revision,
+            local_dir=directory,
+            allow_patterns=path,
+            local_files_only=MS_HUB_OFFLINE
+        )
 
     if isinstance(path, str):
         path = glob.glob(os.path.join(dirpath, path))
