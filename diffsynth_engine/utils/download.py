@@ -12,7 +12,7 @@ from modelscope import snapshot_download
 from modelscope.hub.api import HubApi
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.lock import HeartbeatFileLock
-from diffsynth_engine.utils.env import DIFFSYNTH_FILELOCK_DIR, DIFFSYNTH_CACHE
+from diffsynth_engine.utils.env import DIFFSYNTH_FILELOCK_DIR, DIFFSYNTH_CACHE, MS_HUB_OFFLINE
 from diffsynth_engine.utils.constants import MB
 
 logger = logging.get_logger(__name__)
@@ -81,7 +81,7 @@ def fetch_modelscope_model(
         api.login(access_token)
     with HeartbeatFileLock(lock_file_path):
         directory = os.path.join(DIFFSYNTH_CACHE, "modelscope", model_id, revision if revision else "__version")
-        dirpath = snapshot_download(model_id, revision=revision, local_dir=directory, allow_patterns=path)
+        dirpath = snapshot_download(model_id, revision=revision, local_dir=directory, allow_patterns=path, local_files_only=MS_HUB_OFFLINE)
 
     if isinstance(path, str):
         path = glob.glob(os.path.join(dirpath, path))

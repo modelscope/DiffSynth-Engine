@@ -8,3 +8,5 @@ DIFFSYNTH_CACHE = os.environ.get("DIFFSYNTH_CACHE", os.path.join(HOME, ".cache",
 DIFFSYNTH_FILELOCK_DIR = os.environ.get(
     "DIFFSYNTH_FILELOCK_DIR", os.path.join(HOME, ".cache", "diffsynth", "filelocks")
 )
+
+MS_HUB_OFFLINE = int(os.getenv("MS_HUB_OFFLINE", "0")) != 0
