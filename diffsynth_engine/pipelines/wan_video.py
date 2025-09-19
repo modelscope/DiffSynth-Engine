@@ -557,7 +557,7 @@ class WanVideoPipeline(BasePipeline):
 
         with LoRAContext():
             attn_kwargs = {
-                "attn_impl": config.dit_attn_impl,
+                "attn_impl": config.dit_attn_impl.value,
                 "sparge_smooth_k": config.sparge_smooth_k,
                 "sparge_cdfthreshd": config.sparge_cdfthreshd,
                 "sparge_simthreshd1": config.sparge_simthreshd1,

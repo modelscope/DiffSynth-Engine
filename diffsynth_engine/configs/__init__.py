@@ -17,6 +17,7 @@ from .pipeline import (
     WanStateDicts,
     WanS2VStateDicts,
     QwenImageStateDicts,
+    AttnImpl,
 )
 from .controlnet import ControlType, ControlNetParams
 
@@ -39,6 +40,7 @@ __all__ = [
     "WanStateDicts",
     "WanS2VStateDicts",
     "QwenImageStateDicts",
+    "AttnImpl",
     "ControlType",
     "ControlNetParams",
 ]

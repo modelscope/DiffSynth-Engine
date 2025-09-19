@@ -1,5 +1,6 @@
 import os
 import torch
+from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
 
@@ -19,9 +20,21 @@ class BaseConfig:
     offload_to_disk: bool = False
 
 
+class AttnImpl(Enum):
+    AUTO = "auto"
+    EAGER = "eager"  # Native Attention
+    FA2 = "fa2"  # Flash Attention 2
+    FA3 = "fa3"  # Flash Attention 3
+    FA3_FP8 = "fa3_fp8"  # Flash Attention 3 with FP8
+    XFORMERS = "xformers"  # XFormers
+    SDPA = "sdpa"  # Scaled Dot Product Attention
+    SAGE = "sage"  # Sage Attention
+    SPARGE = "sparge"  # Sparge Attention
+
+
 @dataclass
 class AttentionConfig:
-    dit_attn_impl: str = "auto"
+    dit_attn_impl: AttnImpl = AttnImpl.AUTO
     # Sparge Attention
     sparge_smooth_k: bool = True
     sparge_cdfthreshd: float = 0.6

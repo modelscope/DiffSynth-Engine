@@ -11,6 +11,7 @@ from .configs import (
     FluxStateDicts,
     WanStateDicts,
     QwenImageStateDicts,
+    AttnImpl,
     ControlNetParams,
     ControlType,
 )
@@ -54,6 +55,7 @@ __all__ = [
     "FluxStateDicts",
     "WanStateDicts",
     "QwenImageStateDicts",
+    "AttnImpl",
     "ControlNetParams",
     "ControlType",
     "SDImagePipeline",

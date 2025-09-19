@@ -13,6 +13,7 @@ from diffsynth_engine.utils.flag import (
     SAGE_ATTN_AVAILABLE,
     SPARGE_ATTN_AVAILABLE,
 )
+from diffsynth_engine.utils.platform import DTYPE_FP8
 
 FA3_MAX_HEADDIM = 256
 
@@ -125,12 +126,13 @@ def attention(
         None,
         "auto",
         "eager",
-        "flash_attn_2",
-        "flash_attn_3",
+        "fa2",
+        "fa3",
+        "fa3_fp8",
         "xformers",
         "sdpa",
-        "sage_attn",
-        "sparge_attn",
+        "sage",
+        "sparge",
     ]
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
     if attn_impl is None or attn_impl == "auto":
@@ -139,9 +141,13 @@ def attention(
                 return flash_attn3(q, k, v, softmax_scale=scale)
             else:
                 if not flash_attn3_compatible:
-                    logger.warning(f"head_dim={q.shape[-1]}, but flash_attn_3 only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation")
+                    logger.warning(
+                        f"head_dim={q.shape[-1]}, but flash_attn_3 only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
+                    )
                 else:
-                    logger.debug("flash_attn_3 does not support attention mask, will use fallback attention implementation")
+                    logger.debug(
+                        "flash_attn_3 does not support attention mask, will use fallback attention implementation"
+                    )
         if XFORMERS_AVAILABLE:
             return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         if SDPA_AVAILABLE:
@@ -152,23 +158,31 @@ def attention(
     else:
         if attn_impl == "eager":
             return eager_attn(q, k, v, attn_mask=attn_mask, scale=scale)
-        if attn_impl == "flash_attn_3":
+        if attn_impl == "fa3" or attn_impl == "fa3_fp8":
             if not flash_attn3_compatible:
                 raise RuntimeError(
                     f"head_dim={q.shape[-1]}, but flash_attn_3 only supports head dimension at most {FA3_MAX_HEADDIM}"
                 )
             if attn_mask is not None:
                 raise RuntimeError("flash_attn_3 does not support attention mask")
-            return flash_attn3(q, k, v, softmax_scale=scale)
-        if attn_impl == "flash_attn_2":
+            if attn_impl == "fa3":
+                return flash_attn3(q, k, v, softmax_scale=scale)
+            else:
+                origin_dtype = q.dtype
+                q = q.to(dtype=DTYPE_FP8)
+                k = k.to(dtype=DTYPE_FP8)
+                v = v.to(dtype=DTYPE_FP8)
+                out = flash_attn3(q, k, v, softmax_scale=scale)
+                return out.to(dtype=origin_dtype)
+        if attn_impl == "fa2":
             return flash_attn2(q, k, v, softmax_scale=scale)
         if attn_impl == "xformers":
             return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         if attn_impl == "sdpa":
             return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
-        if attn_impl == "sage_attn":
+        if attn_impl == "sage":
             return sage_attn(q, k, v, attn_mask=attn_mask, scale=scale)
-        if attn_impl == "sparge_attn":
+        if attn_impl == "sparge":
             return sparge_attn(
                 q,
                 k,
@@ -247,12 +261,14 @@ def long_context_attention(
     assert attn_impl in [
         None,
         "auto",
-        "flash_attn_2",
-        "flash_attn_3",
+        "fa2",
+        "fa3",
+        "fa3_fp8",
         "sdpa",
-        "sage_attn",
-        "sparge_attn",
+        "sage",
+        "sparge",
     ]
+    assert attn_mask is None, "long context attention does not support attention mask"
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
     if attn_impl is None or attn_impl == "auto":
         if FLASH_ATTN_3_AVAILABLE:
@@ -268,20 +284,27 @@ def long_context_attention(
             return LongContextAttention(attn_type=AttnType.FA)(q, k, v, softmax_scale=scale)
         raise ValueError("No available long context attention implementation")
     else:
-        if attn_impl == "flash_attn_3":
-            if flash_attn3_compatible:
-                return LongContextAttention(attn_type=AttnType.FA3)(q, k, v, softmax_scale=scale)
-            else:
+        if attn_impl == "fa3" or attn_impl == "fa3_fp8":
+            if not flash_attn3_compatible:
                 raise RuntimeError(
                     f"head_dim={q.shape[-1]}, but flash_attn_3 only supports head dimension at most {FA3_MAX_HEADDIM}"
                 )
-        if attn_impl == "flash_attn_2":
+            if attn_impl == "fa3":
+                return LongContextAttention(attn_type=AttnType.FA3)(q, k, v, softmax_scale=scale)
+
+            origin_dtype = q.dtype
+            q = q.to(dtype=DTYPE_FP8)
+            k = k.to(dtype=DTYPE_FP8)
+            v = v.to(dtype=DTYPE_FP8)
+            out = LongContextAttention(attn_type=AttnType.FA3)(q, k, v, softmax_scale=scale)
+            return out.to(dtype=origin_dtype)
+        if attn_impl == "fa2":
             return LongContextAttention(attn_type=AttnType.FA)(q, k, v, softmax_scale=scale)
         if attn_impl == "sdpa":
             return LongContextAttention(attn_type=AttnType.TORCH)(q, k, v, softmax_scale=scale)
-        if attn_impl == "sage_attn":
-            return LongContextAttention(attn_type=AttnType.SAGE_FP8)(q, k, v, softmax_scale=scale)
-        if attn_impl == "sparge_attn":
+        if attn_impl == "sage":
+            return LongContextAttention(attn_type=AttnType.SAGE_AUTO)(q, k, v, softmax_scale=scale)
+        if attn_impl == "sparge":
             attn_processor = SparseAttentionMeansim()
             # default args from spas_sage2_attn_meansim_cuda
             attn_processor.smooth_k = torch.tensor(kwargs.get("sparge_smooth_k", True))

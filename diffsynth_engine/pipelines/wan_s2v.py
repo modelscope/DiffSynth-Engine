@@ -239,7 +239,15 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
 
         return ref_latents, motion_latents, motion_frames
 
-    def encode_pose(self, pose_video: List[Image.Image], pose_video_fps: int, num_clips: int, num_frames_per_clip: int, height: int, width: int):
+    def encode_pose(
+        self,
+        pose_video: List[Image.Image],
+        pose_video_fps: int,
+        num_clips: int,
+        num_frames_per_clip: int,
+        height: int,
+        width: int,
+    ):
         self.load_models_to_device(["vae"])
         max_num_pose_frames = num_frames_per_clip * num_clips
         pose_video = read_n_frames(pose_video, pose_video_fps, max_num_pose_frames, target_fps=self.config.fps)
@@ -466,7 +474,9 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
                 dtype=self.dtype,
             ).to(self.device)
         if pose_video is not None:
-            pose_latents_all_clips = self.encode_pose(pose_video, pose_video_fps, num_clips, num_frames_per_clip, height, width)
+            pose_latents_all_clips = self.encode_pose(
+                pose_video, pose_video_fps, num_clips, num_frames_per_clip, height, width
+            )
 
         output_frames_all_clips = []
         for clip_idx in range(num_clips):
@@ -602,7 +612,9 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         return cls.from_state_dict(state_dicts, config)
 
     @classmethod
-    def from_state_dict(cls, state_dicts: WanS2VStateDicts, config: WanSpeech2VideoPipelineConfig) -> "WanSpeech2VideoPipeline":
+    def from_state_dict(
+        cls, state_dicts: WanS2VStateDicts, config: WanSpeech2VideoPipelineConfig
+    ) -> "WanSpeech2VideoPipeline":
         if config.parallelism > 1:
             pipe = ParallelWrapper(
                 cfg_degree=config.cfg_degree,
@@ -617,7 +629,9 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         return pipe
 
     @classmethod
-    def _from_state_dict(cls, state_dicts: WanS2VStateDicts, config: WanSpeech2VideoPipelineConfig) -> "WanSpeech2VideoPipeline":
+    def _from_state_dict(
+        cls, state_dicts: WanS2VStateDicts, config: WanSpeech2VideoPipelineConfig
+    ) -> "WanSpeech2VideoPipeline":
         # default params from model config
         vae_type = "wan2.1-vae"
         dit_type = "wan2.2-s2v-14b"
@@ -632,14 +646,16 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         init_device = "cpu" if config.offload_mode is not None else config.device
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
         text_encoder = WanTextEncoder.from_state_dict(state_dicts.t5, device=init_device, dtype=config.t5_dtype)
-        vae = WanVideoVAE.from_state_dict(state_dicts.vae, config=vae_config, device=init_device, dtype=config.vae_dtype)
+        vae = WanVideoVAE.from_state_dict(
+            state_dicts.vae, config=vae_config, device=init_device, dtype=config.vae_dtype
+        )
         audio_encoder = Wav2Vec2Model.from_state_dict(
             state_dicts.audio_encoder, config=Wav2Vec2Config(), device=init_device, dtype=config.audio_encoder_dtype
         )
 
         with LoRAContext():
             attn_kwargs = {
-                "attn_impl": config.dit_attn_impl,
+                "attn_impl": config.dit_attn_impl.value,
                 "sparge_smooth_k": config.sparge_smooth_k,
                 "sparge_cdfthreshd": config.sparge_cdfthreshd,
                 "sparge_simthreshd1": config.sparge_simthreshd1,
