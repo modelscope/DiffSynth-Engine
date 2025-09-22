@@ -28,13 +28,7 @@ class RecifitedFlowScheduler(BaseScheduler):
         self.shift_terminal = shift_terminal
         # static mu for distill model
         self.exponential_shift_mu = exponential_shift_mu
-        self.store_initial_config(
-            shift=shift,
-            sigma_min=sigma_min,
-            sigma_max=sigma_max,
-            shift_terminal=shift_terminal,
-            exponential_shift_mu=exponential_shift_mu,
-        )
+        self.store_initial_config()
 
     def _sigma_to_t(self, sigma):
         return sigma * self.num_train_timesteps

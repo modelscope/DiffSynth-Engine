@@ -285,7 +285,7 @@ class QwenImagePipeline(BasePipeline):
         self.noise_scheduler.restore_scheduler_config()
 
     def apply_scheduler_config(self, scheduler_config: Dict):
-        self.noise_scheduler.update_scheduler_config(**scheduler_config)
+        self.noise_scheduler.update_scheduler_config(scheduler_config)
 
     def prepare_latents(
         self,
