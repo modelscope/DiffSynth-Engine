@@ -200,5 +200,5 @@ class Hunyuan3DShapePipeline(BasePipeline):
             model_outputs = noise_pred_uncond + guidance_scale * (noise_pred - noise_pred_uncond)
             latents = self.sampler.step(latents, model_outputs, i)
             if progress_callback is not None:
-                progress_callback(i, len(timesteps), "DENOISING")            
+                progress_callback(i, len(timesteps), "DENOISING")
         return self.decode_latents(latents)

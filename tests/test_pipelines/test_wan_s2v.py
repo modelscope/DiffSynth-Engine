@@ -11,8 +11,6 @@ from diffsynth_engine.utils.video import save_video_with_audio, load_video
 from tests.common.test_case import VideoTestCase
 
 
-
-
 class TestWanSpeech2Video(VideoTestCase):
     @classmethod
     def setUpClass(cls):

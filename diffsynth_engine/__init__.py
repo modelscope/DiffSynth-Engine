@@ -14,6 +14,9 @@ from .configs import (
     AttnImpl,
     ControlNetParams,
     ControlType,
+    QwenImageControlNetParams,
+    QwenImageControlType,
+    LoraConfig,
 )
 from .pipelines import (
     SDImagePipeline,
@@ -58,6 +61,8 @@ __all__ = [
     "AttnImpl",
     "ControlNetParams",
     "ControlType",
+    "QwenImageControlNetParams",
+    "QwenImageControlType",
     "SDImagePipeline",
     "SDControlNet",
     "SDXLImagePipeline",
@@ -74,6 +79,7 @@ __all__ = [
     "FluxIPAdapterRefTool",
     "FluxReplaceByControlTool",
     "FluxReduxRefTool",
+    "LoraConfig",
     "fetch_model",
     "fetch_modelscope_model",
     "register_fetch_modelscope_model",

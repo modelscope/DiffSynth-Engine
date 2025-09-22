@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import Any, Dict, Tuple, Union, Optional
+from typing import Any, Dict, List, Tuple, Union, Optional
 from einops import rearrange
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
@@ -190,7 +190,8 @@ class QwenDoubleStreamAttention(nn.Module):
         self,
         image: torch.FloatTensor,
         text: torch.FloatTensor,
-        image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
         img_q, img_k, img_v = self.to_q(image), self.to_k(image), self.to_v(image)
         txt_q, txt_k, txt_v = self.add_q_proj(text), self.add_k_proj(text), self.add_v_proj(text)
@@ -206,8 +207,8 @@ class QwenDoubleStreamAttention(nn.Module):
         img_q, img_k = self.norm_q(img_q), self.norm_k(img_k)
         txt_q, txt_k = self.norm_added_q(txt_q), self.norm_added_k(txt_k)
 
-        if image_rotary_emb is not None:
-            img_freqs, txt_freqs = image_rotary_emb
+        if rotary_emb is not None:
+            img_freqs, txt_freqs = rotary_emb
             img_q = apply_rotary_emb_qwen(img_q, img_freqs)
             img_k = apply_rotary_emb_qwen(img_k, img_freqs)
             txt_q = apply_rotary_emb_qwen(txt_q, txt_freqs)
@@ -221,7 +222,7 @@ class QwenDoubleStreamAttention(nn.Module):
         joint_k = joint_k.transpose(1, 2)
         joint_v = joint_v.transpose(1, 2)
 
-        joint_attn_out = attention_ops.attention(joint_q, joint_k, joint_v, **self.attn_kwargs)
+        joint_attn_out = attention_ops.attention(joint_q, joint_k, joint_v, attn_mask=attn_mask, **self.attn_kwargs)
 
         joint_attn_out = rearrange(joint_attn_out, "b s h d -> b s (h d)").to(joint_q.dtype)
 
@@ -285,7 +286,8 @@ class QwenImageTransformerBlock(nn.Module):
         image: torch.Tensor,
         text: torch.Tensor,
         temb: torch.Tensor,
-        image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         img_mod_attn, img_mod_mlp = self.img_mod(temb).chunk(2, dim=-1)  # [B, 3*dim] each
         txt_mod_attn, txt_mod_mlp = self.txt_mod(temb).chunk(2, dim=-1)  # [B, 3*dim] each
@@ -299,7 +301,8 @@ class QwenImageTransformerBlock(nn.Module):
         img_attn_out, txt_attn_out = self.attn(
             image=img_modulated,
             text=txt_modulated,
-            image_rotary_emb=image_rotary_emb,
+            rotary_emb=rotary_emb,
+            attn_mask=attn_mask,
         )
 
         image = image + img_gate * img_attn_out
@@ -368,13 +371,74 @@ class QwenImageDiT(PreTrainedModel):
         )
         return hidden_states
 
+    def process_entity_masks(
+        self,
+        text: torch.Tensor,
+        text_seq_lens: torch.LongTensor,
+        rotary_emb: Tuple[torch.Tensor, torch.Tensor],
+        video_fhw: List[Tuple[int, int, int]],
+        entity_text: List[torch.Tensor],
+        entity_seq_lens: List[torch.LongTensor],
+        entity_masks: List[torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+    ):
+        entity_seq_lens = [seq_lens.max().item() for seq_lens in entity_seq_lens]
+        text_seq_lens = entity_seq_lens + [text_seq_lens.max().item()]
+        entity_text = [
+            self.txt_in(self.txt_norm(text[:, :seq_len])) for text, seq_len in zip(entity_text, entity_seq_lens)
+        ]
+        text = torch.cat(entity_text + [text], dim=1)
+
+        entity_txt_freqs = [self.pos_embed(video_fhw, seq_len, device)[1] for seq_len in entity_seq_lens]
+        img_freqs, txt_freqs = rotary_emb
+        txt_freqs = torch.cat(entity_txt_freqs + [txt_freqs], dim=0)
+        rotary_emb = (img_freqs, txt_freqs)
+
+        global_mask = torch.ones_like(entity_masks[0], device=device, dtype=dtype)
+        patched_masks = [self.patchify(mask) for mask in entity_masks + [global_mask]]
+        batch_size, image_seq_len = patched_masks[0].shape[:2]
+        total_seq_len = sum(text_seq_lens) + image_seq_len
+        attention_mask = torch.ones((batch_size, total_seq_len, total_seq_len), device=device, dtype=torch.bool)
+
+        # text-image attention mask
+        img_start, img_end = sum(text_seq_lens), total_seq_len
+        cumsum = [0]
+        for seq_len in text_seq_lens:
+            cumsum.append(cumsum[-1] + seq_len)
+        for i, patched_mask in enumerate(patched_masks):
+            txt_start, txt_end = cumsum[i], cumsum[i + 1]
+            mask = torch.sum(patched_mask, dim=-1) > 0
+            mask = mask.unsqueeze(1).repeat(1, text_seq_lens[i], 1)
+            # text-to-image attention
+            attention_mask[:, txt_start:txt_end, img_start:img_end] = mask
+            # image-to-text attention
+            attention_mask[:, img_start:img_end, txt_start:txt_end] = mask.transpose(1, 2)
+        # entity text tokens should not attend to each other
+        for i in range(len(text_seq_lens)):
+            for j in range(len(text_seq_lens)):
+                if i == j:
+                    continue
+                i_start, i_end = cumsum[i], cumsum[i + 1]
+                j_start, j_end = cumsum[j], cumsum[j + 1]
+                attention_mask[:, i_start:i_end, j_start:j_end] = False
+
+        attn_mask = torch.zeros_like(attention_mask, device=device, dtype=dtype)
+        attn_mask[~attention_mask] = -torch.inf
+        attn_mask = attn_mask.unsqueeze(1)
+        return text, rotary_emb, attn_mask
+
     def forward(
         self,
         image: torch.Tensor,
         edit: torch.Tensor = None,
-        text: torch.Tensor = None,
         timestep: torch.LongTensor = None,
-        txt_seq_lens: torch.LongTensor = None,
+        text: torch.Tensor = None,
+        text_seq_lens: torch.LongTensor = None,
+        context_latents: Optional[torch.Tensor] = None,
+        entity_text: Optional[List[torch.Tensor]] = None,
+        entity_seq_lens: Optional[List[torch.LongTensor]] = None,
+        entity_masks: Optional[List[torch.Tensor]] = None,
     ):
         h, w = image.shape[-2:]
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
@@ -386,35 +450,59 @@ class QwenImageDiT(PreTrainedModel):
                 (
                     image,
                     edit,
-                    text,
                     timestep,
-                    txt_seq_lens,
+                    text,
+                    text_seq_lens,
+                    *(entity_text if entity_text is not None else ()),
+                    *(entity_seq_lens if entity_seq_lens is not None else ()),
+                    *(entity_masks if entity_masks is not None else ()),
+                    context_latents,
                 ),
                 use_cfg=use_cfg,
             ),
         ):
             conditioning = self.time_text_embed(timestep, image.dtype)
             video_fhw = [(1, h // 2, w // 2)]  # frame, height, width
-            max_length = txt_seq_lens.max().item()
+            text_seq_len = text_seq_lens.max().item()
             image = self.patchify(image)
             image_seq_len = image.shape[1]
+            if context_latents is not None:
+                context_latents = context_latents.to(dtype=image.dtype)
+                context_latents = self.patchify(context_latents)
+                image = torch.cat([image, context_latents], dim=1)
+                video_fhw += [(1, h // 2, w // 2)]
             if edit is not None:
                 edit = edit.to(dtype=image.dtype)
                 edit = self.patchify(edit)
                 image = torch.cat([image, edit], dim=1)
-                video_fhw += video_fhw
+                video_fhw += [(1, h // 2, w // 2)]
 
-            image_rotary_emb = self.pos_embed(video_fhw, max_length, image.device)
+            rotary_emb = self.pos_embed(video_fhw, text_seq_len, image.device)
 
             image = self.img_in(image)
-            text = self.txt_in(self.txt_norm(text[:, :max_length]))
+            text = self.txt_in(self.txt_norm(text[:, :text_seq_len]))
+
+            attn_mask = None
+            if entity_text is not None:
+                text, rotary_emb, attn_mask = self.process_entity_masks(
+                    text,
+                    text_seq_lens,
+                    rotary_emb,
+                    video_fhw,
+                    entity_text,
+                    entity_seq_lens,
+                    entity_masks,
+                    image.device,
+                    image.dtype,
+                )
 
             for block in self.transformer_blocks:
-                text, image = block(image=image, text=text, temb=conditioning, image_rotary_emb=image_rotary_emb)
+                text, image = block(
+                    image=image, text=text, temb=conditioning, rotary_emb=rotary_emb, attn_mask=attn_mask
+                )
             image = self.norm_out(image, conditioning)
             image = self.proj_out(image)
-            if edit is not None:
-                image = image[:, :image_seq_len]
+            image = image[:, :image_seq_len]
 
             image = self.unpatchify(image, h, w)
 

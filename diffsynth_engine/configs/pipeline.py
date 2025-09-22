@@ -365,3 +365,9 @@ def init_parallel_config(config: FluxPipelineConfig | QwenImagePipelineConfig | 
         config.tp_degree = 1
     else:
         raise ValueError("sp_ulysses_degree and sp_ring_degree must be specified together")
+
+
+@dataclass
+class LoraConfig:
+    scale: float
+    scheduler_config: Optional[Dict] = None

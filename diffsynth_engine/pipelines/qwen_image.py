@@ -2,12 +2,17 @@ import json
 import torch
 import torch.distributed as dist
 import math
-from typing import Callable, List, Tuple, Optional, Union, Dict
+from typing import Callable, List, Dict, Tuple, Optional, Union
 from tqdm import tqdm
 from einops import rearrange
 from PIL import Image
 
-from diffsynth_engine.configs import QwenImagePipelineConfig, QwenImageStateDicts
+from diffsynth_engine.configs import (
+    QwenImagePipelineConfig,
+    QwenImageStateDicts,
+    QwenImageControlNetParams,
+    QwenImageControlType,
+)
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.models.qwen_image import (
     QwenImageDiT,
@@ -71,6 +76,7 @@ class QwenImageLoRAConverter(LoRAStateDictConverter):
             lora_args["alpha"] = alpha
 
             key = key.replace(f".{lora_a_suffix}", "")
+            key = key.replace("base_model.model.", "")
 
             if key.startswith("transformer") and "attn.to_out.0" in key:
                 key = key.replace("attn.to_out.0", "attn.to_out")
@@ -106,6 +112,7 @@ class QwenImagePipeline(BasePipeline):
 
         self.edit_prompt_template_encode = "<|im_start|>system\nDescribe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{}<|im_end|>\n<|im_start|>assistant\n"
         self.edit_prompt_template_encode_start_idx = 64
+
         # sampler
         self.noise_scheduler = RecifitedFlowScheduler(shift=3.0, use_dynamic_shifting=True)
         self.sampler = FlowMatchEulerSampler()
@@ -201,7 +208,7 @@ class QwenImagePipeline(BasePipeline):
 
         with LoRAContext():
             attn_kwargs = {
-                "attn_impl": config.dit_attn_impl.value,
+                "attn_impl": config.dit_attn_impl,
                 "sparge_smooth_k": config.sparge_smooth_k,
                 "sparge_cdfthreshd": config.sparge_cdfthreshd,
                 "sparge_simthreshd1": config.sparge_simthreshd1,
@@ -275,6 +282,10 @@ class QwenImagePipeline(BasePipeline):
 
     def unload_loras(self):
         self.dit.unload_loras()
+        self.noise_scheduler.restore_scheduler_config()
+
+    def apply_scheduler_config(self, scheduler_config: Dict):
+        self.noise_scheduler.update_scheduler_config(**scheduler_config)
 
     def prepare_latents(
         self,
@@ -312,18 +323,18 @@ class QwenImagePipeline(BasePipeline):
         input_ids, attention_mask = outputs["input_ids"].to(self.device), outputs["attention_mask"].to(self.device)
         outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         hidden_states = outputs["hidden_states"]
-        prompt_embeds = hidden_states[:, drop_idx:]
-        prompt_embeds_mask = attention_mask[:, drop_idx:]
-        seq_len = prompt_embeds.shape[1]
+        prompt_emb = hidden_states[:, drop_idx:]
+        prompt_emb_mask = attention_mask[:, drop_idx:]
+        seq_len = prompt_emb.shape[1]
 
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
-        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
+        prompt_emb = prompt_emb.repeat(1, num_images_per_prompt, 1)
+        prompt_emb = prompt_emb.view(batch_size * num_images_per_prompt, seq_len, -1)
 
-        prompt_embeds_mask = prompt_embeds_mask.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds_mask = prompt_embeds_mask.view(batch_size * num_images_per_prompt, seq_len)
+        prompt_emb_mask = prompt_emb_mask.repeat(1, num_images_per_prompt, 1)
+        prompt_emb_mask = prompt_emb_mask.view(batch_size * num_images_per_prompt, seq_len)
 
-        return prompt_embeds, prompt_embeds_mask
+        return prompt_emb, prompt_emb_mask
 
     def encode_prompt_with_image(
         self,
@@ -353,18 +364,18 @@ class QwenImagePipeline(BasePipeline):
             image_grid_thw=image_grid_thw,
         )
         hidden_states = outputs["hidden_states"]
-        prompt_embeds = hidden_states[:, drop_idx:]
-        prompt_embeds_mask = attention_mask[:, drop_idx:]
-        seq_len = prompt_embeds.shape[1]
+        prompt_emb = hidden_states[:, drop_idx:]
+        prompt_emb_mask = attention_mask[:, drop_idx:]
+        seq_len = prompt_emb.shape[1]
 
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
-        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
+        prompt_emb = prompt_emb.repeat(1, num_images_per_prompt, 1)
+        prompt_emb = prompt_emb.view(batch_size * num_images_per_prompt, seq_len, -1)
 
-        prompt_embeds_mask = prompt_embeds_mask.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds_mask = prompt_embeds_mask.view(batch_size * num_images_per_prompt, seq_len)
+        prompt_emb_mask = prompt_emb_mask.repeat(1, num_images_per_prompt, 1)
+        prompt_emb_mask = prompt_emb_mask.view(batch_size * num_images_per_prompt, seq_len)
 
-        return prompt_embeds, prompt_embeds_mask
+        return prompt_emb, prompt_emb_mask
 
     def predict_noise_with_cfg(
         self,
@@ -373,9 +384,17 @@ class QwenImagePipeline(BasePipeline):
         timestep: torch.Tensor,
         prompt_emb: torch.Tensor,
         negative_prompt_emb: torch.Tensor,
-        prompt_embeds_mask: torch.Tensor,
-        negative_prompt_embeds_mask: torch.Tensor,
-        cfg_scale: float,
+        prompt_emb_mask: torch.Tensor,
+        negative_prompt_emb_mask: torch.Tensor,
+        # in_context
+        context_latents: torch.Tensor = None,
+        # eligen
+        entity_prompt_embs: Optional[List[torch.Tensor]] = None,
+        entity_prompt_emb_masks: Optional[List[torch.Tensor]] = None,
+        negative_entity_prompt_embs: Optional[List[torch.Tensor]] = None,
+        negative_entity_prompt_emb_masks: Optional[List[torch.Tensor]] = None,
+        entity_masks: Optional[List[torch.Tensor]] = None,
+        cfg_scale: float = 1.0,
         batch_cfg: bool = False,
     ):
         if cfg_scale <= 1.0 or negative_prompt_emb is None:
@@ -384,7 +403,11 @@ class QwenImagePipeline(BasePipeline):
                 image_latents,
                 timestep,
                 prompt_emb,
-                prompt_embeds_mask,
+                prompt_emb_mask,
+                context_latents=context_latents,
+                entity_prompt_embs=entity_prompt_embs,
+                entity_prompt_emb_masks=entity_prompt_emb_masks,
+                entity_masks=entity_masks,
             )
         if not batch_cfg:
             # cfg by predict noise one by one
@@ -394,14 +417,22 @@ class QwenImagePipeline(BasePipeline):
                 image_latents,
                 timestep,
                 prompt_emb,
-                prompt_embeds_mask,
+                prompt_emb_mask,
+                context_latents=context_latents,
+                entity_prompt_embs=entity_prompt_embs,
+                entity_prompt_emb_masks=entity_prompt_emb_masks,
+                entity_masks=entity_masks,
             )
             negative_noise_pred = self.predict_noise(
                 latents,
                 image_latents,
                 timestep,
                 negative_prompt_emb,
-                negative_prompt_embeds_mask,
+                negative_prompt_emb_mask,
+                context_latents=context_latents,
+                entity_prompt_embs=negative_entity_prompt_embs,
+                entity_prompt_emb_masks=negative_entity_prompt_emb_masks,
+                entity_masks=entity_masks,
             )
             comb_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             cond_norm = torch.norm(self.dit.patchify(positive_noise_pred), dim=-1, keepdim=True)
@@ -412,17 +443,31 @@ class QwenImagePipeline(BasePipeline):
             # cfg by predict noise in one batch
             bs, _, h, w = latents.shape
             prompt_emb = torch.cat([prompt_emb, negative_prompt_emb], dim=0)
-            prompt_embeds_mask = torch.cat([prompt_embeds_mask, negative_prompt_embeds_mask], dim=0)
+            prompt_emb_mask = torch.cat([prompt_emb_mask, negative_prompt_emb_mask], dim=0)
+            if entity_prompt_embs is not None:
+                entity_prompt_embs = [
+                    torch.cat([x, y], dim=0) for x, y in zip(entity_prompt_embs, negative_entity_prompt_embs)
+                ]
+                entity_prompt_emb_masks = [
+                    torch.cat([x, y], dim=0) for x, y in zip(entity_prompt_emb_masks, negative_entity_prompt_emb_masks)
+                ]
+                entity_masks = [torch.cat([mask, mask], dim=0) for mask in entity_masks]
             latents = torch.cat([latents, latents], dim=0)
             if image_latents is not None:
                 image_latents = torch.cat([image_latents, image_latents], dim=0)
+            if context_latents is not None:
+                context_latents = torch.cat([context_latents, context_latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
             noise_pred = self.predict_noise(
                 latents,
                 image_latents,
                 timestep,
                 prompt_emb,
-                prompt_embeds_mask,
+                prompt_emb_mask,
+                context_latents=context_latents,
+                entity_prompt_embs=entity_prompt_embs,
+                entity_prompt_emb_masks=entity_prompt_emb_masks,
+                entity_masks=entity_masks,
             )
             positive_noise_pred, negative_noise_pred = noise_pred[:bs], noise_pred[bs:]
             comb_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
@@ -437,15 +482,25 @@ class QwenImagePipeline(BasePipeline):
         image_latents: torch.Tensor,
         timestep: torch.Tensor,
         prompt_emb: torch.Tensor,
-        prompt_embeds_mask: torch.Tensor,
+        prompt_emb_mask: torch.Tensor,
+        # in_context
+        context_latents: torch.Tensor = None,
+        # eligen
+        entity_prompt_embs: Optional[List[torch.Tensor]] = None,
+        entity_prompt_emb_masks: Optional[List[torch.Tensor]] = None,
+        entity_masks: Optional[List[torch.Tensor]] = None,
     ):
         self.load_models_to_device(["dit"])
         noise_pred = self.dit(
             image=latents,
             edit=image_latents,
-            text=prompt_emb,
             timestep=timestep,
-            txt_seq_lens=prompt_embeds_mask.sum(dim=1),
+            text=prompt_emb,
+            text_seq_lens=prompt_emb_mask.sum(dim=1),
+            context_latents=context_latents,
+            entity_text=entity_prompt_embs,
+            entity_seq_lens=[mask.sum(dim=1) for mask in entity_prompt_emb_masks] if entity_prompt_emb_masks else None,
+            entity_masks=entity_masks,
         )
         return noise_pred
 
@@ -461,6 +516,20 @@ class QwenImagePipeline(BasePipeline):
         )
         image_latents = image_latents.squeeze(2).to(device=self.device)
         return image_latents
+
+    def prepare_eligen(self, entity_prompts, entity_masks, width, height):
+        entity_masks = [mask.resize((width // 8, height // 8), resample=Image.NEAREST) for mask in entity_masks]
+        entity_masks = [self.preprocess_image(mask).mean(dim=1, keepdim=True) > 0 for mask in entity_masks]
+        entity_masks = [mask.to(device=self.device, dtype=self.dtype) for mask in entity_masks]
+        prompt_embs, prompt_emb_masks = [], []
+        negative_prompt_embs, negative_prompt_emb_masks = [], []
+        for entity_prompt in entity_prompts:
+            prompt_emb, prompt_emb_mask = self.encode_prompt(entity_prompt, 1, 512)
+            prompt_embs.append(prompt_emb)
+            prompt_emb_masks.append(prompt_emb_mask)
+            negative_prompt_embs.append(torch.zeros_like(prompt_emb))
+            negative_prompt_emb_masks.append(torch.zeros_like(prompt_emb_mask))
+        return prompt_embs, prompt_emb_masks, negative_prompt_embs, negative_prompt_emb_masks, entity_masks
 
     def calculate_dimensions(self, target_area, ratio):
         width = math.sqrt(target_area * ratio)
@@ -480,7 +549,11 @@ class QwenImagePipeline(BasePipeline):
         width: int = 1328,
         num_inference_steps: int = 50,
         seed: int | None = None,
+        controlnet_params: List[QwenImageControlNetParams] | QwenImageControlNetParams = [],
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
+        # eligen
+        entity_prompts: Optional[List[str]] = None,
+        entity_masks: Optional[List[Image.Image]] = None,
     ):
         if input_image is not None:
             width, height = input_image.size
@@ -488,6 +561,17 @@ class QwenImagePipeline(BasePipeline):
             input_image = input_image.resize((width, height), Image.LANCZOS)
 
         self.validate_image_size(height, width, minimum=64, multiple_of=16)
+
+        if not isinstance(controlnet_params, list):
+            controlnet_params = [controlnet_params]
+
+        context_latents = None
+        for param in controlnet_params:
+            self.load_lora(param.model, param.scale, fused=True, save_original_weight=False)
+            if param.control_type == QwenImageControlType.in_context:
+                width, height = param.image.size
+                self.validate_image_size(height, width, minimum=64, multiple_of=16)
+                context_latents = self.prepare_image_latents(param.image.resize((width, height), Image.LANCZOS))
 
         noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device="cpu", dtype=self.dtype).to(
             device=self.device
@@ -507,33 +591,52 @@ class QwenImagePipeline(BasePipeline):
 
         self.load_models_to_device(["encoder"])
         if image_latents is not None:
-            prompt_embeds, prompt_embeds_mask = self.encode_prompt_with_image(prompt, input_image, 1, 4096)
+            prompt_emb, prompt_emb_mask = self.encode_prompt_with_image(prompt, input_image, 1, 4096)
             if cfg_scale > 1.0 and negative_prompt != "":
-                negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt_with_image(
+                negative_prompt_emb, negative_prompt_emb_mask = self.encode_prompt_with_image(
                     negative_prompt, input_image, 1, 4096
                 )
             else:
-                negative_prompt_embeds, negative_prompt_embeds_mask = None, None
+                negative_prompt_emb, negative_prompt_emb_mask = None, None
         else:
-            prompt_embeds, prompt_embeds_mask = self.encode_prompt(prompt, 1, 4096)
+            prompt_emb, prompt_emb_mask = self.encode_prompt(prompt, 1, 4096)
             if cfg_scale > 1.0 and negative_prompt != "":
-                negative_prompt_embeds, negative_prompt_embeds_mask = self.encode_prompt(negative_prompt, 1, 4096)
+                negative_prompt_emb, negative_prompt_emb_mask = self.encode_prompt(negative_prompt, 1, 4096)
             else:
-                negative_prompt_embeds, negative_prompt_embeds_mask = None, None
+                negative_prompt_emb, negative_prompt_emb_mask = None, None
+
+        entity_prompt_embs, entity_prompt_emb_masks = None, None
+        negative_entity_prompt_embs, negative_entity_prompt_emb_masks = None, None
+        if entity_prompts is not None and entity_masks is not None:
+            assert len(entity_prompts) == len(entity_masks), "entity_prompts and entity_masks must have the same length"
+            (
+                entity_prompt_embs,
+                entity_prompt_emb_masks,
+                negative_entity_prompt_embs,
+                negative_entity_prompt_emb_masks,
+                entity_masks,
+            ) = self.prepare_eligen(entity_prompts, entity_masks, width, height)
+
         self.model_lifecycle_finish(["encoder"])
 
+        self.load_models_to_device(["dit"])
         hide_progress = dist.is_initialized() and dist.get_rank() != 0
-
         for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
             timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
             noise_pred = self.predict_noise_with_cfg(
                 latents=latents,
                 image_latents=image_latents,
                 timestep=timestep,
-                prompt_emb=prompt_embeds,
-                negative_prompt_emb=negative_prompt_embeds,
-                prompt_embeds_mask=prompt_embeds_mask,
-                negative_prompt_embeds_mask=negative_prompt_embeds_mask,
+                prompt_emb=prompt_emb,
+                negative_prompt_emb=negative_prompt_emb,
+                prompt_emb_mask=prompt_emb_mask,
+                negative_prompt_emb_mask=negative_prompt_emb_mask,
+                context_latents=context_latents,
+                entity_prompt_embs=entity_prompt_embs,
+                entity_prompt_emb_masks=entity_prompt_emb_masks,
+                negative_entity_prompt_embs=negative_entity_prompt_embs,
+                negative_entity_prompt_emb_masks=negative_entity_prompt_emb_masks,
+                entity_masks=entity_masks,
                 cfg_scale=cfg_scale,
                 batch_cfg=self.config.batch_cfg,
             )

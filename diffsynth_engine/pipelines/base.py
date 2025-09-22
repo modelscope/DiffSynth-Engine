@@ -2,10 +2,10 @@ import os
 import torch
 import numpy as np
 from einops import rearrange
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 from PIL import Image
 
-from diffsynth_engine.configs import BaseConfig, BaseStateDicts
+from diffsynth_engine.configs import BaseConfig, BaseStateDicts, LoraConfig
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload, offload_model_to_dict, restore_model_from_dict
 from diffsynth_engine.utils.fp8_linear import enable_fp8_autocast
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
@@ -53,7 +53,7 @@ class BasePipeline:
 
     def update_weights(self, state_dicts: BaseStateDicts) -> None:
         raise NotImplementedError()
-    
+
     @staticmethod
     def update_component(
         component: torch.nn.Module,
@@ -65,10 +65,27 @@ class BasePipeline:
             component.load_state_dict(state_dict, assign=True)
             component.to(device=device, dtype=dtype, non_blocking=True)
 
-    def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
-        for lora_path, lora_scale in lora_list:
-            logger.info(f"loading lora from {lora_path} with scale {lora_scale}")
+    def load_loras(
+        self,
+        lora_list: List[Tuple[str, Union[float, LoraConfig]]],
+        fused: bool = True,
+        save_original_weight: bool = False,
+    ):
+        for lora_path, lora_item in lora_list:
+            if isinstance(lora_item, float):
+                lora_scale = lora_item
+                scheduler_config = None
+            if isinstance(lora_item, LoraConfig):
+                lora_scale = lora_item.scale
+                scheduler_config = lora_item.scheduler_config
+
+            logger.info(f"loading lora from {lora_path} with LoraConfig (scale={lora_scale})")
             state_dict = load_file(lora_path, device=self.device)
+
+            if scheduler_config is not None:
+                self.apply_scheduler_config(scheduler_config)
+                logger.info(f"Applied scheduler args from LoraConfig: {scheduler_config}")
+
             lora_state_dict = self.lora_converter.convert(state_dict)
             for model_name, state_dict in lora_state_dict.items():
                 model = getattr(self, model_name)
@@ -91,6 +108,9 @@ class BasePipeline:
 
     def load_lora(self, path: str, scale: float, fused: bool = True, save_original_weight: bool = False):
         self.load_loras([(path, scale)], fused, save_original_weight)
+
+    def apply_scheduler_config(self, scheduler_config: Dict):
+        pass
 
     def unload_loras(self):
         raise NotImplementedError()

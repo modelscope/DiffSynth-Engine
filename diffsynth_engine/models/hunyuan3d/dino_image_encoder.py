@@ -2,7 +2,7 @@ import torch.nn as nn
 import torchvision.transforms as transforms
 import collections.abc
 import math
-from typing import Optional, Tuple, Dict
+from typing import Optional, Dict
 
 import torch
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
@@ -112,7 +112,9 @@ class Dinov2SelfAttention(nn.Module):
     def __init__(self, hidden_size: int, num_attention_heads: int, qkv_bias: bool) -> None:
         super().__init__()
         if hidden_size % num_attention_heads != 0:
-            raise ValueError(f"hidden_size {hidden_size} is not a multiple of num_attention_heads {num_attention_heads}.")
+            raise ValueError(
+                f"hidden_size {hidden_size} is not a multiple of num_attention_heads {num_attention_heads}."
+            )
 
         self.num_attention_heads = num_attention_heads
         self.attention_head_size = int(hidden_size / num_attention_heads)

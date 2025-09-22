@@ -17,9 +17,14 @@ from .pipeline import (
     WanStateDicts,
     WanS2VStateDicts,
     QwenImageStateDicts,
-    AttnImpl,
+    LoraConfig,
 )
-from .controlnet import ControlType, ControlNetParams
+from .controlnet import (
+    ControlType,
+    ControlNetParams,
+    QwenImageControlNetParams,
+    QwenImageControlType,
+)
 
 __all__ = [
     "BaseConfig",
@@ -40,7 +45,9 @@ __all__ = [
     "WanStateDicts",
     "WanS2VStateDicts",
     "QwenImageStateDicts",
-    "AttnImpl",
+    "QwenImageControlType",
+    "QwenImageControlNetParams",
     "ControlType",
     "ControlNetParams",
+    "LoraConfig",
 ]
