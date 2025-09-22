@@ -12,7 +12,7 @@ from diffsynth_engine.utils.constants import WAN2_1_VAE_CONFIG_FILE, WAN2_2_VAE_
 
 CACHE_T = 2
 
-with open(WAN_VAE_KEYMAP_FILE, "r") as f:
+with open(WAN_VAE_KEYMAP_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
 
@@ -855,7 +855,7 @@ class WanVideoVAE(PreTrainedModel):
             raise ValueError(f"Unsupported model type: {model_type}")
 
         config_file = MODEL_CONFIG_FILES[model_type]
-        with open(config_file, "r") as f:
+        with open(config_file, "r", encoding="utf-8") as f:
             config = json.load(f)
         return config
 

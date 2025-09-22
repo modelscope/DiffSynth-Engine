@@ -398,7 +398,7 @@ class WanDiT(PreTrainedModel):
             raise ValueError(f"Unsupported model type: {model_type}")
 
         config_file = MODEL_CONFIG_FILES[model_type]
-        with open(config_file, "r") as f:
+        with open(config_file, "r", encoding="utf-8") as f:
             config = json.load(f)
         return config
 

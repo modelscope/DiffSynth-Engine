@@ -35,9 +35,9 @@ class TestQwen2_5_VL(ImageTestCase):
             os.path.join(cls._model_path, file) for file in os.listdir(cls._model_path) if file.endswith(".safetensors")
         ]
         loaded_state_dict = load_model_checkpoint(ckpt_path, device="cpu", dtype=torch.bfloat16)
-        with open(QWEN_IMAGE_VISION_CONFIG_FILE, "r") as f:
+        with open(QWEN_IMAGE_VISION_CONFIG_FILE, "r", encoding="utf-8") as f:
             vision_config = Qwen2_5_VLVisionConfig(**json.load(f))
-        with open(QWEN_IMAGE_CONFIG_FILE, "r") as f:
+        with open(QWEN_IMAGE_CONFIG_FILE, "r", encoding="utf-8") as f:
             text_config = Qwen2_5_VLConfig(**json.load(f))
         cls.encoder = Qwen2_5_VLForConditionalGeneration.from_state_dict(
             loaded_state_dict,

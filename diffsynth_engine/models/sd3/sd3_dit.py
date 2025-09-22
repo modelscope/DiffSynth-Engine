@@ -13,7 +13,7 @@ from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
 
-with open(SD3_DIT_CONFIG_FILE, "r") as f:
+with open(SD3_DIT_CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
 

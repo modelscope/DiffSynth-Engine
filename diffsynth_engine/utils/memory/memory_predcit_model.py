@@ -87,7 +87,7 @@ class MemoryPredictModel:
         return r2
 
     def save_model(self, model_path):
-        with open(model_path, "wb") as f:
+        with open(model_path, "wb", encoding="utf-8") as f:
             torch.save(
                 {
                     "key_inputs": self.key_inputs,
@@ -98,7 +98,7 @@ class MemoryPredictModel:
 
     @classmethod
     def from_pretrained(cls, model_path):
-        with open(model_path, "rb") as f:
+        with open(model_path, "rb", encoding="utf-8") as f:
             data = torch.load(f)
             model = cls(data["key_inputs"])
             model.model = LinearRegression.deserialize(data["model"])

@@ -18,7 +18,7 @@ from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
 
-with open(SD_UNET_CONFIG_FILE) as f:
+with open(SD_UNET_CONFIG_FILE, encoding="utf-8") as f:
     config = json.load(f)
 
 

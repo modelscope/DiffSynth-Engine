@@ -34,7 +34,7 @@ from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
 
 logger = logging.get_logger(__name__)
 
-with open(FLUX_DIT_CONFIG_FILE, "r") as f:
+with open(FLUX_DIT_CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
 

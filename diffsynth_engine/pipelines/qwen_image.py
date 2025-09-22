@@ -182,9 +182,9 @@ class QwenImagePipeline(BasePipeline):
             tokenizer_config_path=QWEN_IMAGE_TOKENIZER_CONF_PATH,
             image_processor_config_path=QWEN_IMAGE_PROCESSOR_CONFIG_FILE,
         )
-        with open(QWEN_IMAGE_VISION_CONFIG_FILE, "r") as f:
+        with open(QWEN_IMAGE_VISION_CONFIG_FILE, "r", encoding="utf-8") as f:
             vision_config = Qwen2_5_VLVisionConfig(**json.load(f))
-        with open(QWEN_IMAGE_CONFIG_FILE, "r") as f:
+        with open(QWEN_IMAGE_CONFIG_FILE, "r", encoding="utf-8") as f:
             text_config = Qwen2_5_VLConfig(**json.load(f))
         encoder = Qwen2_5_VLForConditionalGeneration.from_state_dict(
             state_dicts.encoder,
@@ -193,7 +193,7 @@ class QwenImagePipeline(BasePipeline):
             device=init_device,
             dtype=config.encoder_dtype,
         )
-        with open(QWEN_IMAGE_VAE_CONFIG_FILE, "r") as f:
+        with open(QWEN_IMAGE_VAE_CONFIG_FILE, "r", encoding="utf-8") as f:
             vae_config = json.load(f)
         vae = QwenImageVAE.from_state_dict(
             state_dicts.vae, config=vae_config, device=init_device, dtype=config.vae_dtype

@@ -12,7 +12,7 @@ from diffsynth_engine.utils.constants import QWEN_IMAGE_VAE_KEYMAP_FILE
 
 CACHE_T = 2
 
-with open(QWEN_IMAGE_VAE_KEYMAP_FILE, "r") as f:
+with open(QWEN_IMAGE_VAE_KEYMAP_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
 
