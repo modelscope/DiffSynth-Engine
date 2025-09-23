@@ -245,7 +245,7 @@ class FluxDoubleTransformerBlock(nn.Module):
         self.ff_a = nn.Sequential(
             nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype),
         )
         # Text
         self.norm_msa_b = AdaLayerNormZero(dim, device=device, dtype=dtype)
@@ -517,6 +517,9 @@ class FluxDiT(PreTrainedModel):
 
     def compile_repeated_blocks(self, *args, **kwargs):
         for block in self.blocks:
+            block.compile(*args, **kwargs)
+
+        for block in self.single_blocks:
             block.compile(*args, **kwargs)
 
     def get_fsdp_modules(self):
