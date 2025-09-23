@@ -645,6 +645,6 @@ class WanVideoPipeline(BasePipeline):
         return vae_type
 
     def compile(self):
-        self.dit.compile_repeated_blocks(dynamic=True)
+        self.dit.compile_repeated_blocks()
         if self.dit2 is not None:
-            self.dit2.compile_repeated_blocks(dynamic=True)
+            self.dit2.compile_repeated_blocks()
