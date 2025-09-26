@@ -12,8 +12,8 @@ class RecifitedFlowScheduler(BaseScheduler):
     def __init__(
         self,
         shift=1.0,
-        sigma_min=0.001,
-        sigma_max=1.0,
+        sigma_min=None,
+        sigma_max=None,
         num_train_timesteps=1000,
         use_dynamic_shifting=False,
         shift_terminal=None,
@@ -51,8 +51,8 @@ class RecifitedFlowScheduler(BaseScheduler):
         self,
         num_inference_steps: int,
         mu: float | None = None,
-        sigma_min: float | None = None,
-        sigma_max: float | None = None,
+        sigma_min: float | None = 0.001,
+        sigma_max: float | None = 1.0,
         append_value: float = 0,
     ):
         sigma_min = sigma_min if self.sigma_min is None else self.sigma_min
