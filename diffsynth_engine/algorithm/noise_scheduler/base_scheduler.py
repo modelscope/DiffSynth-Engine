@@ -7,25 +7,29 @@ def append_zero(x):
 
 class BaseScheduler:
     def __init__(self):
-        self._initial_params = {}
+        self._stored_config = {}
 
-    def store_initial_config(self):
-        self._initial_params = {attr_name: attr_value for attr_name, attr_value in vars(self).items()}
+    def __post_init__(self):
+        self.store_config()
 
-    def update_scheduler_config(self, config_dict):
-        for param_name, new_value in config_dict.items():
-            if hasattr(self, param_name):
-                setattr(self, param_name, new_value)
+    def store_config(self):
+        self._stored_config = {config_name: config_value for config_name, config_value in vars(self).items() if not config_name.startswith('_')}
 
-    def restore_scheduler_config(self):
-        current_attrs = set(vars(self).keys())
-        initial_attrs = set(self._initial_params.keys())
+    def update_config(self, config_dict):
+        for config_name, new_value in config_dict.items():
+            if hasattr(self, config_name):
+                setattr(self, config_name, new_value)
 
-        for param_name, initial_value in self._initial_params.items():
-            setattr(self, param_name, initial_value)
+    def restore_config(self):
+        current_configs = set(vars(self).keys())
+        initial_configs = set(self._stored_config.keys())
 
-        for attr_name in current_attrs - initial_attrs:
-            delattr(self, attr_name)
+        for config_name, initial_value in self._stored_config.items():
+            setattr(self, config_name, initial_value)
+
+        for config_name in current_configs - initial_configs:
+            if not config_name.startswith('_'):
+                delattr(self, config_name)
 
     def schedule(self, num_inference_steps: int):
         raise NotImplementedError()
