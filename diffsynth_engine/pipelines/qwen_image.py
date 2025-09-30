@@ -359,12 +359,10 @@ class QwenImagePipeline(BasePipeline):
             texts = [template.format(txt) for txt in prompt]
             image = vae_image
         else:
-            img_prompt_template = "Picture {}: <|vision_start|><|image_pad|><|vision_end|>"
             template = self.edit_plus_prompt_template_encode
-            base_img_prompt = ""
-            for i, img in enumerate(condition_image):
-                base_img_prompt += img_prompt_template.format(i + 1)
-            texts = [template.format(base_img_prompt + e) for e in prompt]
+            img_prompt_template = "Picture {}: <|vision_start|><|image_pad|><|vision_end|>"
+            img_prompt = "".join([img_prompt_template.format(i + 1) for i in range(len(condition_image))])
+            texts = [template.format(img_prompt + e) for e in prompt]
             image = condition_image
 
         model_inputs = self.processor(text=texts, images=image, max_length=max_sequence_length + drop_idx)
@@ -560,9 +558,8 @@ class QwenImagePipeline(BasePipeline):
         self,
         prompt: str,
         negative_prompt: str = "",
-        input_image: List[Image.Image]
-        | Image.Image
-        | None = None,  # single image for edit, list for edit plus(QwenImageEdit2509)
+        # single image for edit, list for edit plus(QwenImageEdit2509)
+        input_image: List[Image.Image] | Image.Image | None = None,
         cfg_scale: float = 4.0,  # true cfg
         height: int = 1328,
         width: int = 1328,
@@ -614,9 +611,7 @@ class QwenImagePipeline(BasePipeline):
 
         self.load_models_to_device(["vae"])
         if input_image:
-            image_latents = []
-            for img in vae_images:
-                image_latents.append(self.prepare_image_latents(img))
+            image_latents = [self.prepare_image_latents(img) for img in vae_images]
         else:
             image_latents = None
 
