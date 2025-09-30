@@ -5,7 +5,6 @@ from diffsynth_engine import QwenImagePipelineConfig
 from diffsynth_engine.pipelines import QwenImagePipeline
 from diffsynth_engine.utils.download import fetch_model
 from tests.common.test_case import ImageTestCase
-from PIL import Image
 
 
 class TestQwenImageEditPlusPipeline(ImageTestCase):
@@ -37,6 +36,7 @@ class TestQwenImageEditPlusPipeline(ImageTestCase):
             seed=42,
         )
         self.assertImageEqualAndSaveFailed(image, "qwen_image/qwen_image_edit_plus.png", threshold=0.95)
+
 
 if __name__ == "__main__":
     unittest.main()

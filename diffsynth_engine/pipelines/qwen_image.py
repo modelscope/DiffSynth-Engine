@@ -471,10 +471,7 @@ class QwenImagePipeline(BasePipeline):
                 entity_masks = [torch.cat([mask, mask], dim=0) for mask in entity_masks]
             latents = torch.cat([latents, latents], dim=0)
             if image_latents is not None:
-                batch_image_latents = []
-                for image_latent in image_latents:
-                    batch_image_latents.append(torch.cat([image_latent, image_latent], dim=0))
-                image_latents = batch_image_latents
+                image_latents = [torch.cat([image_latent, image_latent], dim=0) for image_latent in image_latents]
             if context_latents is not None:
                 context_latents = torch.cat([context_latents, context_latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
@@ -563,7 +560,9 @@ class QwenImagePipeline(BasePipeline):
         self,
         prompt: str,
         negative_prompt: str = "",
-        input_image: List[Image.Image] | Image.Image | None = None,  # single image for edit, list for edit plus(QwenImageEdit2509)
+        input_image: List[Image.Image]
+        | Image.Image
+        | None = None,  # single image for edit, list for edit plus(QwenImageEdit2509)
         cfg_scale: float = 4.0,  # true cfg
         height: int = 1328,
         width: int = 1328,
@@ -623,7 +622,9 @@ class QwenImagePipeline(BasePipeline):
 
         self.load_models_to_device(["encoder"])
         if image_latents is not None:
-            prompt_emb, prompt_emb_mask = self.encode_prompt_with_image(prompt, vae_images, condition_images, 1, 4096, is_edit_plus)
+            prompt_emb, prompt_emb_mask = self.encode_prompt_with_image(
+                prompt, vae_images, condition_images, 1, 4096, is_edit_plus
+            )
             if cfg_scale > 1.0 and negative_prompt != "":
                 negative_prompt_emb, negative_prompt_emb_mask = self.encode_prompt_with_image(
                     negative_prompt, vae_images, condition_images, 1, 4096, is_edit_plus

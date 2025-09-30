@@ -9,8 +9,6 @@ try:
 
     use_fast_safetensors = True
 except ImportError:
-    from safetensors.torch import load_file as _load_file
-
     use_fast_safetensors = False
 
 
@@ -39,18 +37,19 @@ def load_file(path: str | os.PathLike, device: str = "cpu", need_metadata: bool 
         logger.info(f"Safetensors load model from {path}")
         start_time = time.time()
 
-        if need_metadata:
-            from safetensors import safe_open
+        from safetensors import safe_open
 
-            with safe_open(path, framework="pt", device="cpu") as f:
-                state_dict = {k: f.get_tensor(k).to(device) for k in f.keys()}
+        with safe_open(path, framework="pt", device="cpu") as f:
+            state_dict = {k: f.get_tensor(k).to(device) for k in f.keys()}
+            if need_metadata:
                 metadata = f.metadata()
-            logger.info(f"Safetensors Load Model End. Time: {time.time() - start_time:.2f}s")
+
+        logger.info(f"Safetensors Load Model End. Time: {time.time() - start_time:.2f}s")
+
+        if need_metadata:
             return state_dict, metadata
         else:
-            result = _load_file(path, device=device)
-            logger.info(f"Safetensors Load Model End. Time: {time.time() - start_time:.2f}s")
-            return result
+            return state_dict
 
 
 save_file = _save_file
