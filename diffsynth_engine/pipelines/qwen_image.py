@@ -107,10 +107,14 @@ class QwenImagePipeline(BasePipeline):
             dtype=config.model_dtype,
         )
         self.config = config
+        # qwen image
         self.prompt_template_encode = "<|im_start|>system\nDescribe the image by detailing the color, shape, size, texture, quantity, text, spatial relationships of the objects and background:<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
         self.prompt_template_encode_start_idx = 34
-
+        # qwen image edit
         self.edit_prompt_template_encode = "<|im_start|>system\nDescribe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{}<|im_end|>\n<|im_start|>assistant\n"
+        # qwen image edit plus
+        self.edit_plus_prompt_template_encode = "<|im_start|>system\nDescribe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
+
         self.edit_prompt_template_encode_start_idx = 64
 
         # sampler
@@ -208,7 +212,7 @@ class QwenImagePipeline(BasePipeline):
 
         with LoRAContext():
             attn_kwargs = {
-                "attn_impl": config.dit_attn_impl.value,
+                "attn_impl": config.dit_attn_impl,
                 "sparge_smooth_k": config.sparge_smooth_k,
                 "sparge_cdfthreshd": config.sparge_cdfthreshd,
                 "sparge_simthreshd1": config.sparge_simthreshd1,
@@ -282,7 +286,7 @@ class QwenImagePipeline(BasePipeline):
 
     def unload_loras(self):
         self.dit.unload_loras()
-        self.noise_scheduler.restore_scheduler_config()
+        self.noise_scheduler.restore_config()
 
     def apply_scheduler_config(self, scheduler_config: Dict):
         self.noise_scheduler.update_config(scheduler_config)
@@ -339,16 +343,29 @@ class QwenImagePipeline(BasePipeline):
     def encode_prompt_with_image(
         self,
         prompt: Union[str, List[str]],
-        image: torch.Tensor,
+        vae_image: List[torch.Tensor],
+        condition_image: List[torch.Tensor],  # edit plus
         num_images_per_prompt: int = 1,
         max_sequence_length: int = 1024,
+        is_edit_plus: bool = True,
     ):
         prompt = [prompt] if isinstance(prompt, str) else prompt
 
         batch_size = len(prompt)
         template = self.edit_prompt_template_encode
         drop_idx = self.edit_prompt_template_encode_start_idx
-        texts = [template.format(txt) for txt in prompt]
+        if not is_edit_plus:
+            template = self.edit_prompt_template_encode
+            texts = [template.format(txt) for txt in prompt]
+            image = vae_image
+        else:
+            img_prompt_template = "Picture {}: <|vision_start|><|image_pad|><|vision_end|>"
+            template = self.edit_plus_prompt_template_encode
+            base_img_prompt = ""
+            for i, img in enumerate(condition_image):
+                base_img_prompt += img_prompt_template.format(i + 1)
+            texts = [template.format(base_img_prompt + e) for e in prompt]
+            image = condition_image
 
         model_inputs = self.processor(text=texts, images=image, max_length=max_sequence_length + drop_idx)
         input_ids, attention_mask, pixel_values, image_grid_thw = (
@@ -454,7 +471,10 @@ class QwenImagePipeline(BasePipeline):
                 entity_masks = [torch.cat([mask, mask], dim=0) for mask in entity_masks]
             latents = torch.cat([latents, latents], dim=0)
             if image_latents is not None:
-                image_latents = torch.cat([image_latents, image_latents], dim=0)
+                batch_image_latents = []
+                for image_latent in image_latents:
+                    batch_image_latents.append(torch.cat([image_latent, image_latent], dim=0))
+                image_latents = batch_image_latents
             if context_latents is not None:
                 context_latents = torch.cat([context_latents, context_latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
@@ -543,7 +563,7 @@ class QwenImagePipeline(BasePipeline):
         self,
         prompt: str,
         negative_prompt: str = "",
-        input_image: Image.Image | None = None,  # use for img2img
+        input_image: List[Image.Image] | Image.Image | None = None,  # single image for edit, list for edit plus(QwenImageEdit2509)
         cfg_scale: float = 4.0,  # true cfg
         height: int = 1328,
         width: int = 1328,
@@ -555,10 +575,20 @@ class QwenImagePipeline(BasePipeline):
         entity_prompts: Optional[List[str]] = None,
         entity_masks: Optional[List[Image.Image]] = None,
     ):
+        is_edit_plus = isinstance(input_image, list)
         if input_image is not None:
-            width, height = input_image.size
-            width, height = self.calculate_dimensions(1024 * 1024, width / height)
-            input_image = input_image.resize((width, height), Image.LANCZOS)
+            if not isinstance(input_image, list):
+                input_image = [input_image]
+            condition_images = []
+            vae_images = []
+            for img in input_image:
+                img_width, img_height = img.size
+                condition_width, condition_height = self.calculate_dimensions(384 * 384, img_width / img_height)
+                vae_width, vae_height = self.calculate_dimensions(1024 * 1024, img_width / img_height)
+                condition_images.append(img.resize((condition_width, condition_height), Image.LANCZOS))
+                vae_images.append(img.resize((vae_width, vae_height), Image.LANCZOS))
+
+            width, height = vae_images[-1].size
 
         self.validate_image_size(height, width, minimum=64, multiple_of=16)
 
@@ -567,7 +597,7 @@ class QwenImagePipeline(BasePipeline):
 
         context_latents = None
         for param in controlnet_params:
-            self.load_lora(param.model, param.scale, fused=True, save_original_weight=False)
+            self.load_lora(param.model, param.scale, fused=False, save_original_weight=False)
             if param.control_type == QwenImageControlType.in_context:
                 width, height = param.image.size
                 self.validate_image_size(height, width, minimum=64, multiple_of=16)
@@ -585,16 +615,18 @@ class QwenImagePipeline(BasePipeline):
 
         self.load_models_to_device(["vae"])
         if input_image:
-            image_latents = self.prepare_image_latents(input_image)
+            image_latents = []
+            for img in vae_images:
+                image_latents.append(self.prepare_image_latents(img))
         else:
             image_latents = None
 
         self.load_models_to_device(["encoder"])
         if image_latents is not None:
-            prompt_emb, prompt_emb_mask = self.encode_prompt_with_image(prompt, input_image, 1, 4096)
+            prompt_emb, prompt_emb_mask = self.encode_prompt_with_image(prompt, vae_images, condition_images, 1, 4096, is_edit_plus)
             if cfg_scale > 1.0 and negative_prompt != "":
                 negative_prompt_emb, negative_prompt_emb_mask = self.encode_prompt_with_image(
-                    negative_prompt, input_image, 1, 4096
+                    negative_prompt, vae_images, condition_images, 1, 4096, is_edit_plus
                 )
             else:
                 negative_prompt_emb, negative_prompt_emb_mask = None, None

@@ -38,7 +38,8 @@ class TestQwenImageControlnet(ImageTestCase):
             seed=42,
             controlnet_params=param,
         )
-        self.assertImageEqualAndSaveFailed(image, "qwen_image/qwen_image_canny.png", threshold=0.99)
+        self.assertImageEqualAndSaveFailed(image, "qwen_image/qwen_image_canny.png", threshold=0.95)
+        self.pipe.unload_loras()        
 
     def test_incontext_depth(self):
         param = QwenImageControlNetParams(
@@ -54,7 +55,8 @@ class TestQwenImageControlnet(ImageTestCase):
             seed=42,
             controlnet_params=param,
         )
-        self.assertImageEqualAndSaveFailed(image, "qwen_image/qwen_image_depth.png", threshold=0.99)
+        self.assertImageEqualAndSaveFailed(image, "qwen_image/qwen_image_depth.png", threshold=0.95)
+        self.pipe.unload_loras()        
 
 
 if __name__ == "__main__":

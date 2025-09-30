@@ -449,7 +449,7 @@ class QwenImageDiT(PreTrainedModel):
             cfg_parallel(
                 (
                     image,
-                    edit,
+                    *(edit if edit is not None else ()),
                     timestep,
                     text,
                     text_seq_lens,
@@ -472,10 +472,12 @@ class QwenImageDiT(PreTrainedModel):
                 image = torch.cat([image, context_latents], dim=1)
                 video_fhw += [(1, h // 2, w // 2)]
             if edit is not None:
-                edit = edit.to(dtype=image.dtype)
-                edit = self.patchify(edit)
-                image = torch.cat([image, edit], dim=1)
-                video_fhw += [(1, h // 2, w // 2)]
+                for img in edit:
+                    img = img.to(dtype=image.dtype)
+                    edit_h, edit_w = img.shape[-2:]
+                    img = self.patchify(img)
+                    image = torch.cat([image, img], dim=1)
+                    video_fhw += [(1, edit_h // 2, edit_w // 2)]
 
             rotary_emb = self.pos_embed(video_fhw, text_seq_len, image.device)
 
