@@ -9,7 +9,12 @@ from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm, ApproximateGELU, RMSNorm
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
-from diffsynth_engine.utils.parallel import cfg_parallel, cfg_parallel_unshard
+from diffsynth_engine.utils.parallel import (
+    cfg_parallel,
+    cfg_parallel_unshard,
+    sequence_parallel,
+    sequence_parallel_unshard,
+)
 
 
 class QwenImageDiTStateDictConverter(StateDictConverter):
@@ -498,14 +503,18 @@ class QwenImageDiT(PreTrainedModel):
                     image.dtype,
                 )
 
-            for block in self.transformer_blocks:
-                text, image = block(
-                    image=image, text=text, temb=conditioning, rotary_emb=rotary_emb, attn_mask=attn_mask
-                )
-            image = self.norm_out(image, conditioning)
-            image = self.proj_out(image)
+            # warning: Eligen does not work with sequence parallel because long context attention does not support attention masks
+            img_freqs, txt_freqs = rotary_emb
+            with sequence_parallel((image, text, img_freqs, txt_freqs), seq_dims=(1, 1, 0, 0)):
+                rotary_emb = (img_freqs, txt_freqs)
+                for block in self.transformer_blocks:
+                    text, image = block(
+                        image=image, text=text, temb=conditioning, rotary_emb=rotary_emb, attn_mask=attn_mask
+                    )
+                image = self.norm_out(image, conditioning)
+                image = self.proj_out(image)
+                (image,) = sequence_parallel_unshard((image,), seq_dims=(1,), seq_lens=(image_seq_len,))
             image = image[:, :image_seq_len]
-
             image = self.unpatchify(image, h, w)
 
         (image,) = cfg_parallel_unshard((image,), use_cfg=use_cfg)
