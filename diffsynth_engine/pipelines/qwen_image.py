@@ -91,7 +91,7 @@ class QwenImageLoRAConverter(LoRAStateDictConverter):
             if "lora_A.weight" in key:
                 lora_a_suffix = "lora_A.weight"
                 lora_b_suffix = "lora_B.weight"
-            
+
             if lora_a_suffix is None:
                 continue
 
@@ -148,9 +148,17 @@ class QwenImagePipeline(BasePipeline):
         self.prompt_template_encode_start_idx = 34
         # qwen image edit
         self.edit_system_prompt = "Describe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate."
-        self.edit_prompt_template_encode = "<|im_start|>system\n" + self.edit_system_prompt + "<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{}<|im_end|>\n<|im_start|>assistant\n"
+        self.edit_prompt_template_encode = (
+            "<|im_start|>system\n"
+            + self.edit_system_prompt
+            + "<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{}<|im_end|>\n<|im_start|>assistant\n"
+        )
         # qwen image edit plus
-        self.edit_plus_prompt_template_encode = "<|im_start|>system\n" + self.edit_system_prompt + "<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
+        self.edit_plus_prompt_template_encode = (
+            "<|im_start|>system\n"
+            + self.edit_system_prompt
+            + "<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
+        )
 
         self.edit_prompt_template_encode_start_idx = 64
 
@@ -607,6 +615,8 @@ class QwenImagePipeline(BasePipeline):
         # eligen
         entity_prompts: Optional[List[str]] = None,
         entity_masks: Optional[List[Image.Image]] = None,
+        use_custom_size: bool = False,
+        linear_timestep: bool = False,
     ):
         assert (height is None) == (width is None), "height and width should be set together"
         is_edit_plus = isinstance(input_image, list)
@@ -643,10 +653,19 @@ class QwenImagePipeline(BasePipeline):
         noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device="cpu", dtype=self.dtype).to(
             device=self.device
         )
-        # dynamic shift
         image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
-        mu = calculate_shift(image_seq_len, max_shift=0.9, max_seq_len=8192)
-        init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, num_inference_steps, mu)
+        if linear_timestep:
+            num_train_timesteps = 1000
+            sigmas = torch.linspace(1, 0, num_inference_steps + 1)
+            timesteps = sigmas * num_train_timesteps
+            timesteps = timesteps[:-1]
+            sigmas = sigmas.to(device=self.device, dtype=self.dtype)
+            timesteps = timesteps.to(device=self.device, dtype=self.dtype)
+            latents = noise
+        else:
+            # dynamic shift
+            mu = calculate_shift(image_seq_len, max_shift=0.9, max_seq_len=8192)
+            _, latents, sigmas, timesteps = self.prepare_latents(noise, num_inference_steps, mu)
         # Initialize sampler
         self.sampler.initialize(sigmas=sigmas)
 
