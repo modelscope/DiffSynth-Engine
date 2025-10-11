@@ -45,7 +45,6 @@ class FluxLoRAConverter(LoRAStateDictConverter):
         flux_dim = 3072
         dit_rename_dict = flux_dit_config["civitai"]["rename_dict"]
         dit_suffix_rename_dict = flux_dit_config["civitai"]["suffix_rename_dict"]
-        clip_rename_dict = flux_text_encoder_config["diffusers"]["rename_dict"]
         clip_attn_rename_dict = flux_text_encoder_config["diffusers"]["attn_rename_dict"]
 
         dit_dict = {}
@@ -138,33 +137,18 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                     lora_args["rank"] = lora_args["up"].shape[1]
                     rename = rename.replace(".weight", "")
                     dit_dict[rename] = lora_args
-            elif "lora_te" in key:
-                name = key.replace("lora_te1_", "")
-                name = name.replace("text_model_encoder_layers_", "text_model.encoder.layers.")
-                name = name.replace(".alpha", ".weight")
-                rename = ""
-                if name in clip_rename_dict:
-                    if name == "text_model.embeddings.position_embedding.weight":
-                        param = param.reshape((1, param.shape[0], param.shape[1]))
-                    rename = clip_rename_dict[name]
-                elif name.startswith("text_model.encoder.layers."):
-                    name = name[len("text_model.encoder.layers."):]
-                    names = name.split(".")
-                    tail = names[-1]
-                    layer_names = names[0].split("_")
-                    layer_id = layer_names[0]
-                    layer_type = "_".join(layer_names[1:])
-                    layer_type = layer_type.replace("self_attn_", "self_attn.")
-                    layer_type = layer_type.replace("mlp_", "mlp.")
-                    rename = ".".join(["encoders", layer_id, clip_attn_rename_dict[layer_type], tail])
-                else:
-                    raise ValueError(f"Unsupported key: {key}")
+            elif "lora_te1_text_model_encoder_layers_" in key:
+                name = key.replace("lora_te1_text_model_encoder_layers_", "")
+                name = name.replace(".alpha", "")
+                layer_id, layer_type = name.split("_", 1)
+                layer_type = layer_type.replace("self_attn_", "self_attn.").replace("mlp_", "mlp.")
+                rename = ".".join(["encoders", layer_id, clip_attn_rename_dict[layer_type]])
+                
                 lora_args = {}
                 lora_args["alpha"] = param
                 lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
                 lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
                 lora_args["rank"] = lora_args["up"].shape[1]
-                rename = rename.replace(".weight", "")
                 te_dict[rename] = lora_args
             else:
                 raise ValueError(f"Unsupported key: {key}")
