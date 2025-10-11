@@ -139,8 +139,8 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                     rename = rename.replace(".weight", "")
                     dit_dict[rename] = lora_args
             elif "lora_te" in key:
-                name = key.replace("lora_te1", "text_encoder")
-                name = name.replace("text_model_encoder_layers", "text_model.encoder.layers")
+                name = key.replace("lora_te1_", "")
+                name = name.replace("text_model_encoder_layers_", "text_model.encoder.layers.")
                 name = name.replace(".alpha", ".weight")
                 rename = ""
                 if name in clip_rename_dict:
@@ -148,8 +148,14 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                         param = param.reshape((1, param.shape[0], param.shape[1]))
                     rename = clip_rename_dict[name]
                 elif name.startswith("text_model.encoder.layers."):
+                    name = name[len("text_model.encoder.layers."):]
                     names = name.split(".")
-                    layer_id, layer_type, tail = names[3], ".".join(names[4:-1]), names[-1]
+                    tail = names[-1]
+                    layer_names = names[0].split("_")
+                    layer_id = layer_names[0]
+                    layer_type = "_".join(layer_names[1:])
+                    layer_type = layer_type.replace("self_attn_", "self_attn.")
+                    layer_type = layer_type.replace("mlp_", "mlp.")
                     rename = ".".join(["encoders", layer_id, clip_attn_rename_dict[layer_type], tail])
                 else:
                     raise ValueError(f"Unsupported key: {key}")
