@@ -9,7 +9,7 @@ from typing import Callable, List, Optional
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.configs import WanSpeech2VideoPipelineConfig, WanS2VStateDicts
+from diffsynth_engine.configs import WanSpeech2VideoPipelineConfig, WanS2VStateDicts, AttnImpl
 from diffsynth_engine.models.wan.wan_s2v_dit import WanS2VDiT
 from diffsynth_engine.models.wan.wan_text_encoder import WanTextEncoder
 from diffsynth_engine.models.wan.wan_audio_encoder import (
@@ -21,6 +21,7 @@ from diffsynth_engine.models.wan.wan_audio_encoder import (
 from diffsynth_engine.models.wan.wan_vae import WanVideoVAE
 from diffsynth_engine.pipelines.wan_video import WanVideoPipeline
 from diffsynth_engine.models.basic.lora import LoRAContext
+from diffsynth_engine.models.basic.video_sparse_attention import get_vsa_kwargs
 from diffsynth_engine.tokenizers import WanT5Tokenizer
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_model
@@ -287,6 +288,22 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         void_audio_embed_bucket = void_audio_embed_bucket.permute(0, 2, 3, 1)
         return void_audio_embed_bucket[..., :num_frames_per_clip]
 
+    def prepare_attn_kwargs(self, latents):
+        attn_kwargs = {"attn_impl": self.config.dit_attn_impl.value}
+        if self.config.dit_attn_impl == AttnImpl.SPARGE:
+            attn_kwargs = {
+                "attn_impl": self.config.dit_attn_impl.value,
+                "smooth_k": self.config.sparge_smooth_k,
+                "simthreshd1": self.config.sparge_simthreshd1,
+                "cdfthreshd": self.config.sparge_cdfthreshd,
+                "pvthreshd": self.config.sparge_pvthreshd,
+            }
+        elif self.config.dit_attn_impl == AttnImpl.VSA:
+            attn_kwargs.update(
+                get_vsa_kwargs(latents.shape[2:], (1, 2, 2), self.config.vsa_sparsity, device=self.device)
+            )
+        return attn_kwargs
+
     def predict_noise_with_cfg(
         self,
         model: WanS2VDiT,
@@ -394,6 +411,7 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         void_audio_input: torch.Tensor | None = None,
     ):
         latents = latents.to(dtype=self.config.model_dtype, device=self.device)
+        attn_kwargs = self.prepare_attn_kwargs(latents)
 
         noise_pred = model(
             x=latents,
@@ -408,6 +426,7 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
             drop_motion_frames=drop_motion_frames,
             audio_mask=audio_mask,
             void_audio_input=void_audio_input,
+            attn_kwargs=attn_kwargs,
         )
         return noise_pred
 
@@ -654,19 +673,12 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         )
 
         with LoRAContext():
-            attn_kwargs = {
-                "attn_impl": config.dit_attn_impl.value,
-                "sparge_smooth_k": config.sparge_smooth_k,
-                "sparge_cdfthreshd": config.sparge_cdfthreshd,
-                "sparge_simthreshd1": config.sparge_simthreshd1,
-                "sparge_pvthreshd": config.sparge_pvthreshd,
-            }
             dit = WanS2VDiT.from_state_dict(
                 state_dicts.model,
                 config=model_config,
                 device=init_device,
                 dtype=config.model_dtype,
-                attn_kwargs=attn_kwargs,
+                use_vsa=(config.dit_attn_impl.value == "vsa"),
             )
             if config.use_fp8_linear:
                 enable_fp8_linear(dit)

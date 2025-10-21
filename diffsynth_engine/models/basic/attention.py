@@ -12,6 +12,7 @@ from diffsynth_engine.utils.flag import (
     SDPA_AVAILABLE,
     SAGE_ATTN_AVAILABLE,
     SPARGE_ATTN_AVAILABLE,
+    VIDEO_SPARSE_ATTN_AVAILABLE,
 )
 from diffsynth_engine.utils.platform import DTYPE_FP8
 
@@ -20,18 +21,17 @@ FA3_MAX_HEADDIM = 256
 logger = logging.get_logger(__name__)
 
 
-def memory_align(x: torch.Tensor, dim=-1, alignment: int = 8):
-    padding_size = (alignment - x.shape[dim] % alignment) % alignment
-    padded_x = F.pad(x, (0, padding_size), "constant", 0)
-    return padded_x[..., : x.shape[dim]]
-
-
 if FLASH_ATTN_3_AVAILABLE:
     from flash_attn_interface import flash_attn_func as flash_attn3
 if FLASH_ATTN_2_AVAILABLE:
     from flash_attn import flash_attn_func as flash_attn2
 if XFORMERS_AVAILABLE:
     from xformers.ops import memory_efficient_attention
+
+    def memory_align(x: torch.Tensor, dim=-1, alignment: int = 8):
+        padding_size = (alignment - x.shape[dim] % alignment) % alignment
+        padded_x = F.pad(x, (0, padding_size), "constant", 0)
+        return padded_x[..., : x.shape[dim]]
 
     def xformers_attn(q, k, v, attn_mask=None, scale=None):
         if attn_mask is not None:
@@ -94,6 +94,13 @@ if SPARGE_ATTN_AVAILABLE:
         return out.transpose(1, 2)
 
 
+if VIDEO_SPARSE_ATTN_AVAILABLE:
+    from diffsynth_engine.models.basic.video_sparse_attention import (
+        video_sparse_attn,
+        distributed_video_sparse_attn,
+    )
+
+
 def eager_attn(q, k, v, attn_mask=None, scale=None):
     q = q.transpose(1, 2)
     k = k.transpose(1, 2)
@@ -109,9 +116,10 @@ def eager_attn(q, k, v, attn_mask=None, scale=None):
 
 
 def attention(
-    q,
-    k,
-    v,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: Optional[torch.Tensor] = None,
     attn_impl: Optional[str] = "auto",
     attn_mask: Optional[torch.Tensor] = None,
     scale: Optional[float] = None,
@@ -133,6 +141,7 @@ def attention(
         "sdpa",
         "sage",
         "sparge",
+        "vsa",
     ]
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
     if attn_impl is None or attn_impl == "auto":
@@ -189,10 +198,24 @@ def attention(
                 v,
                 attn_mask=attn_mask,
                 scale=scale,
-                smooth_k=kwargs.get("sparge_smooth_k", True),
-                simthreshd1=kwargs.get("sparge_simthreshd1", 0.6),
-                cdfthreshd=kwargs.get("sparge_cdfthreshd", 0.98),
-                pvthreshd=kwargs.get("sparge_pvthreshd", 50),
+                smooth_k=kwargs.get("smooth_k", True),
+                simthreshd1=kwargs.get("simthreshd1", 0.6),
+                cdfthreshd=kwargs.get("cdfthreshd", 0.98),
+                pvthreshd=kwargs.get("pvthreshd", 50),
+            )
+        if attn_impl == "vsa":
+            return video_sparse_attn(
+                q,
+                k,
+                v,
+                g,
+                sparsity=kwargs.get("sparsity"),
+                num_tiles=kwargs.get("num_tiles"),
+                total_seq_length=kwargs.get("total_seq_length"),
+                tile_partition_indices=kwargs.get("tile_partition_indices"),
+                reverse_tile_partition_indices=kwargs.get("reverse_tile_partition_indices"),
+                variable_block_sizes=kwargs.get("variable_block_sizes"),
+                non_pad_index=kwargs.get("non_pad_index"),
             )
         raise ValueError(f"Invalid attention implementation: {attn_impl}")
 
@@ -242,9 +265,10 @@ class Attention(nn.Module):
 
 
 def long_context_attention(
-    q,
-    k,
-    v,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: Optional[torch.Tensor] = None,
     attn_impl: Optional[str] = None,
     attn_mask: Optional[torch.Tensor] = None,
     scale: Optional[float] = None,
@@ -267,6 +291,7 @@ def long_context_attention(
         "sdpa",
         "sage",
         "sparge",
+        "vsa",
     ]
     assert attn_mask is None, "long context attention does not support attention mask"
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
@@ -307,11 +332,25 @@ def long_context_attention(
         if attn_impl == "sparge":
             attn_processor = SparseAttentionMeansim()
             # default args from spas_sage2_attn_meansim_cuda
-            attn_processor.smooth_k = torch.tensor(kwargs.get("sparge_smooth_k", True))
-            attn_processor.simthreshd1 = torch.tensor(kwargs.get("sparge_simthreshd1", 0.6))
-            attn_processor.cdfthreshd = torch.tensor(kwargs.get("sparge_cdfthreshd", 0.98))
-            attn_processor.pvthreshd = torch.tensor(kwargs.get("sparge_pvthreshd", 50))
+            attn_processor.smooth_k = torch.tensor(kwargs.get("smooth_k", True))
+            attn_processor.simthreshd1 = torch.tensor(kwargs.get("simthreshd1", 0.6))
+            attn_processor.cdfthreshd = torch.tensor(kwargs.get("cdfthreshd", 0.98))
+            attn_processor.pvthreshd = torch.tensor(kwargs.get("pvthreshd", 50))
             return LongContextAttention(attn_type=AttnType.SPARSE_SAGE, attn_processor=attn_processor)(
                 q, k, v, softmax_scale=scale
+            )
+        if attn_impl == "vsa":
+            return distributed_video_sparse_attn(
+                q,
+                k,
+                v,
+                g,
+                sparsity=kwargs.get("sparsity"),
+                num_tiles=kwargs.get("num_tiles"),
+                total_seq_length=kwargs.get("total_seq_length"),
+                tile_partition_indices=kwargs.get("tile_partition_indices"),
+                reverse_tile_partition_indices=kwargs.get("reverse_tile_partition_indices"),
+                variable_block_sizes=kwargs.get("variable_block_sizes"),
+                non_pad_index=kwargs.get("non_pad_index"),
             )
         raise ValueError(f"Invalid long context attention implementation: {attn_impl}")

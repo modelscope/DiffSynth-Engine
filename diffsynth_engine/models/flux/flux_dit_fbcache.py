@@ -20,12 +20,11 @@ class FluxDiTFBCache(FluxDiT):
     def __init__(
         self,
         in_channel: int = 64,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         relative_l1_threshold: float = 0.05,
     ):
-        super().__init__(in_channel=in_channel, attn_kwargs=attn_kwargs, device=device, dtype=dtype)
+        super().__init__(in_channel=in_channel, device=device, dtype=dtype)
         self.relative_l1_threshold = relative_l1_threshold
         self.step_count = 0
         self.num_inference_steps = 0
@@ -56,6 +55,7 @@ class FluxDiTFBCache(FluxDiT):
         text_ids: torch.Tensor,
         guidance: torch.Tensor,
         image_emb: torch.Tensor | None = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
         controlnet_double_block_output: List[torch.Tensor] | None = None,
         controlnet_single_block_output: List[torch.Tensor] | None = None,
         **kwargs,
@@ -124,7 +124,9 @@ class FluxDiTFBCache(FluxDiT):
 
                 # first block
                 original_hidden_states = hidden_states
-                hidden_states, prompt_emb = self.blocks[0](hidden_states, prompt_emb, conditioning, rope_emb, image_emb)
+                hidden_states, prompt_emb = self.blocks[0](
+                    hidden_states, prompt_emb, conditioning, rope_emb, image_emb, attn_kwargs
+                )
                 first_hidden_states_residual = hidden_states - original_hidden_states
 
                 (first_hidden_states_residual,) = sequence_parallel_unshard(
@@ -149,14 +151,16 @@ class FluxDiTFBCache(FluxDiT):
 
                     first_hidden_states = hidden_states.clone()
                     for i, block in enumerate(self.blocks[1:]):
-                        hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, rope_emb, image_emb)
+                        hidden_states, prompt_emb = block(
+                            hidden_states, prompt_emb, conditioning, rope_emb, image_emb, attn_kwargs
+                        )
                         if len(controlnet_double_block_output) > 0:
                             interval_control = len(self.blocks) / len(controlnet_double_block_output)
                             interval_control = int(np.ceil(interval_control))
                             hidden_states = hidden_states + controlnet_double_block_output[i // interval_control]
                     hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
                     for i, block in enumerate(self.single_blocks):
-                        hidden_states = block(hidden_states, conditioning, rope_emb, image_emb)
+                        hidden_states = block(hidden_states, conditioning, rope_emb, image_emb, attn_kwargs)
                         if len(controlnet_single_block_output) > 0:
                             interval_control = len(self.single_blocks) / len(controlnet_double_block_output)
                             interval_control = int(np.ceil(interval_control))
@@ -182,14 +186,12 @@ class FluxDiTFBCache(FluxDiT):
         device: str,
         dtype: torch.dtype,
         in_channel: int = 64,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
         relative_l1_threshold: float = 0.05,
     ):
         model = cls(
             device="meta",
             dtype=dtype,
             in_channel=in_channel,
-            attn_kwargs=attn_kwargs,
             relative_l1_threshold=relative_l1_threshold,
         )
         model = model.requires_grad_(False)

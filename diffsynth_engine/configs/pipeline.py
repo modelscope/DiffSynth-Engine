@@ -30,6 +30,7 @@ class AttnImpl(Enum):
     SDPA = "sdpa"  # Scaled Dot Product Attention
     SAGE = "sage"  # Sage Attention
     SPARGE = "sparge"  # Sparge Attention
+    VSA = "vsa"  # Video Sparse Attention
 
 
 @dataclass
@@ -40,6 +41,8 @@ class AttentionConfig:
     sparge_cdfthreshd: float = 0.6
     sparge_simthreshd1: float = 0.98
     sparge_pvthreshd: float = 50.0
+    # Video Sparse Attention
+    vsa_sparsity: float = 0.9
 
 
 @dataclass

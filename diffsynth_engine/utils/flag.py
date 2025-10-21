@@ -44,3 +44,9 @@ if SPARGE_ATTN_AVAILABLE:
     logger.info("Sparge attention is available")
 else:
     logger.info("Sparge attention is not available")
+
+VIDEO_SPARSE_ATTN_AVAILABLE = importlib.util.find_spec("vsa") is not None
+if VIDEO_SPARSE_ATTN_AVAILABLE:
+    logger.info("Video sparse attention is available")
+else:
+    logger.info("Video sparse attention is not available")

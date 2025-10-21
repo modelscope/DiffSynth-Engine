@@ -86,7 +86,6 @@ class FluxControlNet(PreTrainedModel):
     def __init__(
         self,
         condition_channels: int = 64,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -103,10 +102,7 @@ class FluxControlNet(PreTrainedModel):
         self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
         self.controlnet_x_embedder = nn.Linear(condition_channels, 3072)
         self.blocks = nn.ModuleList(
-            [
-                FluxDoubleTransformerBlock(3072, 24, attn_kwargs=attn_kwargs, device=device, dtype=dtype)
-                for _ in range(6)
-            ]
+            [FluxDoubleTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(6)]
         )
         # controlnet projection
         self.blocks_proj = nn.ModuleList(
@@ -128,6 +124,7 @@ class FluxControlNet(PreTrainedModel):
         image_ids: torch.Tensor,
         text_ids: torch.Tensor,
         guidance: torch.Tensor,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
         hidden_states = self.x_embedder(hidden_states) + self.controlnet_x_embedder(control_condition)
         condition = (
@@ -141,7 +138,9 @@ class FluxControlNet(PreTrainedModel):
         # double block
         double_block_outputs = []
         for i, block in enumerate(self.blocks):
-            hidden_states, prompt_emb = block(hidden_states, prompt_emb, condition, image_rotary_emb)
+            hidden_states, prompt_emb = block(
+                hidden_states, prompt_emb, condition, image_rotary_emb, attn_kwargs=attn_kwargs
+            )
             double_block_outputs.append(self.blocks_proj[i](hidden_states))
 
         # apply control scale
@@ -149,24 +148,13 @@ class FluxControlNet(PreTrainedModel):
         return double_block_outputs, None
 
     @classmethod
-    def from_state_dict(
-        cls,
-        state_dict: Dict[str, torch.Tensor],
-        device: str,
-        dtype: torch.dtype,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
-    ):
+    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype):
         if "controlnet_x_embedder.weight" in state_dict:
             condition_channels = state_dict["controlnet_x_embedder.weight"].shape[1]
         else:
             condition_channels = 64
 
-        model = cls(
-            condition_channels=condition_channels,
-            attn_kwargs=attn_kwargs,
-            device="meta",
-            dtype=dtype,
-        )
+        model = cls(condition_channels=condition_channels, device="meta", dtype=dtype)
         model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)

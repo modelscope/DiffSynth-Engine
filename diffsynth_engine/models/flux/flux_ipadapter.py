@@ -2,7 +2,7 @@ import torch
 from einops import rearrange
 from torch import nn
 from PIL import Image
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 from functools import partial
 from diffsynth_engine.models.text_encoder.siglip import SiglipImageEncoder
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
@@ -18,7 +18,6 @@ class FluxIPAdapterAttention(nn.Module):
         dim: int = 3072,
         head_num: int = 24,
         scale: float = 1.0,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -28,12 +27,13 @@ class FluxIPAdapterAttention(nn.Module):
         self.to_v_ip = nn.Linear(image_emb_dim, dim, device=device, dtype=dtype, bias=False)
         self.head_num = head_num
         self.scale = scale
-        self.attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
 
-    def forward(self, query: torch.Tensor, image_emb: torch.Tensor):
+    def forward(self, query: torch.Tensor, image_emb: torch.Tensor, attn_kwargs=None):
         key = rearrange(self.norm_k(self.to_k_ip(image_emb)), "b s (h d) -> b s h d", h=self.head_num)
         value = rearrange(self.to_v_ip(image_emb), "b s (h d) -> b s h d", h=self.head_num)
-        attn_out = attention(query, key, value, **self.attn_kwargs)
+
+        attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
+        attn_out = attention(query, key, value, **attn_kwargs)
         return self.scale * rearrange(attn_out, "b s h d -> b s (h d)")
 
     @classmethod

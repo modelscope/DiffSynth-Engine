@@ -12,6 +12,7 @@ from diffsynth_engine.configs import (
     QwenImageStateDicts,
     QwenImageControlNetParams,
     QwenImageControlType,
+    AttnImpl,
 )
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.models.qwen_image import (
@@ -247,19 +248,11 @@ class QwenImagePipeline(BasePipeline):
         )
 
         with LoRAContext():
-            attn_kwargs = {
-                "attn_impl": config.dit_attn_impl.value,
-                "sparge_smooth_k": config.sparge_smooth_k,
-                "sparge_cdfthreshd": config.sparge_cdfthreshd,
-                "sparge_simthreshd1": config.sparge_simthreshd1,
-                "sparge_pvthreshd": config.sparge_pvthreshd,
-            }
             if config.use_fbcache:
                 dit = QwenImageDiTFBCache.from_state_dict(
                     state_dicts.model,
                     device=init_device,
                     dtype=config.model_dtype,
-                    attn_kwargs=attn_kwargs,
                     relative_l1_threshold=config.fbcache_relative_l1_threshold,
                 )
             else:
@@ -267,7 +260,6 @@ class QwenImagePipeline(BasePipeline):
                     state_dicts.model,
                     device=init_device,
                     dtype=config.model_dtype,
-                    attn_kwargs=attn_kwargs,
                 )
             if config.use_fp8_linear:
                 enable_fp8_linear(dit)
@@ -346,6 +338,18 @@ class QwenImagePipeline(BasePipeline):
             latents.to(device=self.device, dtype=self.dtype),
         )
         return init_latents, latents, sigmas, timesteps
+
+    def prepare_attn_kwargs(self):
+        attn_kwargs = {"attn_impl": self.config.dit_attn_impl.value}
+        if self.config.dit_attn_impl == AttnImpl.SPARGE:
+            attn_kwargs = {
+                "attn_impl": self.config.dit_attn_impl.value,
+                "smooth_k": self.config.sparge_smooth_k,
+                "cdfthreshd": self.config.sparge_cdfthreshd,
+                "simthreshd1": self.config.sparge_simthreshd1,
+                "pvthreshd": self.config.sparge_pvthreshd,
+            }
+        return attn_kwargs
 
     def encode_prompt(
         self,
@@ -542,6 +546,7 @@ class QwenImagePipeline(BasePipeline):
         entity_masks: Optional[List[torch.Tensor]] = None,
     ):
         self.load_models_to_device(["dit"])
+        attn_kwargs = self.prepare_attn_kwargs()
         noise_pred = self.dit(
             image=latents,
             edit=image_latents,
@@ -552,6 +557,7 @@ class QwenImagePipeline(BasePipeline):
             entity_text=entity_prompt_embs,
             entity_seq_lens=[mask.sum(dim=1) for mask in entity_prompt_emb_masks] if entity_prompt_emb_masks else None,
             entity_masks=entity_masks,
+            attn_kwargs=attn_kwargs,
         )
         return noise_pred
 

@@ -167,7 +167,6 @@ class QwenDoubleStreamAttention(nn.Module):
         dim_b,
         num_heads,
         head_dim,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -189,7 +188,6 @@ class QwenDoubleStreamAttention(nn.Module):
 
         self.to_out = nn.Linear(dim_a, dim_a, device=device, dtype=dtype)
         self.to_add_out = nn.Linear(dim_b, dim_b, device=device, dtype=dtype)
-        self.attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
 
     def forward(
         self,
@@ -197,6 +195,7 @@ class QwenDoubleStreamAttention(nn.Module):
         text: torch.FloatTensor,
         rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attn_mask: Optional[torch.Tensor] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
         img_q, img_k, img_v = self.to_q(image), self.to_k(image), self.to_v(image)
         txt_q, txt_k, txt_v = self.add_q_proj(text), self.add_k_proj(text), self.add_v_proj(text)
@@ -227,7 +226,8 @@ class QwenDoubleStreamAttention(nn.Module):
         joint_k = joint_k.transpose(1, 2)
         joint_v = joint_v.transpose(1, 2)
 
-        joint_attn_out = attention_ops.attention(joint_q, joint_k, joint_v, attn_mask=attn_mask, **self.attn_kwargs)
+        attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
+        joint_attn_out = attention_ops.attention(joint_q, joint_k, joint_v, attn_mask=attn_mask, **attn_kwargs)
 
         joint_attn_out = rearrange(joint_attn_out, "b s h d -> b s (h d)").to(joint_q.dtype)
 
@@ -247,7 +247,6 @@ class QwenImageTransformerBlock(nn.Module):
         num_attention_heads: int,
         attention_head_dim: int,
         eps: float = 1e-6,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -267,7 +266,6 @@ class QwenImageTransformerBlock(nn.Module):
             dim_b=dim,
             num_heads=num_attention_heads,
             head_dim=attention_head_dim,
-            attn_kwargs=attn_kwargs,
             device=device,
             dtype=dtype,
         )
@@ -293,6 +291,7 @@ class QwenImageTransformerBlock(nn.Module):
         temb: torch.Tensor,
         rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attn_mask: Optional[torch.Tensor] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         img_mod_attn, img_mod_mlp = self.img_mod(temb).chunk(2, dim=-1)  # [B, 3*dim] each
         txt_mod_attn, txt_mod_mlp = self.txt_mod(temb).chunk(2, dim=-1)  # [B, 3*dim] each
@@ -308,6 +307,7 @@ class QwenImageTransformerBlock(nn.Module):
             text=txt_modulated,
             rotary_emb=rotary_emb,
             attn_mask=attn_mask,
+            attn_kwargs=attn_kwargs,
         )
 
         image = image + img_gate * img_attn_out
@@ -335,7 +335,6 @@ class QwenImageDiT(PreTrainedModel):
     def __init__(
         self,
         num_layers: int = 60,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -356,7 +355,6 @@ class QwenImageDiT(PreTrainedModel):
                     dim=3072,
                     num_attention_heads=24,
                     attention_head_dim=128,
-                    attn_kwargs=attn_kwargs,
                     device=device,
                     dtype=dtype,
                 )
@@ -444,6 +442,7 @@ class QwenImageDiT(PreTrainedModel):
         entity_text: Optional[List[torch.Tensor]] = None,
         entity_seq_lens: Optional[List[torch.LongTensor]] = None,
         entity_masks: Optional[List[torch.Tensor]] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
         h, w = image.shape[-2:]
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
@@ -509,7 +508,12 @@ class QwenImageDiT(PreTrainedModel):
                 rotary_emb = (img_freqs, txt_freqs)
                 for block in self.transformer_blocks:
                     text, image = block(
-                        image=image, text=text, temb=conditioning, rotary_emb=rotary_emb, attn_mask=attn_mask
+                        image=image,
+                        text=text,
+                        temb=conditioning,
+                        rotary_emb=rotary_emb,
+                        attn_mask=attn_mask,
+                        attn_kwargs=attn_kwargs,
                     )
                 image = self.norm_out(image, conditioning)
                 image = self.proj_out(image)
@@ -527,14 +531,8 @@ class QwenImageDiT(PreTrainedModel):
         device: str,
         dtype: torch.dtype,
         num_layers: int = 60,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
-        model = cls(
-            device="meta",
-            dtype=dtype,
-            num_layers=num_layers,
-            attn_kwargs=attn_kwargs,
-        )
+        model = cls(device="meta", dtype=dtype, num_layers=num_layers)
         model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)

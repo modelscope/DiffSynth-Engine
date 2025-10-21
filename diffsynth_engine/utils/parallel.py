@@ -40,10 +40,14 @@ class ProcessGroupSingleton(Singleton):
     def __init__(self):
         self.CFG_GROUP: Optional[dist.ProcessGroup] = None
         self.SP_GROUP: Optional[dist.ProcessGroup] = None
+        self.SP_ULYSSUES_GROUP: Optional[dist.ProcessGroup] = None
+        self.SP_RING_GROUP: Optional[dist.ProcessGroup] = None
         self.TP_GROUP: Optional[dist.ProcessGroup] = None
 
         self.CFG_RANKS: List[int] = []
         self.SP_RANKS: List[int] = []
+        self.SP_ULYSSUES_RANKS: List[int] = []
+        self.SP_RING_RANKS: List[int] = []
         self.TP_RANKS: List[int] = []
 
 
@@ -80,6 +84,38 @@ def get_sp_rank():
 
 def get_sp_ranks():
     return PROCESS_GROUP.SP_RANKS
+
+
+def get_sp_ulysses_group():
+    return PROCESS_GROUP.SP_ULYSSUES_GROUP
+
+
+def get_sp_ulysses_world_size():
+    return PROCESS_GROUP.SP_ULYSSUES_GROUP.size() if PROCESS_GROUP.SP_ULYSSUES_GROUP is not None else 1
+
+
+def get_sp_ulysses_rank():
+    return PROCESS_GROUP.SP_ULYSSUES_GROUP.rank() if PROCESS_GROUP.SP_ULYSSUES_GROUP is not None else 0
+
+
+def get_sp_ulysses_ranks():
+    return PROCESS_GROUP.SP_ULYSSUES_RANKS
+
+
+def get_sp_ring_group():
+    return PROCESS_GROUP.SP_RING_GROUP
+
+
+def get_sp_ring_world_size():
+    return PROCESS_GROUP.SP_RING_GROUP.size() if PROCESS_GROUP.SP_RING_GROUP is not None else 1
+
+
+def get_sp_ring_rank():
+    return PROCESS_GROUP.SP_RING_GROUP.rank() if PROCESS_GROUP.SP_RING_GROUP is not None else 0
+
+
+def get_sp_ring_ranks():
+    return PROCESS_GROUP.SP_RING_RANKS
 
 
 def get_tp_group():
@@ -127,23 +163,32 @@ def init_parallel_pgs(
     blocks = [list(range(world_size))]
     cfg_groups, cfg_blocks = make_parallel_groups(blocks, cfg_degree)
     for cfg_ranks in cfg_groups:
-        cfg_group = dist.new_group(cfg_ranks)
         if rank in cfg_ranks:
-            PROCESS_GROUP.CFG_GROUP = cfg_group
+            PROCESS_GROUP.CFG_GROUP = dist.new_group(cfg_ranks)
             PROCESS_GROUP.CFG_RANKS = cfg_ranks
 
     sp_groups, sp_blocks = make_parallel_groups(cfg_blocks, sp_degree)
     for sp_ranks in sp_groups:
-        group = dist.new_group(sp_ranks)
         if rank in sp_ranks:
-            PROCESS_GROUP.SP_GROUP = group
+            PROCESS_GROUP.SP_GROUP = dist.new_group(sp_ranks)
             PROCESS_GROUP.SP_RANKS = sp_ranks
+
+    sp_ulysses_groups, sp_ulysses_blocks = make_parallel_groups(cfg_blocks, sp_ulysses_degree)
+    for sp_ulysses_ranks in sp_ulysses_groups:
+        if rank in sp_ulysses_ranks:
+            PROCESS_GROUP.SP_ULYSSUES_GROUP = dist.new_group(sp_ulysses_ranks)
+            PROCESS_GROUP.SP_ULYSSUES_RANKS = sp_ulysses_ranks
+
+    sp_ring_groups, _ = make_parallel_groups(sp_ulysses_blocks, sp_ring_degree)
+    for sp_ring_ranks in sp_ring_groups:
+        if rank in sp_ring_ranks:
+            PROCESS_GROUP.SP_RING_GROUP = dist.new_group(sp_ring_ranks)
+            PROCESS_GROUP.SP_RING_RANKS = sp_ring_ranks
 
     tp_groups, _ = make_parallel_groups(sp_blocks, tp_degree)
     for tp_ranks in tp_groups:
-        group = dist.new_group(tp_ranks)
         if rank in tp_ranks:
-            PROCESS_GROUP.TP_GROUP = group
+            PROCESS_GROUP.TP_GROUP = dist.new_group(tp_ranks)
             PROCESS_GROUP.TP_RANKS = tp_ranks
 
     set_seq_parallel_pg(sp_ulysses_degree, sp_ring_degree, rank, world_size)

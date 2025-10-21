@@ -11,12 +11,11 @@ class QwenImageDiTFBCache(QwenImageDiT):
     def __init__(
         self,
         num_layers: int = 60,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         relative_l1_threshold: float = 0.05,
     ):
-        super().__init__(num_layers=num_layers, attn_kwargs=attn_kwargs, device=device, dtype=dtype)
+        super().__init__(num_layers=num_layers, device=device, dtype=dtype)
         self.relative_l1_threshold = relative_l1_threshold
         self.step_count = 0
         self.num_inference_steps = 0
@@ -43,6 +42,7 @@ class QwenImageDiTFBCache(QwenImageDiT):
         text: torch.Tensor = None,
         timestep: torch.LongTensor = None,
         txt_seq_lens: torch.LongTensor = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
         h, w = image.shape[-2:]
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
@@ -72,7 +72,11 @@ class QwenImageDiTFBCache(QwenImageDiT):
             # first block
             original_hidden_states = image
             text, image = self.transformer_blocks[0](
-                image=image, text=text, temb=conditioning, image_rotary_emb=image_rotary_emb
+                image=image,
+                text=text,
+                temb=conditioning,
+                image_rotary_emb=image_rotary_emb,
+                attn_kwargs=attn_kwargs,
             )
             first_hidden_states_residual = image - original_hidden_states
 
@@ -94,7 +98,13 @@ class QwenImageDiTFBCache(QwenImageDiT):
                 first_hidden_states = image.clone()
 
                 for block in self.transformer_blocks[1:]:
-                    text, image = block(image=image, text=text, temb=conditioning, image_rotary_emb=image_rotary_emb)
+                    text, image = block(
+                        image=image,
+                        text=text,
+                        temb=conditioning,
+                        image_rotary_emb=image_rotary_emb,
+                        attn_kwargs=attn_kwargs,
+                    )
 
                 previous_residual = image - first_hidden_states
                 self.previous_residual = previous_residual
@@ -114,14 +124,12 @@ class QwenImageDiTFBCache(QwenImageDiT):
         device: str,
         dtype: torch.dtype,
         num_layers: int = 60,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
         relative_l1_threshold: float = 0.05,
     ):
         model = cls(
             device="meta",
             dtype=dtype,
             num_layers=num_layers,
-            attn_kwargs=attn_kwargs,
             relative_l1_threshold=relative_l1_threshold,
         )
         model = model.requires_grad_(False)

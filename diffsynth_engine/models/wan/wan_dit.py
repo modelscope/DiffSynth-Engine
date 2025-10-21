@@ -17,6 +17,7 @@ from diffsynth_engine.utils.constants import (
     WAN2_2_DIT_TI2V_5B_CONFIG_FILE,
     WAN2_2_DIT_I2V_A14B_CONFIG_FILE,
     WAN2_2_DIT_T2V_A14B_CONFIG_FILE,
+    WAN_DIT_KEYMAP_FILE,
 )
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
@@ -29,6 +30,9 @@ from diffsynth_engine.utils.parallel import (
 
 T5_TOKEN_NUM = 512
 FLF_TOKEN_NUM = 257 * 2
+
+with open(WAN_DIT_KEYMAP_FILE, "r", encoding="utf-8") as f:
+    config = json.load(f)
 
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
@@ -73,7 +77,7 @@ class SelfAttention(nn.Module):
         dim: int,
         num_heads: int,
         eps: float = 1e-6,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
+        use_vsa: bool = False,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -86,19 +90,25 @@ class SelfAttention(nn.Module):
         self.o = nn.Linear(dim, dim, device=device, dtype=dtype)
         self.norm_q = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
         self.norm_k = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
-        self.attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
+        self.gate_compress = nn.Linear(dim, dim, device=device, dtype=dtype) if use_vsa else None
 
-    def forward(self, x, freqs):
+    def forward(self, x, freqs, attn_kwargs=None):
         q, k, v = self.norm_q(self.q(x)), self.norm_k(self.k(x)), self.v(x)
+        g = self.gate_compress(x) if self.gate_compress is not None else None
+
         num_heads = q.shape[2] // self.head_dim
         q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
+        g = rearrange(g, "b s (n d) -> b s n d", n=num_heads) if g is not None else None
+
+        attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
         x = attention_ops.attention(
             q=rope_apply(q, freqs),
             k=rope_apply(k, freqs),
             v=v,
-            **self.attn_kwargs,
+            g=g,
+            **attn_kwargs,
         )
         x = x.flatten(2)
         return self.o(x)
@@ -111,7 +121,6 @@ class CrossAttention(nn.Module):
         num_heads: int,
         eps: float = 1e-6,
         has_image_input: bool = False,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -130,9 +139,8 @@ class CrossAttention(nn.Module):
             self.k_img = nn.Linear(dim, dim, device=device, dtype=dtype)
             self.v_img = nn.Linear(dim, dim, device=device, dtype=dtype)
             self.norm_k_img = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
-        self.attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
 
-    def forward(self, x: torch.Tensor, y: torch.Tensor):
+    def forward(self, x: torch.Tensor, y: torch.Tensor, attn_kwargs=None):
         if self.has_image_input:
             img = y[:, :-T5_TOKEN_NUM]
             ctx = y[:, -T5_TOKEN_NUM:]
@@ -144,12 +152,16 @@ class CrossAttention(nn.Module):
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
 
-        x = attention(q, k, v, **self.attn_kwargs).flatten(2)
+        attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
+        if attn_kwargs.get("attn_impl", None) == "vsa":
+            attn_kwargs = attn_kwargs.copy()
+            attn_kwargs["attn_impl"] = "sdpa"
+        x = attention(q, k, v, **attn_kwargs).flatten(2)
         if self.has_image_input:
             k_img, v_img = self.norm_k_img(self.k_img(img)), self.v_img(img)
             k_img = rearrange(k_img, "b s (n d) -> b s n d", n=num_heads)
             v_img = rearrange(v_img, "b s (n d) -> b s n d", n=num_heads)
-            y = attention(q, k_img, v_img, **self.attn_kwargs).flatten(2)
+            y = attention(q, k_img, v_img, **attn_kwargs).flatten(2)
             x = x + y
         return self.o(x)
 
@@ -162,7 +174,7 @@ class DiTBlock(nn.Module):
         num_heads: int,
         ffn_dim: int,
         eps: float = 1e-6,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
+        use_vsa: bool = False,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -170,9 +182,9 @@ class DiTBlock(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
         self.ffn_dim = ffn_dim
-        self.self_attn = SelfAttention(dim, num_heads, eps, attn_kwargs=attn_kwargs, device=device, dtype=dtype)
+        self.self_attn = SelfAttention(dim, num_heads, eps, use_vsa=use_vsa, device=device, dtype=dtype)
         self.cross_attn = CrossAttention(
-            dim, num_heads, eps, has_image_input=has_image_input, attn_kwargs=attn_kwargs, device=device, dtype=dtype
+            dim, num_heads, eps, has_image_input=has_image_input, device=device, dtype=dtype
         )
         self.norm1 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False, device=device, dtype=dtype)
         self.norm2 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False, device=device, dtype=dtype)
@@ -184,14 +196,14 @@ class DiTBlock(nn.Module):
         )
         self.modulation = nn.Parameter(torch.randn(1, 6, dim, device=device, dtype=dtype) / dim**0.5)
 
-    def forward(self, x, context, t_mod, freqs):
+    def forward(self, x, context, t_mod, freqs, attn_kwargs=None):
         # msa: multi-head self-attention  mlp: multi-layer perceptron
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = [
             t.squeeze(1) for t in (self.modulation + t_mod).chunk(6, dim=1)
         ]
         input_x = modulate(self.norm1(x), shift_msa, scale_msa)
-        x = x + gate_msa * self.self_attn(input_x, freqs)
-        x = x + self.cross_attn(self.norm3(x), context)
+        x = x + gate_msa * self.self_attn(input_x, freqs, attn_kwargs)
+        x = x + self.cross_attn(self.norm3(x), context, attn_kwargs)
         input_x = modulate(self.norm2(x), shift_mlp, scale_mlp)
         x = x + gate_mlp * self.ffn(input_x)
         return x
@@ -249,7 +261,26 @@ class Head(nn.Module):
 
 
 class WanDiTStateDictConverter(StateDictConverter):
+    def _from_diffusers(self, state_dict):
+        global_rename_dict = config["diffusers"]["global_rename_dict"]
+        rename_dict = config["diffusers"]["rename_dict"]
+        state_dict_ = {}
+        for name, param in state_dict.items():
+            suffix = ""
+            suffix = ".weight" if name.endswith(".weight") else suffix
+            suffix = ".bias" if name.endswith(".bias") else suffix
+            prefix = name[: -len(suffix)] if suffix else name
+            if prefix in global_rename_dict:
+                state_dict_[f"{global_rename_dict[prefix]}{suffix}"] = param
+            if prefix.startswith("blocks."):
+                _, idx, middle = prefix.split(".", 2)
+                if middle in rename_dict:
+                    state_dict_[f"blocks.{idx}.{rename_dict[middle]}{suffix}"] = param
+        return state_dict_
+
     def convert(self, state_dict):
+        if "condition_embedder.time_proj.weight" in state_dict:
+            return self._from_diffusers(state_dict)
         return state_dict
 
 
@@ -273,7 +304,7 @@ class WanDiT(PreTrainedModel):
         has_vae_feature: bool = False,
         fuse_image_latents: bool = False,
         flf_pos_emb: bool = False,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
+        use_vsa: bool = False,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -307,7 +338,16 @@ class WanDiT(PreTrainedModel):
         )
         self.blocks = nn.ModuleList(
             [
-                DiTBlock(has_clip_feature, dim, num_heads, ffn_dim, eps, attn_kwargs, device=device, dtype=dtype)
+                DiTBlock(
+                    has_clip_feature,
+                    dim,
+                    num_heads,
+                    ffn_dim,
+                    eps,
+                    use_vsa,
+                    device=device,
+                    dtype=dtype,
+                )
                 for _ in range(num_layers)
             ]
         )
@@ -344,6 +384,7 @@ class WanDiT(PreTrainedModel):
         timestep: torch.Tensor,
         clip_feature: Optional[torch.Tensor] = None,  # clip_vision_encoder(img)
         y: Optional[torch.Tensor] = None,  # vae_encoder(img)
+        attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         use_cfg = x.shape[0] > 1
@@ -376,7 +417,7 @@ class WanDiT(PreTrainedModel):
 
             with sequence_parallel((x, t, t_mod, freqs), seq_dims=(1, 0, 0, 0)):
                 for block in self.blocks:
-                    x = block(x, context, t_mod, freqs)
+                    x = block(x, context, t_mod, freqs, attn_kwargs)
                 x = self.head(x, t)
                 (x,) = sequence_parallel_unshard((x,), seq_dims=(1,), seq_lens=(f * h * w,))
             x = self.unpatchify(x, (f, h, w))
@@ -409,12 +450,11 @@ class WanDiT(PreTrainedModel):
         config: Dict[str, Any],
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
-        attn_kwargs: Optional[Dict[str, Any]] = None,
-        assign: bool = True,
+        use_vsa: bool = False,
     ):
-        model = cls(**config, device="meta", dtype=dtype, attn_kwargs=attn_kwargs)
+        model = cls(**config, device="meta", dtype=dtype, use_vsa=use_vsa)
         model = model.requires_grad_(False)
-        model.load_state_dict(state_dict, assign=assign)
+        model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
