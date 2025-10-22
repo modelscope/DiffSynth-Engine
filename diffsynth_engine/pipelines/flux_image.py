@@ -143,7 +143,7 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                 layer_id, layer_type = name.split("_", 1)
                 layer_type = layer_type.replace("self_attn_", "self_attn.").replace("mlp_", "mlp.")
                 rename = ".".join(["encoders", layer_id, clip_attn_rename_dict[layer_type]])
-                
+
                 lora_args = {}
                 lora_args["alpha"] = param
                 lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
@@ -517,7 +517,7 @@ class FluxImagePipeline(BasePipeline):
             if config.use_fbcache:
                 dit = FluxDiTFBCache.from_state_dict(
                     state_dicts.model,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     in_channel=config.control_type.get_in_channel(),
                     attn_kwargs=attn_kwargs,
@@ -526,7 +526,7 @@ class FluxImagePipeline(BasePipeline):
             else:
                 dit = FluxDiT.from_state_dict(
                     state_dicts.model,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     in_channel=config.control_type.get_in_channel(),
                     attn_kwargs=attn_kwargs,

@@ -664,7 +664,7 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
             dit = WanS2VDiT.from_state_dict(
                 state_dicts.model,
                 config=model_config,
-                device=init_device,
+                device=("cpu" if config.use_fsdp else init_device),
                 dtype=config.model_dtype,
                 attn_kwargs=attn_kwargs,
             )

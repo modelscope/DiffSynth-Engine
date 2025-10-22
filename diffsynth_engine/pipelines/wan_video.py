@@ -566,7 +566,7 @@ class WanVideoPipeline(BasePipeline):
             dit = WanDiT.from_state_dict(
                 dit_state_dict,
                 config=dit_config,
-                device=init_device,
+                device=("cpu" if config.use_fsdp else init_device),
                 dtype=config.model_dtype,
                 attn_kwargs=attn_kwargs,
             )
@@ -578,7 +578,7 @@ class WanVideoPipeline(BasePipeline):
                 dit2 = WanDiT.from_state_dict(
                     dit2_state_dict,
                     config=dit_config,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     attn_kwargs=attn_kwargs,
                 )

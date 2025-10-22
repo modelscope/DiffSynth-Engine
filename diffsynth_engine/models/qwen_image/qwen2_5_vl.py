@@ -942,6 +942,8 @@ class Qwen2_5_VLModel(nn.Module):
 
 
 class Qwen2_5_VLForConditionalGeneration(PreTrainedModel):
+    _supports_parallelization = True
+
     def __init__(
         self,
         vision_config: Qwen2_5_VLVisionConfig,
@@ -1172,6 +1174,9 @@ class Qwen2_5_VLForConditionalGeneration(PreTrainedModel):
                 )
 
             return position_ids, mrope_position_deltas
+
+    def get_fsdp_module_cls(self):
+        return {Qwen2_5_VisionBlock, Qwen2_5_VLDecoderLayer}
 
     def forward(
         self,

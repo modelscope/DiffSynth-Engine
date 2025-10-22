@@ -201,7 +201,7 @@ class QwenImagePipeline(BasePipeline):
             state_dicts.encoder,
             vision_config=vision_config,
             config=text_config,
-            device=init_device,
+            device=(init_device if config.use_fsdp else "cpu"),
             dtype=config.encoder_dtype,
         )
         with open(QWEN_IMAGE_VAE_CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -221,7 +221,7 @@ class QwenImagePipeline(BasePipeline):
             if config.use_fbcache:
                 dit = QwenImageDiTFBCache.from_state_dict(
                     state_dicts.model,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     attn_kwargs=attn_kwargs,
                     relative_l1_threshold=config.fbcache_relative_l1_threshold,
@@ -229,7 +229,7 @@ class QwenImagePipeline(BasePipeline):
             else:
                 dit = QwenImageDiT.from_state_dict(
                     state_dicts.model,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     attn_kwargs=attn_kwargs,
                 )
