@@ -201,7 +201,7 @@ class QwenImagePipeline(BasePipeline):
             state_dicts.encoder,
             vision_config=vision_config,
             config=text_config,
-            device=(init_device if config.use_fsdp else "cpu"),
+            device=("cpu" if config.use_fsdp else init_device),
             dtype=config.encoder_dtype,
         )
         with open(QWEN_IMAGE_VAE_CONFIG_FILE, "r", encoding="utf-8") as f:
