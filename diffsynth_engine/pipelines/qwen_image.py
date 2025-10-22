@@ -561,8 +561,8 @@ class QwenImagePipeline(BasePipeline):
         # single image for edit, list for edit plus(QwenImageEdit2509)
         input_image: List[Image.Image] | Image.Image | None = None,
         cfg_scale: float = 4.0,  # true cfg
-        height: int = 1328,
-        width: int = 1328,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
         num_inference_steps: int = 50,
         seed: int | None = None,
         controlnet_params: List[QwenImageControlNetParams] | QwenImageControlNetParams = [],
@@ -571,7 +571,9 @@ class QwenImagePipeline(BasePipeline):
         entity_prompts: Optional[List[str]] = None,
         entity_masks: Optional[List[Image.Image]] = None,
     ):
+        assert (height is None) == (width is None), "height and width should be set together"
         is_edit_plus = isinstance(input_image, list)
+
         if input_image is not None:
             if not isinstance(input_image, list):
                 input_image = [input_image]
@@ -583,9 +585,11 @@ class QwenImagePipeline(BasePipeline):
                 vae_width, vae_height = self.calculate_dimensions(1024 * 1024, img_width / img_height)
                 condition_images.append(img.resize((condition_width, condition_height), Image.LANCZOS))
                 vae_images.append(img.resize((vae_width, vae_height), Image.LANCZOS))
+            if width is None and height is None:
+                width, height = vae_images[-1].size
 
-            width, height = vae_images[-1].size
-
+        if width is None and height is None:
+            width, height = 1328, 1328
         self.validate_image_size(height, width, minimum=64, multiple_of=16)
 
         if not isinstance(controlnet_params, list):
