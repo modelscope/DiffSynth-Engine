@@ -83,8 +83,44 @@ class QwenImageLoRAConverter(LoRAStateDictConverter):
             dit_dict[key] = lora_args
         return {"dit": dit_dict}
 
+    def _from_diffusers(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
+        dit_dict = {}
+        for key, param in lora_state_dict.items():
+            origin_key = key
+            lora_a_suffix = None
+            if "lora_A.weight" in key:
+                lora_a_suffix = "lora_A.weight"
+                lora_b_suffix = "lora_B.weight"
+            
+            if lora_a_suffix is None:
+                continue
+
+            lora_args = {}
+            lora_args["down"] = param
+            lora_args["up"] = lora_state_dict[origin_key.replace(lora_a_suffix, lora_b_suffix)]
+            lora_args["rank"] = lora_args["up"].shape[1]
+            alpha_key = origin_key.replace(lora_a_suffix, "alpha")
+
+            if alpha_key in lora_state_dict:
+                alpha = lora_state_dict[alpha_key]
+            else:
+                alpha = lora_args["rank"]
+            lora_args["alpha"] = alpha
+
+            key = key.replace(f".{lora_a_suffix}", "")
+            key = key.replace("diffusion_model.", "")
+
+            if key.startswith("transformer") and "attn.to_out.0" in key:
+                key = key.replace("attn.to_out.0", "attn.to_out")
+            dit_dict[key] = lora_args
+        return {"dit": dit_dict}
+
     def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
-        return self._from_diffsynth(lora_state_dict)
+        key = list(lora_state_dict.keys())[0]
+        if key.startswith("diffusion_model."):
+            return self._from_diffusers(lora_state_dict)
+        else:
+            return self._from_diffsynth(lora_state_dict)
 
 
 class QwenImagePipeline(BasePipeline):
