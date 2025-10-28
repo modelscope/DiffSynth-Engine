@@ -223,7 +223,6 @@ class Wav2Vec2StateDictConverter:
 
 class Wav2Vec2Model(PreTrainedModel):
     converter = Wav2Vec2StateDictConverter()
-    _supports_parallelization = False
 
     def __init__(self, config: Wav2Vec2Config, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
@@ -267,9 +266,13 @@ def linear_interpolation(features: torch.Tensor, input_fps: int, output_fps: int
     return output_features.transpose(1, 2)  # [1, output_len, 512]
 
 
-def extract_audio_feat(audio_input: torch.Tensor, model: Wav2Vec2Model, dtype=torch.float32, device="cuda:0") -> torch.Tensor:
+def extract_audio_feat(
+    audio_input: torch.Tensor, model: Wav2Vec2Model, dtype=torch.float32, device="cuda:0"
+) -> torch.Tensor:
     video_rate = 30
-    input_values = (audio_input - audio_input.mean(dim=1, keepdim=True)) / torch.sqrt(audio_input.var(dim=1, keepdim=True) + 1e-7)
+    input_values = (audio_input - audio_input.mean(dim=1, keepdim=True)) / torch.sqrt(
+        audio_input.var(dim=1, keepdim=True) + 1e-7
+    )
     feat = torch.cat(model(input_values.to(device)))
     feat = linear_interpolation(feat, input_fps=50, output_fps=video_rate)
     return feat.to(dtype)  # Encoding for the motion

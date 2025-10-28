@@ -8,14 +8,14 @@ import torch.multiprocessing as mp
 import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy
-from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor.parallel.style import ParallelStyle
 from torch.distributed.tensor.parallel._utils import _validate_tp_mesh_dim
 from contextlib import contextmanager
 from datetime import timedelta
 from functools import partial
-from typing import Dict, List, Union, Optional
+from typing import Dict, List, Set, Type, Union, Optional
 from queue import Empty
 
 import diffsynth_engine.models.basic.attention as attention_ops
@@ -174,25 +174,14 @@ def to_device(data, device):
 def shard_model(
     module: nn.Module,
     device_id: int | torch.device,
+    wrap_module_cls: Set[Type[nn.Module]],
     sharding_strategy: ShardingStrategy = ShardingStrategy.FULL_SHARD,
-    wrap_module_names: Optional[List[str]] = None,
 ):
-    wrap_module_names = wrap_module_names or []
-
-    def wrap_fn(m):
-        for name in wrap_module_names:
-            submodule = getattr(module, name)
-            if isinstance(submodule, nn.ModuleList) and m in submodule:
-                return True
-            elif not isinstance(submodule, nn.ModuleList) and m is submodule:
-                return True
-        return False
-
     return FSDP(
         module,
         device_id=device_id,
         sharding_strategy=sharding_strategy,
-        auto_wrap_policy=partial(lambda_auto_wrap_policy, lambda_fn=wrap_fn),
+        auto_wrap_policy=partial(transformer_auto_wrap_policy, transformer_layer_cls=wrap_module_cls),
     )
 
 
@@ -283,7 +272,7 @@ def _worker_loop(
                     parallelize_plan=module.get_tp_plan(),
                 )
             elif use_fsdp:
-                module = shard_model(module, device_id=device, wrap_module_names=module.get_fsdp_modules())
+                module = shard_model(module, device_id=device, wrap_module_cls=module.get_fsdp_module_cls())
             return module
 
         module = None

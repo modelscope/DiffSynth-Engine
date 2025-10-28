@@ -25,11 +25,29 @@ class FluxVAEStateDictConverter(VAEStateDictConverter):
             new_state_dict[name_] = param
         return new_state_dict
 
+    def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        rename_dict = config["diffusers"]["rename_dict"]
+        new_state_dict = {}
+        for name, param in state_dict.items():
+            if name not in rename_dict:
+                continue
+            name_ = rename_dict[name]
+            if "transformer_blocks" in name_:
+                param = param.squeeze()
+            new_state_dict[name_] = param
+        return new_state_dict
+
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         assert self.has_decoder or self.has_encoder, "Either decoder or encoder must be present"
-        if "decoder.conv_in.weight" in state_dict or "encoder.conv_in.weight" in state_dict:
+        if "decoder.up.0.block.0.conv1.weight" in state_dict or "encoder.down.0.block.0.conv1.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")
+        elif (
+            "decoder.up_blocks.0.resnets.0.conv1.weight" in state_dict
+            or "encoder.down_blocks.0.resnets.0.conv1.weight" in state_dict
+        ):
+            state_dict = self._from_diffusers(state_dict)
+            logger.info("use diffusers format state dict")
         else:
             logger.info("use diffsynth format state dict")
         return self._filter(state_dict)

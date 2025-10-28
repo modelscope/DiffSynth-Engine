@@ -79,11 +79,13 @@ if __name__ == "__main__":
         "--example",
         type=str,
         choices=["rs2v", "rsp2v", "rs2v_multi_speaker"],
-        help="Which example to run: 'rs2v', 'rsp2v', or 'rs2v_multi_speaker'."
+        help="Which example to run: 'rs2v', 'rsp2v', or 'rs2v_multi_speaker'.",
     )
     parser.add_argument("--device", type=str, default="cuda", help="Device to run the model on.")
     parser.add_argument("--parallelism", type=int, default=1, help="Number of parallel devices to use.")
-    parser.add_argument("--input_data_dir", type=str, default="tests/data/input/wan_s2v", help="Directory for input data.")
+    parser.add_argument(
+        "--input_data_dir", type=str, default="tests/data/input/wan_s2v", help="Directory for input data."
+    )
     args = parser.parse_args()
     config = WanSpeech2VideoPipelineConfig.basic_config(
         model_path=fetch_model(

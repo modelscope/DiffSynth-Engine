@@ -41,7 +41,9 @@ def save_video(frames, save_path, fps=15):
         writer.write(frames, fps=fps, codec=codec)
 
 
-def read_n_frames(frames: List[Image.Image], original_fps: int, n_frames: int, target_fps: int = 16) -> List[Image.Image]:
+def read_n_frames(
+    frames: List[Image.Image], original_fps: int, n_frames: int, target_fps: int = 16
+) -> List[Image.Image]:
     num_frames = len(frames)
     interval = max(1, round(original_fps / target_fps))
     sampled_frames: List[Image.Image] = []

@@ -34,3 +34,16 @@ class ControlNetParams:
     control_start: float = 0
     control_end: float = 1
     processor_name: Optional[str] = None  # only used for sdxl controlnet union now
+
+
+class QwenImageControlType(Enum):
+    eligen = "eligen"
+    in_context = "in_context"
+
+
+@dataclass
+class QwenImageControlNetParams:
+    image: ImageType
+    model: str
+    control_type: QwenImageControlType
+    scale: float = 1.0

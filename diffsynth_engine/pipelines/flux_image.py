@@ -37,13 +37,14 @@ logger = logging.get_logger(__name__)
 with open(FLUX_DIT_CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)
 
+PREFERRED_KONTEXT_RESOLUTIONS = config["preferred_kontext_resolutions"]
+
 
 class FluxLoRAConverter(LoRAStateDictConverter):
     def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         flux_dim = 3072
         dit_rename_dict = flux_dit_config["civitai"]["rename_dict"]
         dit_suffix_rename_dict = flux_dit_config["civitai"]["suffix_rename_dict"]
-        clip_rename_dict = flux_text_encoder_config["diffusers"]["rename_dict"]
         clip_attn_rename_dict = flux_text_encoder_config["diffusers"]["attn_rename_dict"]
 
         dit_dict = {}
@@ -136,27 +137,18 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                     lora_args["rank"] = lora_args["up"].shape[1]
                     rename = rename.replace(".weight", "")
                     dit_dict[rename] = lora_args
-            elif "lora_te" in key:
-                name = key.replace("lora_te1", "text_encoder")
-                name = name.replace("text_model_encoder_layers", "text_model.encoder.layers")
-                name = name.replace(".alpha", ".weight")
-                rename = ""
-                if name in clip_rename_dict:
-                    if name == "text_model.embeddings.position_embedding.weight":
-                        param = param.reshape((1, param.shape[0], param.shape[1]))
-                    rename = clip_rename_dict[name]
-                elif name.startswith("text_model.encoder.layers."):
-                    names = name.split(".")
-                    layer_id, layer_type, tail = names[3], ".".join(names[4:-1]), names[-1]
-                    rename = ".".join(["encoders", layer_id, clip_attn_rename_dict[layer_type], tail])
-                else:
-                    raise ValueError(f"Unsupported key: {key}")
+            elif "lora_te1_text_model_encoder_layers_" in key:
+                name = key.replace("lora_te1_text_model_encoder_layers_", "")
+                name = name.replace(".alpha", "")
+                layer_id, layer_type = name.split("_", 1)
+                layer_type = layer_type.replace("self_attn_", "self_attn.").replace("mlp_", "mlp.")
+                rename = ".".join(["encoders", layer_id, clip_attn_rename_dict[layer_type]])
+
                 lora_args = {}
                 lora_args["alpha"] = param
                 lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
                 lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
                 lora_args["rank"] = lora_args["up"].shape[1]
-                rename = rename.replace(".weight", "")
                 te_dict[rename] = lora_args
             else:
                 raise ValueError(f"Unsupported key: {key}")
@@ -525,7 +517,7 @@ class FluxImagePipeline(BasePipeline):
             if config.use_fbcache:
                 dit = FluxDiTFBCache.from_state_dict(
                     state_dicts.model,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     in_channel=config.control_type.get_in_channel(),
                     attn_kwargs=attn_kwargs,
@@ -534,7 +526,7 @@ class FluxImagePipeline(BasePipeline):
             else:
                 dit = FluxDiT.from_state_dict(
                     state_dicts.model,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     in_channel=config.control_type.get_in_channel(),
                     attn_kwargs=attn_kwargs,
@@ -619,7 +611,7 @@ class FluxImagePipeline(BasePipeline):
         return prompt_emb, add_text_embeds
 
     def prepare_extra_input(self, latents, positive_prompt_emb, guidance=1.0):
-        image_ids = FluxDiT.prepare_image_ids(latents)
+        image_ids = self.dit.prepare_image_ids(latents)
         guidance = torch.tensor([guidance] * latents.shape[0], device=latents.device, dtype=latents.dtype)
         text_ids = torch.zeros(positive_prompt_emb.shape[0], positive_prompt_emb.shape[1], 3).to(
             device=self.device, dtype=positive_prompt_emb.dtype
@@ -646,45 +638,45 @@ class FluxImagePipeline(BasePipeline):
     ):
         if cfg_scale <= 1.0:
             return self.predict_noise(
-                latents,
-                timestep,
-                positive_prompt_emb,
-                positive_add_text_embeds,
-                image_emb,
-                image_ids,
-                text_ids,
-                guidance,
-                controlnet_params,
-                current_step,
-                total_step,
+                latents=latents,
+                timestep=timestep,
+                prompt_emb=positive_prompt_emb,
+                add_text_embeds=positive_add_text_embeds,
+                image_emb=image_emb,
+                image_ids=image_ids,
+                text_ids=text_ids,
+                guidance=guidance,
+                controlnet_params=controlnet_params,
+                current_step=current_step,
+                total_step=total_step,
             )
         if not batch_cfg:
             # cfg by predict noise one by one
             positive_noise_pred = self.predict_noise(
-                latents,
-                timestep,
-                positive_prompt_emb,
-                positive_add_text_embeds,
-                image_emb,
-                image_ids,
-                text_ids,
-                guidance,
-                controlnet_params,
-                current_step,
-                total_step,
+                latents=latents,
+                timestep=timestep,
+                prompt_emb=positive_prompt_emb,
+                add_text_embeds=positive_add_text_embeds,
+                image_emb=image_emb,
+                image_ids=image_ids,
+                text_ids=text_ids,
+                guidance=guidance,
+                controlnet_params=controlnet_params,
+                current_step=current_step,
+                total_step=total_step,
             )
             negative_noise_pred = self.predict_noise(
-                latents,
-                timestep,
-                negative_prompt_emb,
-                negative_add_text_embeds,
-                image_emb,
-                image_ids,
-                text_ids,
-                guidance,
-                controlnet_params,
-                current_step,
-                total_step,
+                latents=latents,
+                timestep=timestep,
+                prompt_emb=negative_prompt_emb,
+                add_text_embeds=negative_add_text_embeds,
+                image_emb=image_emb,
+                image_ids=image_ids,
+                text_ids=text_ids,
+                guidance=guidance,
+                controlnet_params=controlnet_params,
+                current_step=current_step,
+                total_step=total_step,
             )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
@@ -699,17 +691,17 @@ class FluxImagePipeline(BasePipeline):
             text_ids = torch.cat([text_ids, text_ids], dim=0)
             guidance = torch.cat([guidance, guidance], dim=0)
             positive_noise_pred, negative_noise_pred = self.predict_noise(
-                latents,
-                timestep,
-                prompt_emb,
-                add_text_embeds,
-                image_emb,
-                image_ids,
-                text_ids,
-                guidance,
-                controlnet_params,
-                current_step,
-                total_step,
+                latents=latents,
+                timestep=timestep,
+                prompt_emb=prompt_emb,
+                add_text_embeds=add_text_embeds,
+                image_emb=image_emb,
+                image_ids=image_ids,
+                text_ids=text_ids,
+                guidance=guidance,
+                controlnet_params=controlnet_params,
+                current_step=current_step,
+                total_step=total_step,
             )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
@@ -728,30 +720,39 @@ class FluxImagePipeline(BasePipeline):
         current_step: int,
         total_step: int,
     ):
-        origin_latents_shape = latents.shape
-        if self.config.control_type != ControlType.normal:
-            controlnet_param = controlnet_params[0]
-            if self.config.control_type == ControlType.bfl_kontext:
-                latents = torch.cat((latents, controlnet_param.image * controlnet_param.scale), dim=2)
-                image_ids = image_ids.repeat(1, 2, 1)
-                image_ids[:, image_ids.shape[1] // 2 :, 0] += 1
-            else:
-                latents = torch.cat((latents, controlnet_param.image * controlnet_param.scale), dim=1)
-            latents = latents.to(self.dtype)
-            controlnet_params = []
+        height, width = latents.shape[2:]
+        latents = self.dit.patchify(latents)
+        image_seq_len = latents.shape[1]
 
-        double_block_output, single_block_output = self.predict_multicontrolnet(
-            latents=latents,
-            timestep=timestep,
-            prompt_emb=prompt_emb,
-            add_text_embeds=add_text_embeds,
-            guidance=guidance,
-            text_ids=text_ids,
-            image_ids=image_ids,
-            controlnet_params=controlnet_params,
-            current_step=current_step,
-            total_step=total_step,
-        )
+        double_block_output, single_block_output = None, None
+        if self.config.control_type == ControlType.normal:
+            double_block_output, single_block_output = self.predict_multicontrolnet(
+                latents=latents,
+                timestep=timestep,
+                prompt_emb=prompt_emb,
+                add_text_embeds=add_text_embeds,
+                guidance=guidance,
+                text_ids=text_ids,
+                image_ids=image_ids,
+                controlnet_params=controlnet_params,
+                current_step=current_step,
+                total_step=total_step,
+            )
+        elif self.config.control_type == ControlType.bfl_kontext:
+            for idx, controlnet_param in enumerate(controlnet_params):
+                control_latents = controlnet_param.image * controlnet_param.scale
+                control_image_ids = self.dit.prepare_image_ids(control_latents)
+                control_image_ids[..., 0] = idx + 1
+                control_latents = self.dit.patchify(control_latents)
+                latents = torch.cat((latents, control_latents), dim=1)
+                image_ids = torch.cat((image_ids, control_image_ids), dim=1)
+        else:
+            controlnet_param = controlnet_params[0]
+            control_latents = controlnet_param.image * controlnet_param.scale
+            control_latents = self.dit.patchify(control_latents)
+            latents = torch.cat((latents, control_latents), dim=2)
+
+        latents = latents.to(self.dtype)
         self.load_models_to_device(["dit"])
 
         noise_pred = self.dit(
@@ -766,8 +767,8 @@ class FluxImagePipeline(BasePipeline):
             controlnet_double_block_output=double_block_output,
             controlnet_single_block_output=single_block_output,
         )
-        if self.config.control_type == ControlType.bfl_kontext:
-            noise_pred = noise_pred[:, :, : origin_latents_shape[2], : origin_latents_shape[3]]
+        noise_pred = noise_pred[:, :image_seq_len]
+        noise_pred = self.dit.unpatchify(noise_pred, height, width)
         return noise_pred
 
     def prepare_latents(
@@ -789,7 +790,7 @@ class FluxImagePipeline(BasePipeline):
             sigma_start, sigmas = sigmas[t_start - 1], sigmas[t_start - 1 :]
             timesteps = timesteps[t_start - 1 :]
             noise = latents
-            image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
+            image = self.preprocess_image(input_image).to(device=self.device)
             latents = self.encode_image(image)
             init_latents = latents.clone()
             latents = self.sampler.add_noise(latents, noise, sigma_start)
@@ -811,15 +812,21 @@ class FluxImagePipeline(BasePipeline):
     def prepare_masked_latent(self, image: Image.Image, mask: Image.Image | None, height: int, width: int):
         self.load_models_to_device(["vae_encoder"])
         if mask is None:
+            if self.config.control_type == ControlType.bfl_kontext:
+                width, height = image.size
+                aspect_ratio = width / height
+                # Kontext is trained on specific resolutions, using one of them is recommended
+                _, width, height = min((abs(aspect_ratio - w / h), w, h) for w, h in PREFERRED_KONTEXT_RESOLUTIONS)
+                width, height = 16 * (width // 16), 16 * (height // 16)
             image = image.resize((width, height))
-            image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
+            image = self.preprocess_image(image).to(device=self.device)
             latent = self.encode_image(image)
         else:
             if self.config.control_type == ControlType.normal:
                 image = image.resize((width, height))
                 mask = mask.resize((width, height))
-                image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
-                mask = self.preprocess_mask(mask).to(device=self.device, dtype=self.dtype)
+                image = self.preprocess_image(image).to(device=self.device)
+                mask = self.preprocess_mask(mask).to(device=self.device)
                 masked_image = image.clone()
                 masked_image[(mask > 0.5).repeat(1, 3, 1, 1)] = -1
                 latent = self.encode_image(masked_image)
@@ -829,8 +836,8 @@ class FluxImagePipeline(BasePipeline):
             elif self.config.control_type == ControlType.bfl_fill:
                 image = image.resize((width, height))
                 mask = mask.resize((width, height))
-                image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
-                mask = self.preprocess_mask(mask).to(device=self.device, dtype=self.dtype)
+                image = self.preprocess_image(image).to(device=self.device)
+                mask = self.preprocess_mask(mask).to(device=self.device)
                 image = image * (1 - mask)
                 image = self.encode_image(image)
                 mask = rearrange(mask, "b 1 (h ph) (w pw) -> b (ph pw) h w", ph=8, pw=8)
@@ -869,6 +876,7 @@ class FluxImagePipeline(BasePipeline):
         if len(controlnet_params) > 0:
             self.load_models_to_device([])
         for param in controlnet_params:
+            control_condition = param.model.patchify(param.image)
             current_scale = param.scale
             if not (
                 current_step >= param.control_start * total_step and current_step <= param.control_end * total_step
@@ -880,15 +888,15 @@ class FluxImagePipeline(BasePipeline):
                 empty_cache()
                 param.model.to(self.device)
             double_block_output, single_block_output = param.model(
-                latents,
-                param.image,
-                current_scale,
-                timestep,
-                prompt_emb,
-                add_text_embeds,
-                guidance,
-                image_ids,
-                text_ids,
+                hidden_states=latents,
+                control_condition=control_condition,
+                control_scale=current_scale,
+                timestep=timestep,
+                prompt_emb=prompt_emb,
+                pooled_prompt_emb=add_text_embeds,
+                image_ids=image_ids,
+                text_ids=text_ids,
+                guidance=guidance,
             )
             if self.offload_mode is not None:
                 param.model.to("cpu")
@@ -934,8 +942,10 @@ class FluxImagePipeline(BasePipeline):
             self.dit.refresh_cache_status(num_inference_steps)
         if not isinstance(controlnet_params, list):
             controlnet_params = [controlnet_params]
-        if self.config.control_type != ControlType.normal:
-            assert controlnet_params and len(controlnet_params) == 1, "bfl_controlnet must have one controlnet"
+        if self.config.control_type in [ControlType.bfl_control, ControlType.bfl_fill]:
+            assert controlnet_params and len(controlnet_params) == 1, (
+                "bfl_controlnet or bfl_fill must have one controlnet"
+            )
 
         if input_image is not None:
             width, height = input_image.size
