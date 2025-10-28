@@ -606,8 +606,8 @@ class QwenImagePipeline(BasePipeline):
         # single image for edit, list for edit plus(QwenImageEdit2509)
         input_image: List[Image.Image] | Image.Image | None = None,
         cfg_scale: float = 4.0,  # true cfg
-        height: Optional[int] = None,
-        width: Optional[int] = None,
+        height: int = 1328,
+        width: int = 1328,
         num_inference_steps: int = 50,
         seed: int | None = None,
         controlnet_params: List[QwenImageControlNetParams] | QwenImageControlNetParams = [],
@@ -617,26 +617,27 @@ class QwenImagePipeline(BasePipeline):
         entity_masks: Optional[List[Image.Image]] = None,
         use_custom_size: bool = False,
         linear_timestep: bool = False,
+        is_edit_plus=True,
     ):
-        assert (height is None) == (width is None), "height and width should be set together"
-        is_edit_plus = isinstance(input_image, list)
-
         if input_image is not None:
             if not isinstance(input_image, list):
                 input_image = [input_image]
+
+            width, height = input_image[0].size
+            if not use_custom_size:
+                width, height = self.calculate_dimensions(1024 * 1024, width / height)
+
             condition_images = []
             vae_images = []
             for img in input_image:
                 img_width, img_height = img.size
                 condition_width, condition_height = self.calculate_dimensions(384 * 384, img_width / img_height)
-                vae_width, vae_height = self.calculate_dimensions(1024 * 1024, img_width / img_height)
+                vae_width, vae_height = img_width, img_height
+                if not use_custom_size:
+                    vae_width, vae_height = self.calculate_dimensions(1024 * 1024, img_width / img_height)
                 condition_images.append(img.resize((condition_width, condition_height), Image.LANCZOS))
                 vae_images.append(img.resize((vae_width, vae_height), Image.LANCZOS))
-            if width is None and height is None:
-                width, height = vae_images[-1].size
 
-        if width is None and height is None:
-            width, height = 1328, 1328
         self.validate_image_size(height, width, minimum=64, multiple_of=16)
 
         if not isinstance(controlnet_params, list):
