@@ -515,5 +515,8 @@ class FluxDiT(PreTrainedModel):
         for block in self.blocks:
             block.compile(*args, **kwargs)
 
-    def get_fsdp_modules(self):
-        return ["blocks", "single_blocks"]
+        for block in self.single_blocks:
+            block.compile(*args, **kwargs)
+
+    def get_fsdp_module_cls(self):
+        return {FluxDoubleTransformerBlock, FluxSingleTransformerBlock}

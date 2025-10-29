@@ -57,7 +57,7 @@ class PreTrainedModel(nn.Module):
     def get_tp_plan(self):
         raise NotImplementedError(f"{self.__class__.__name__} does not support TP")
 
-    def get_fsdp_modules(self):
+    def get_fsdp_module_cls(self):
         raise NotImplementedError(f"{self.__class__.__name__} does not support FSDP")
 
 

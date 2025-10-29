@@ -83,8 +83,44 @@ class QwenImageLoRAConverter(LoRAStateDictConverter):
             dit_dict[key] = lora_args
         return {"dit": dit_dict}
 
+    def _from_diffusers(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
+        dit_dict = {}
+        for key, param in lora_state_dict.items():
+            origin_key = key
+            lora_a_suffix = None
+            if "lora_A.weight" in key:
+                lora_a_suffix = "lora_A.weight"
+                lora_b_suffix = "lora_B.weight"
+            
+            if lora_a_suffix is None:
+                continue
+
+            lora_args = {}
+            lora_args["down"] = param
+            lora_args["up"] = lora_state_dict[origin_key.replace(lora_a_suffix, lora_b_suffix)]
+            lora_args["rank"] = lora_args["up"].shape[1]
+            alpha_key = origin_key.replace(lora_a_suffix, "alpha")
+
+            if alpha_key in lora_state_dict:
+                alpha = lora_state_dict[alpha_key]
+            else:
+                alpha = lora_args["rank"]
+            lora_args["alpha"] = alpha
+
+            key = key.replace(f".{lora_a_suffix}", "")
+            key = key.replace("diffusion_model.", "")
+
+            if key.startswith("transformer") and "attn.to_out.0" in key:
+                key = key.replace("attn.to_out.0", "attn.to_out")
+            dit_dict[key] = lora_args
+        return {"dit": dit_dict}
+
     def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
-        return self._from_diffsynth(lora_state_dict)
+        key = list(lora_state_dict.keys())[0]
+        if key.startswith("diffusion_model."):
+            return self._from_diffusers(lora_state_dict)
+        else:
+            return self._from_diffsynth(lora_state_dict)
 
 
 class QwenImagePipeline(BasePipeline):
@@ -201,7 +237,7 @@ class QwenImagePipeline(BasePipeline):
             state_dicts.encoder,
             vision_config=vision_config,
             config=text_config,
-            device=init_device,
+            device=("cpu" if config.use_fsdp else init_device),
             dtype=config.encoder_dtype,
         )
         with open(QWEN_IMAGE_VAE_CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -221,7 +257,7 @@ class QwenImagePipeline(BasePipeline):
             if config.use_fbcache:
                 dit = QwenImageDiTFBCache.from_state_dict(
                     state_dicts.model,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     attn_kwargs=attn_kwargs,
                     relative_l1_threshold=config.fbcache_relative_l1_threshold,
@@ -229,7 +265,7 @@ class QwenImagePipeline(BasePipeline):
             else:
                 dit = QwenImageDiT.from_state_dict(
                     state_dicts.model,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     attn_kwargs=attn_kwargs,
                 )
@@ -271,7 +307,7 @@ class QwenImagePipeline(BasePipeline):
         self.update_component(self.vae, state_dicts.vae, self.config.device, self.config.vae_dtype)
 
     def compile(self):
-        self.dit.compile_repeated_blocks(dynamic=True)
+        self.dit.compile_repeated_blocks()
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.config.tp_degree is None or self.config.tp_degree == 1, (

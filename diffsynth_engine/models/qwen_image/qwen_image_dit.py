@@ -544,5 +544,5 @@ class QwenImageDiT(PreTrainedModel):
         for block in self.transformer_blocks:
             block.compile(*args, **kwargs)
 
-    def get_fsdp_modules(self):
-        return ["transformer_blocks"]
+    def get_fsdp_module_cls(self):
+        return {QwenImageTransformerBlock}

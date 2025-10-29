@@ -223,7 +223,6 @@ class Wav2Vec2StateDictConverter:
 
 class Wav2Vec2Model(PreTrainedModel):
     converter = Wav2Vec2StateDictConverter()
-    _supports_parallelization = False
 
     def __init__(self, config: Wav2Vec2Config, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()

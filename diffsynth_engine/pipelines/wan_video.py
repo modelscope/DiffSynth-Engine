@@ -587,7 +587,7 @@ class WanVideoPipeline(BasePipeline):
             dit = WanDiT.from_state_dict(
                 dit_state_dict,
                 config=dit_config,
-                device=init_device,
+                device=("cpu" if config.use_fsdp else init_device),
                 dtype=config.model_dtype,
                 attn_kwargs=attn_kwargs,
             )
@@ -599,7 +599,7 @@ class WanVideoPipeline(BasePipeline):
                 dit2 = WanDiT.from_state_dict(
                     dit2_state_dict,
                     config=dit_config,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     attn_kwargs=attn_kwargs,
                 )
@@ -666,6 +666,6 @@ class WanVideoPipeline(BasePipeline):
         return vae_type
 
     def compile(self):
-        self.dit.compile_repeated_blocks(dynamic=True)
+        self.dit.compile_repeated_blocks()
         if self.dit2 is not None:
-            self.dit2.compile_repeated_blocks(dynamic=True)
+            self.dit2.compile_repeated_blocks()

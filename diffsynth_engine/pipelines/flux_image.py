@@ -143,7 +143,7 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                 layer_id, layer_type = name.split("_", 1)
                 layer_type = layer_type.replace("self_attn_", "self_attn.").replace("mlp_", "mlp.")
                 rename = ".".join(["encoders", layer_id, clip_attn_rename_dict[layer_type]])
-                
+
                 lora_args = {}
                 lora_args["alpha"] = param
                 lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
@@ -517,7 +517,7 @@ class FluxImagePipeline(BasePipeline):
             if config.use_fbcache:
                 dit = FluxDiTFBCache.from_state_dict(
                     state_dicts.model,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     in_channel=config.control_type.get_in_channel(),
                     attn_kwargs=attn_kwargs,
@@ -526,7 +526,7 @@ class FluxImagePipeline(BasePipeline):
             else:
                 dit = FluxDiT.from_state_dict(
                     state_dicts.model,
-                    device=init_device,
+                    device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     in_channel=config.control_type.get_in_channel(),
                     attn_kwargs=attn_kwargs,
@@ -573,7 +573,7 @@ class FluxImagePipeline(BasePipeline):
         self.update_component(self.vae_encoder, state_dicts.vae, self.config.device, self.config.vae_dtype)
 
     def compile(self):
-        self.dit.compile_repeated_blocks(dynamic=True)
+        self.dit.compile_repeated_blocks()
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.config.tp_degree is None or self.config.tp_degree == 1, (
@@ -983,8 +983,9 @@ class FluxImagePipeline(BasePipeline):
         elif self.ip_adapter is not None:
             image_emb = self.ip_adapter.encode_image(ref_image)
         elif self.redux is not None:
-            image_prompt_embeds = self.redux(ref_image)
-            positive_prompt_emb = torch.cat([positive_prompt_emb, image_prompt_embeds], dim=1)
+            ref_prompt_embeds = self.redux(ref_image)
+            flattened_ref_emb = ref_prompt_embeds.view(1, -1, ref_prompt_embeds.size(-1))
+            positive_prompt_emb = torch.cat([positive_prompt_emb, flattened_ref_emb], dim=1)
 
         # Extra input
         image_ids, text_ids, guidance = self.prepare_extra_input(

@@ -181,7 +181,7 @@ class SDXLImagePipeline(BasePipeline):
 
     @classmethod
     def from_state_dict(cls, state_dicts: SDXLStateDicts, config: SDXLPipelineConfig) -> "SDXLImagePipeline":
-        init_device = "cpu" if config.offload_mode else config.device
+        init_device = "cpu" if config.offload_mode is not None else config.device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
