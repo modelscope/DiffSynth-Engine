@@ -262,15 +262,10 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
     encoder_dtype: torch.dtype = torch.bfloat16
     vae_dtype: torch.dtype = torch.float32
 
+    load_encoder: bool = True
+
     # override OptimizationConfig
     fbcache_relative_l1_threshold = 0.009
-
-    # override BaseConfig
-    vae_tiled: bool = True
-    vae_tile_size: Tuple[int, int] = (34, 34)
-    vae_tile_stride: Tuple[int, int] = (18, 16)
-
-    load_encoder: bool = True
 
     @classmethod
     def basic_config(

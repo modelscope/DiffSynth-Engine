@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 
 
@@ -91,8 +92,8 @@ class NewGELUActivation(nn.Module):
     the Gaussian Error Linear Units paper: https://arxiv.org/abs/1606.08415
     """
 
-    def forward(self, input: "torch.Tensor") -> "torch.Tensor":
-        return 0.5 * input * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (input + 0.044715 * torch.pow(input, 3.0))))
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
 
 
 class ApproximateGELU(nn.Module):
@@ -115,3 +116,28 @@ class ApproximateGELU(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.proj(x)
         return x * torch.sigmoid(1.702 * x)
+
+
+class GELU(nn.Module):
+    r"""
+    GELU activation function with tanh approximation support with `approximate="tanh"`.
+
+    Parameters:
+        dim_in (`int`): The number of channels in the input.
+        dim_out (`int`): The number of channels in the output.
+        approximate (`str`, *optional*, defaults to `"none"`): If `"tanh"`, use tanh approximation.
+        bias (`bool`, defaults to True): Whether to use a bias in the linear layer.
+    """
+
+    def __init__(self, dim_in: int, dim_out: int, approximate: str = "none", bias: bool = True):
+        super().__init__()
+        self.proj = nn.Linear(dim_in, dim_out, bias=bias)
+        self.approximate = approximate
+
+    def gelu(self, gate: torch.Tensor) -> torch.Tensor:
+        return F.gelu(gate, approximate=self.approximate)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.proj(x)
+        x = self.gelu(x)
+        return x

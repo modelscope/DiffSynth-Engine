@@ -4,7 +4,7 @@ import torch
 from typing import Dict, List, Union, Optional
 from tokenizers import Tokenizer as TokenizerFast, AddedToken
 
-from diffsynth_engine.tokenizers.base import BaseTokenizer, TOKENIZER_CONFIG_FILE
+from diffsynth_engine.tokenizers.base import BaseTokenizer, PaddingStrategy, TOKENIZER_CONFIG_FILE
 
 
 VOCAB_FILES_NAMES = {"vocab_file": "vocab.json", "merges_file": "merges.txt", "tokenizer_file": "tokenizer.json"}
@@ -165,21 +165,27 @@ class Qwen2TokenizerFast(BaseTokenizer):
         texts: Union[str, List[str]],
         max_length: Optional[int] = None,
         padding_side: Optional[str] = None,
+        padding_strategy: Union[PaddingStrategy, str] = "longest",
         **kwargs,
     ) -> Dict[str, "torch.Tensor"]:
         """
         Tokenize text and prepare for model inputs.
 
         Args:
-            text (`str`, `List[str]`, *optional*):
+            texts (`str`, `List[str]`):
                 The sequence or batch of sequences to be encoded.
 
             max_length (`int`, *optional*):
-                Each encoded sequence will be truncated or padded to max_length.
+                Maximum length of the encoded sequences.
 
             padding_side (`str`, *optional*):
                 The side on which the padding should be applied. Should be selected between `"right"` and `"left"`.
                 Defaults to `"right"`.
+
+            padding_strategy (`PaddingStrategy`, `str`, *optional*):
+                If `"longest"`, will pad the sequences to the longest sequence in the batch.
+                If `"max_length"`, will pad the sequences to the `max_length` argument.
+                Defaults to `"longest"`.
 
         Returns:
             `Dict[str, "torch.Tensor"]`: tensor dict compatible with model_input_names.
@@ -190,7 +196,9 @@ class Qwen2TokenizerFast(BaseTokenizer):
 
         batch_ids = self.batch_encode(texts)
         ids_lens = [len(ids_) for ids_ in batch_ids]
-        max_length = max_length if max_length is not None else min(max(ids_lens), self.model_max_length)
+        max_length = max_length if max_length is not None else self.model_max_length
+        if padding_strategy == PaddingStrategy.LONGEST:
+            max_length = min(max(ids_lens), max_length)
         padding_side = padding_side if padding_side is not None else self.padding_side
 
         encoded = torch.zeros(len(texts), max_length, dtype=torch.long)

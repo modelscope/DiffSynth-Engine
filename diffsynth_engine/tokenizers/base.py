@@ -1,8 +1,14 @@
 # Modified from transformers.tokenization_utils_base
 from typing import Dict, List, Union, overload
+from enum import Enum
 
 
 TOKENIZER_CONFIG_FILE = "tokenizer_config.json"
+
+
+class PaddingStrategy(str, Enum):
+    LONGEST = "longest"
+    MAX_LENGTH = "max_length"
 
 
 class BaseTokenizer:

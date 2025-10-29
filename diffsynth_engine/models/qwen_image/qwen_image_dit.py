@@ -6,7 +6,7 @@ from einops import rearrange
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
-from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm, ApproximateGELU, RMSNorm
+from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm, GELU, RMSNorm
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.parallel import (
@@ -144,7 +144,7 @@ class QwenFeedForward(nn.Module):
         super().__init__()
         inner_dim = int(dim * 4)
         self.net = nn.ModuleList([])
-        self.net.append(ApproximateGELU(dim, inner_dim, device=device, dtype=dtype))
+        self.net.append(GELU(dim, inner_dim, approximate="tanh", device=device, dtype=dtype))
         self.net.append(nn.Dropout(dropout))
         self.net.append(nn.Linear(inner_dim, dim_out, device=device, dtype=dtype))
 
@@ -155,8 +155,8 @@ class QwenFeedForward(nn.Module):
 
 
 def apply_rotary_emb_qwen(x: torch.Tensor, freqs_cis: Union[torch.Tensor, Tuple[torch.Tensor]]):
-    x_rotated = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
-    x_out = torch.view_as_real(x_rotated * freqs_cis).flatten(3)
+    x_rotated = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))  # (b, s, h, d) -> (b, s, h, d/2, 2)
+    x_out = torch.view_as_real(x_rotated * freqs_cis.unsqueeze(1)).flatten(3)  # (b, s, h, d/2, 2) -> (b, s, h, d)
     return x_out.type_as(x)
 
 
@@ -200,13 +200,13 @@ class QwenDoubleStreamAttention(nn.Module):
         img_q, img_k, img_v = self.to_q(image), self.to_k(image), self.to_v(image)
         txt_q, txt_k, txt_v = self.add_q_proj(text), self.add_k_proj(text), self.add_v_proj(text)
 
-        img_q = rearrange(img_q, "b s (h d) -> b h s d", h=self.num_heads)
-        img_k = rearrange(img_k, "b s (h d) -> b h s d", h=self.num_heads)
-        img_v = rearrange(img_v, "b s (h d) -> b h s d", h=self.num_heads)
+        img_q = rearrange(img_q, "b s (h d) -> b s h d", h=self.num_heads)
+        img_k = rearrange(img_k, "b s (h d) -> b s h d", h=self.num_heads)
+        img_v = rearrange(img_v, "b s (h d) -> b s h d", h=self.num_heads)
 
-        txt_q = rearrange(txt_q, "b s (h d) -> b h s d", h=self.num_heads)
-        txt_k = rearrange(txt_k, "b s (h d) -> b h s d", h=self.num_heads)
-        txt_v = rearrange(txt_v, "b s (h d) -> b h s d", h=self.num_heads)
+        txt_q = rearrange(txt_q, "b s (h d) -> b s h d", h=self.num_heads)
+        txt_k = rearrange(txt_k, "b s (h d) -> b s h d", h=self.num_heads)
+        txt_v = rearrange(txt_v, "b s (h d) -> b s h d", h=self.num_heads)
 
         img_q, img_k = self.norm_q(img_q), self.norm_k(img_k)
         txt_q, txt_k = self.norm_added_q(txt_q), self.norm_added_k(txt_k)
@@ -218,13 +218,9 @@ class QwenDoubleStreamAttention(nn.Module):
             txt_q = apply_rotary_emb_qwen(txt_q, txt_freqs)
             txt_k = apply_rotary_emb_qwen(txt_k, txt_freqs)
 
-        joint_q = torch.cat([txt_q, img_q], dim=2)
-        joint_k = torch.cat([txt_k, img_k], dim=2)
-        joint_v = torch.cat([txt_v, img_v], dim=2)
-
-        joint_q = joint_q.transpose(1, 2)
-        joint_k = joint_k.transpose(1, 2)
-        joint_v = joint_v.transpose(1, 2)
+        joint_q = torch.cat([txt_q, img_q], dim=1)
+        joint_k = torch.cat([txt_k, img_k], dim=1)
+        joint_v = torch.cat([txt_v, img_v], dim=1)
 
         attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
         joint_attn_out = attention_ops.attention(joint_q, joint_k, joint_v, attn_mask=attn_mask, **attn_kwargs)
