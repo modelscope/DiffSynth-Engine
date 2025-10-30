@@ -129,9 +129,17 @@ class GELU(nn.Module):
         bias (`bool`, defaults to True): Whether to use a bias in the linear layer.
     """
 
-    def __init__(self, dim_in: int, dim_out: int, approximate: str = "none", bias: bool = True):
+    def __init__(
+        self,
+        dim_in: int,
+        dim_out: int,
+        approximate: str = "none",
+        bias: bool = True,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float16,
+    ):
         super().__init__()
-        self.proj = nn.Linear(dim_in, dim_out, bias=bias)
+        self.proj = nn.Linear(dim_in, dim_out, bias=bias, device=device, dtype=dtype)
         self.approximate = approximate
 
     def gelu(self, gate: torch.Tensor) -> torch.Tensor:
