@@ -102,6 +102,7 @@ class WanLowNoiseLoRAConverter(WanLoRAConverter):
 
 class WanVideoPipeline(BasePipeline):
     lora_converter = WanLoRAConverter()
+    low_noise_lora_converter = WanLowNoiseLoRAConverter()
 
     def __init__(
         self,
@@ -157,7 +158,7 @@ class WanVideoPipeline(BasePipeline):
 
     def load_loras_low_noise(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.dit2 is not None, "low noise LoRA can only be applied to Wan2.2"
-        self.load_loras(lora_list, fused, save_original_weight, WanLowNoiseLoRAConverter())
+        self.load_loras(lora_list, fused, save_original_weight, self.low_noise_lora_converter)
 
     def load_loras_high_noise(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.dit2 is not None, "high noise LoRA can only be applied to Wan2.2"
