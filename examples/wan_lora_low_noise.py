@@ -35,7 +35,7 @@ if __name__ == "__main__":
         device=args.device,
     )
     pipe = WanVideoPipeline.from_pretrained(config)
-    pipe.load_loras([(f"{args.lora_dir}/wan22-style1-violetevergarden-16-sel-2-high-000100.safetensors", 1.0)], fused=False, save_original_weight=False)
+    pipe.load_loras_high_noise([(f"{args.lora_dir}/wan22-style1-violetevergarden-16-sel-2-high-000100.safetensors", 1.0)], fused=False, save_original_weight=False)
     pipe.load_loras_low_noise([(f"{args.lora_dir}/wan22-style1-violetevergarden-16-sel-2-low-4-000060.safetensors", 1.0)], fused=False, save_original_weight=False)
 
     video = pipe(

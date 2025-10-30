@@ -138,7 +138,13 @@ class WanVideoPipeline(BasePipeline):
         self.image_encoder = image_encoder
         self.model_names = ["text_encoder", "dit", "dit2", "vae", "image_encoder"]
 
-    def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
+    def load_loras(
+        self,
+        lora_list: List[Tuple[str, float]],
+        fused: bool = True,
+        save_original_weight: bool = False,
+        lora_converter: Optional[WanLoRAConverter] = None
+    ):
         assert self.config.tp_degree is None or self.config.tp_degree == 1, (
             "load LoRA is not allowed when tensor parallel is enabled; "
             "set tp_degree=None or tp_degree=1 during pipeline initialization"
@@ -147,21 +153,15 @@ class WanVideoPipeline(BasePipeline):
             "load fused LoRA is not allowed when fully sharded data parallel is enabled; "
             "either load LoRA with fused=False or set use_fsdp=False during pipeline initialization"
         )
-        super().load_loras(lora_list, fused, save_original_weight)
+        super().load_loras(lora_list, fused, save_original_weight, lora_converter)
 
     def load_loras_low_noise(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
-        assert self.dit2 is not None, "low noise LoRA can only be loaded when low noise model (dit2) is initialized"
-        assert self.config.tp_degree is None or self.config.tp_degree == 1, (
-            "load LoRA is not allowed when tensor parallel is enabled; "
-            "set tp_degree=None or tp_degree=1 during pipeline initialization"
-        )
-        assert not (self.config.use_fsdp and fused), (
-            "load fused LoRA is not allowed when fully sharded data parallel is enabled; "
-            "either load LoRA with fused=False or set use_fsdp=False during pipeline initialization"
-        )
-        self.lora_converter = WanLowNoiseLoRAConverter()
-        super().load_loras(lora_list, fused, save_original_weight)
-        self.lora_converter = WanLoRAConverter()
+        assert self.dit2 is not None, "low noise LoRA can only be applied to Wan2.2"
+        self.load_loras(lora_list, fused, save_original_weight, WanLowNoiseLoRAConverter())
+
+    def load_loras_high_noise(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
+        assert self.dit2 is not None, "high noise LoRA can only be applied to Wan2.2"
+        self.load_loras(lora_list, fused, save_original_weight)
 
     def unload_loras(self):
         self.dit.unload_loras()

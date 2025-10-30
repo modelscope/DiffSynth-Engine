@@ -2,7 +2,7 @@ import os
 import torch
 import numpy as np
 from einops import rearrange
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Optional
 from PIL import Image
 
 from diffsynth_engine.configs import BaseConfig, BaseStateDicts, LoraConfig
@@ -70,7 +70,11 @@ class BasePipeline:
         lora_list: List[Tuple[str, Union[float, LoraConfig]]],
         fused: bool = True,
         save_original_weight: bool = False,
+        lora_converter: Optional[LoRAStateDictConverter] = None,
     ):
+        if not lora_converter:
+            lora_converter = self.lora_converter
+
         for lora_path, lora_item in lora_list:
             if isinstance(lora_item, float):
                 lora_scale = lora_item
@@ -86,7 +90,7 @@ class BasePipeline:
                 self.apply_scheduler_config(scheduler_config)
                 logger.info(f"Applied scheduler args from LoraConfig: {scheduler_config}")
 
-            lora_state_dict = self.lora_converter.convert(state_dict)
+            lora_state_dict = lora_converter.convert(state_dict)
             for model_name, state_dict in lora_state_dict.items():
                 model = getattr(self, model_name)
                 lora_args = []
