@@ -830,7 +830,7 @@ class FluxImagePipeline(BasePipeline):
                 masked_image = image.clone()
                 masked_image[(mask > 0.5).repeat(1, 3, 1, 1)] = -1
                 latent = self.encode_image(masked_image)
-                mask = torch.nn.functional.interpolate(mask, size=(latent.shape[2], latent.shape[3]))
+                mask = torch.nn.functional.interpolate(mask, size=(latent.shape[2], latent.shape[3])).to(latent.dtype)
                 mask = 1 - mask
                 latent = torch.cat([latent, mask], dim=1)
             elif self.config.control_type == ControlType.bfl_fill:
