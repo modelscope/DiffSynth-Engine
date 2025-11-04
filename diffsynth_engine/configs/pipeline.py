@@ -242,6 +242,8 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
     vae_tile_size: Tuple[int, int] = (34, 34)
     vae_tile_stride: Tuple[int, int] = (18, 16)
 
+    load_encoder: bool = True
+
     @classmethod
     def basic_config(
         cls,

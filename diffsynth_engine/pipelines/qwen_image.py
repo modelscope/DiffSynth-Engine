@@ -186,6 +186,7 @@ class QwenImagePipeline(BasePipeline):
         logger.info(f"loading state dict from {config.vae_path} ...")
         vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
 
+        encoder_state_dict = None
         if config.encoder_path is None:
             config.encoder_path = fetch_model(
                 "MusePublic/Qwen-image",
@@ -197,8 +198,9 @@ class QwenImagePipeline(BasePipeline):
                     "text_encoder/model-00004-of-00004.safetensors",
                 ],
             )
-        logger.info(f"loading state dict from {config.encoder_path} ...")
-        encoder_state_dict = cls.load_model_checkpoint(config.encoder_path, device="cpu", dtype=config.encoder_dtype)
+        if config.load_encoder:
+            logger.info(f"loading state dict from {config.encoder_path} ...")
+            encoder_state_dict = cls.load_model_checkpoint(config.encoder_path, device="cpu", dtype=config.encoder_dtype)
 
         state_dicts = QwenImageStateDicts(
             model=model_state_dict,
@@ -225,22 +227,24 @@ class QwenImagePipeline(BasePipeline):
     @classmethod
     def _from_state_dict(cls, state_dicts: QwenImageStateDicts, config: QwenImagePipelineConfig) -> "QwenImagePipeline":
         init_device = "cpu" if config.offload_mode is not None else config.device
-        tokenizer = Qwen2TokenizerFast.from_pretrained(QWEN_IMAGE_TOKENIZER_CONF_PATH)
-        processor = Qwen2VLProcessor.from_pretrained(
-            tokenizer_config_path=QWEN_IMAGE_TOKENIZER_CONF_PATH,
-            image_processor_config_path=QWEN_IMAGE_PROCESSOR_CONFIG_FILE,
-        )
-        with open(QWEN_IMAGE_VISION_CONFIG_FILE, "r", encoding="utf-8") as f:
-            vision_config = Qwen2_5_VLVisionConfig(**json.load(f))
-        with open(QWEN_IMAGE_CONFIG_FILE, "r", encoding="utf-8") as f:
-            text_config = Qwen2_5_VLConfig(**json.load(f))
-        encoder = Qwen2_5_VLForConditionalGeneration.from_state_dict(
-            state_dicts.encoder,
-            vision_config=vision_config,
-            config=text_config,
-            device=("cpu" if config.use_fsdp else init_device),
-            dtype=config.encoder_dtype,
-        )
+        if config.load_encoder:
+            tokenizer = Qwen2TokenizerFast.from_pretrained(QWEN_IMAGE_TOKENIZER_CONF_PATH)
+            processor = Qwen2VLProcessor.from_pretrained(
+                tokenizer_config_path=QWEN_IMAGE_TOKENIZER_CONF_PATH,
+                image_processor_config_path=QWEN_IMAGE_PROCESSOR_CONFIG_FILE,
+            )
+            with open(QWEN_IMAGE_VISION_CONFIG_FILE, "r", encoding="utf-8") as f:
+                vision_config = Qwen2_5_VLVisionConfig(**json.load(f))
+            with open(QWEN_IMAGE_CONFIG_FILE, "r", encoding="utf-8") as f:
+                text_config = Qwen2_5_VLConfig(**json.load(f))
+            encoder = Qwen2_5_VLForConditionalGeneration.from_state_dict(
+                state_dicts.encoder,
+                vision_config=vision_config,
+                config=text_config,
+                device=("cpu" if config.use_fsdp else init_device),
+                dtype=config.encoder_dtype,
+            )
+
         with open(QWEN_IMAGE_VAE_CONFIG_FILE, "r", encoding="utf-8") as f:
             vae_config = json.load(f)
         vae = QwenImageVAE.from_state_dict(
@@ -275,9 +279,9 @@ class QwenImagePipeline(BasePipeline):
 
         pipe = cls(
             config=config,
-            tokenizer=tokenizer,
-            processor=processor,
-            encoder=encoder,
+            tokenizer=tokenizer if config.load_encoder else None,
+            processor=processor if config.load_encoder else None,
+            encoder=encoder if config.load_encoder else None,
             dit=dit,
             vae=vae,
         )
