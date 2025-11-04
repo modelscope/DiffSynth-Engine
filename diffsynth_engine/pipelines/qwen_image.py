@@ -227,6 +227,7 @@ class QwenImagePipeline(BasePipeline):
     @classmethod
     def _from_state_dict(cls, state_dicts: QwenImageStateDicts, config: QwenImagePipelineConfig) -> "QwenImagePipeline":
         init_device = "cpu" if config.offload_mode is not None else config.device
+        tokenizer, processor, encoder = None, None, None
         if config.load_encoder:
             tokenizer = Qwen2TokenizerFast.from_pretrained(QWEN_IMAGE_TOKENIZER_CONF_PATH)
             processor = Qwen2VLProcessor.from_pretrained(
