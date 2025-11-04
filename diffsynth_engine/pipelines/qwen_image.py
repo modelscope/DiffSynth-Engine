@@ -280,9 +280,9 @@ class QwenImagePipeline(BasePipeline):
 
         pipe = cls(
             config=config,
-            tokenizer=tokenizer if config.load_encoder else None,
-            processor=processor if config.load_encoder else None,
-            encoder=encoder if config.load_encoder else None,
+            tokenizer=tokenizer,
+            processor=processor,
+            encoder=encoder,
             dit=dit,
             vae=vae,
         )
