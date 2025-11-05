@@ -13,6 +13,7 @@ from diffsynth_engine.utils.flag import (
     SAGE_ATTN_AVAILABLE,
     SPARGE_ATTN_AVAILABLE,
     VIDEO_SPARSE_ATTN_AVAILABLE,
+    AITER_AVAILABLE,
 )
 from diffsynth_engine.utils.platform import DTYPE_FP8
 
@@ -93,6 +94,9 @@ if SPARGE_ATTN_AVAILABLE:
         )
         return out.transpose(1, 2)
 
+if AITER_AVAILABLE:
+    from aiter import flash_attn_func as aiter_flash_attn
+    from aiter import flash_attn_fp8_pertensor_func as aiter_flash_attn_fp8
 
 if VIDEO_SPARSE_ATTN_AVAILABLE:
     from diffsynth_engine.models.basic.video_sparse_attention import (
@@ -161,10 +165,30 @@ def attention(
             return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         if SDPA_AVAILABLE:
             return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
+        if AITER_AVAILABLE:
+            if flash_attn3_compatible:
+                return aiter_flash_attn(q, k, v, softmax_scale=scale)
+            else:
+                logger.warning(
+                    f"head_dim={q.shape[-1]}, but aiter only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
+                )
         if FLASH_ATTN_2_AVAILABLE:
             return flash_attn2(q, k, v, softmax_scale=scale)
         return eager_attn(q, k, v, attn_mask=attn_mask, scale=scale)
     else:
+        if attn_impl == "aiter" or attn_impl == "aiter_fp8":
+            if attn_impl == "aiter" :
+                return aiter_flash_attn(q, k, v, softmax_scale=scale)
+            else:
+                origin_dtype = q.dtype
+                q = q.to(dtype=torch.float8_e4m3fnuz).contiguous()
+                k = k.to(dtype=torch.float8_e4m3fnuz).contiguous()
+                v = v.to(dtype=torch.float8_e4m3fnuz).contiguous()
+                adjusted_scale = scale
+
+                out = aiter_flash_attn_fp8(q, k, v, softmax_scale=adjusted_scale)
+                out = out.to(dtype=origin_dtype)
+                return out
         if attn_impl == "eager":
             return eager_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         if attn_impl == "fa3" or attn_impl == "fa3_fp8":
@@ -309,6 +333,21 @@ def long_context_attention(
             return LongContextAttention(attn_type=AttnType.FA)(q, k, v, softmax_scale=scale)
         raise ValueError("No available long context attention implementation")
     else:
+        if attn_impl == "aiter" or attn_impl == "aiter_fp8":
+            if not flash_attn3_compatible:
+                raise RuntimeError(
+                    f"head_dim={q.shape[-1]}, but aiter_attn only supports head dimension at most {FA3_MAX_HEADDIM}"
+                )
+            if attn_impl == "aiter":
+                return LongContextAttention(attn_type=AttnType.AITER)(q, k, v, softmax_scale=scale)
+
+            origin_dtype = q.dtype
+            q = q.to(dtype=torch.float8_e4m3fnuz)
+            k = k.to(dtype=torch.float8_e4m3fnuz)
+            v = v.to(dtype=torch.float8_e4m3fnuz)
+            out = LongContextAttention(attn_type=AttnType.AITER)(q, k, v, softmax_scale=scale)
+            return out.to(dtype=origin_dtype)
+
         if attn_impl == "fa3" or attn_impl == "fa3_fp8":
             if not flash_attn3_compatible:
                 raise RuntimeError(

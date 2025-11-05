@@ -31,6 +31,11 @@ if SDPA_AVAILABLE:
 else:
     logger.info("Torch SDPA is not available")
 
+AITER_AVAILABLE = importlib.util.find_spec("aiter") is not None
+if AITER_AVAILABLE:
+    logger.info("Aiter is available")
+else:
+    logger.info("Aiter is not available")
 
 # 有损
 SAGE_ATTN_AVAILABLE = importlib.util.find_spec("sageattention") is not None
