@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
 
 from diffsynth_engine.configs.controlnet import ControlType
-from diffsynth_engine.models.basic.video_sparse_attention import get_vsa_kwargs
 
 
 @dataclass
@@ -51,23 +50,6 @@ class VideoSparseAttentionParams:
 class AttentionConfig:
     dit_attn_impl: AttnImpl = AttnImpl.AUTO
     attn_params: Optional[SpargeAttentionParams | VideoSparseAttentionParams] = None
-
-    def get_attn_kwargs(self, latents: torch.Tensor, device: str) -> Dict:
-        attn_kwargs = {"attn_impl": self.dit_attn_impl.value}
-        if isinstance(self.attn_params, SpargeAttentionParams):
-            assert self.dit_attn_impl == AttnImpl.SPARGE
-            attn_kwargs.update(
-                {
-                    "smooth_k": self.attn_params.smooth_k,
-                    "simthreshd1": self.attn_params.simthreshd1,
-                    "cdfthreshd": self.attn_params.cdfthreshd,
-                    "pvthreshd": self.attn_params.pvthreshd,
-                }
-            )
-        elif isinstance(self.attn_params, VideoSparseAttentionParams):
-            assert self.dit_attn_impl == AttnImpl.VSA
-            attn_kwargs.update(get_vsa_kwargs(latents.shape[2:], (1, 2, 2), self.attn_params.sparsity, device=device))
-        return attn_kwargs
 
 
 @dataclass

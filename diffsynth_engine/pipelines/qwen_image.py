@@ -208,7 +208,9 @@ class QwenImagePipeline(BasePipeline):
             )
         if config.load_encoder:
             logger.info(f"loading state dict from {config.encoder_path} ...")
-            encoder_state_dict = cls.load_model_checkpoint(config.encoder_path, device="cpu", dtype=config.encoder_dtype)
+            encoder_state_dict = cls.load_model_checkpoint(
+                config.encoder_path, device="cpu", dtype=config.encoder_dtype
+            )
 
         state_dicts = QwenImageStateDicts(
             model=model_state_dict,
@@ -547,7 +549,7 @@ class QwenImagePipeline(BasePipeline):
         entity_masks: Optional[List[torch.Tensor]] = None,
     ):
         self.load_models_to_device(["dit"])
-        attn_kwargs = self.config.get_attn_kwargs(latents, self.device)
+        attn_kwargs = self.get_attn_kwargs(latents)
         noise_pred = self.dit(
             image=latents,
             edit=image_latents,

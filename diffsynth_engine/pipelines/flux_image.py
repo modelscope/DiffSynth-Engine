@@ -751,7 +751,7 @@ class FluxImagePipeline(BasePipeline):
         latents = latents.to(self.dtype)
         self.load_models_to_device(["dit"])
 
-        attn_kwargs = self.config.get_attn_kwargs(latents, self.device)
+        attn_kwargs = self.get_attn_kwargs(latents)
         noise_pred = self.dit(
             hidden_states=latents,
             timestep=timestep,
@@ -886,7 +886,7 @@ class FluxImagePipeline(BasePipeline):
                 empty_cache()
                 param.model.to(self.device)
 
-            attn_kwargs = self.config.get_attn_kwargs(latents, self.device)
+            attn_kwargs = self.get_attn_kwargs(latents)
             double_block_output, single_block_output = param.model(
                 hidden_states=latents,
                 control_condition=control_condition,

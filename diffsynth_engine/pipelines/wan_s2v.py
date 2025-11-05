@@ -394,7 +394,7 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         void_audio_input: torch.Tensor | None = None,
     ):
         latents = latents.to(dtype=self.config.model_dtype, device=self.device)
-        attn_kwargs = self.config.get_attn_kwargs(latents, self.device)
+        attn_kwargs = self.get_attn_kwargs(latents)
 
         noise_pred = model(
             x=latents,

@@ -144,7 +144,7 @@ class WanVideoPipeline(BasePipeline):
         lora_list: List[Tuple[str, float]],
         fused: bool = True,
         save_original_weight: bool = False,
-        lora_converter: Optional[WanLoRAConverter] = None
+        lora_converter: Optional[WanLoRAConverter] = None,
     ):
         assert self.config.tp_degree is None or self.config.tp_degree == 1, (
             "load LoRA is not allowed when tensor parallel is enabled; "
@@ -156,11 +156,15 @@ class WanVideoPipeline(BasePipeline):
         )
         super().load_loras(lora_list, fused, save_original_weight, lora_converter)
 
-    def load_loras_low_noise(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
+    def load_loras_low_noise(
+        self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False
+    ):
         assert self.dit2 is not None, "low noise LoRA can only be applied to Wan2.2"
         self.load_loras(lora_list, fused, save_original_weight, self.low_noise_lora_converter)
 
-    def load_loras_high_noise(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
+    def load_loras_high_noise(
+        self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False
+    ):
         assert self.dit2 is not None, "high noise LoRA can only be applied to Wan2.2"
         self.load_loras(lora_list, fused, save_original_weight)
 
@@ -323,7 +327,7 @@ class WanVideoPipeline(BasePipeline):
 
     def predict_noise(self, model, latents, image_clip_feature, image_y, timestep, context):
         latents = latents.to(dtype=self.config.model_dtype, device=self.device)
-        attn_kwargs = self.config.get_attn_kwargs(latents, self.device)
+        attn_kwargs = self.get_attn_kwargs(latents)
 
         noise_pred = model(
             x=latents,

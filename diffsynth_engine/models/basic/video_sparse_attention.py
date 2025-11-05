@@ -2,8 +2,11 @@ import torch
 import math
 import functools
 
-from vsa import video_sparse_attn as vsa_core
+from diffsynth_engine.utils.flag import VIDEO_SPARSE_ATTN_AVAILABLE
 from diffsynth_engine.utils.parallel import get_sp_ulysses_group, get_sp_ring_world_size
+
+if VIDEO_SPARSE_ATTN_AVAILABLE:
+    from vsa import video_sparse_attn as vsa_core
 
 VSA_TILE_SIZE = (4, 4, 4)
 

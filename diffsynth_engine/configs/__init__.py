@@ -17,14 +17,16 @@ from .pipeline import (
     WanStateDicts,
     WanS2VStateDicts,
     QwenImageStateDicts,
-    LoraConfig,
     AttnImpl,
+    SpargeAttentionParams,
+    VideoSparseAttentionParams,
+    LoraConfig,
 )
 from .controlnet import (
     ControlType,
     ControlNetParams,
-    QwenImageControlNetParams,
     QwenImageControlType,
+    QwenImageControlNetParams,
 )
 
 __all__ = [
@@ -46,10 +48,12 @@ __all__ = [
     "WanStateDicts",
     "WanS2VStateDicts",
     "QwenImageStateDicts",
-    "QwenImageControlType",
-    "QwenImageControlNetParams",
+    "AttnImpl",
+    "SpargeAttentionParams",
+    "VideoSparseAttentionParams",
+    "LoraConfig",
     "ControlType",
     "ControlNetParams",
-    "LoraConfig",
-    "AttnImpl",
+    "QwenImageControlType",
+    "QwenImageControlNetParams",
 ]

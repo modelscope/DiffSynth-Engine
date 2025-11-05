@@ -5,7 +5,15 @@ from einops import rearrange
 from typing import Dict, List, Tuple, Union, Optional
 from PIL import Image
 
-from diffsynth_engine.configs import BaseConfig, BaseStateDicts, LoraConfig
+from diffsynth_engine.configs import (
+    BaseConfig,
+    BaseStateDicts,
+    LoraConfig,
+    AttnImpl,
+    SpargeAttentionParams,
+    VideoSparseAttentionParams,
+)
+from diffsynth_engine.models.basic.video_sparse_attention import get_vsa_kwargs
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload, offload_model_to_dict, restore_model_from_dict
 from diffsynth_engine.utils.fp8_linear import enable_fp8_autocast
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
@@ -33,6 +41,7 @@ class BasePipeline:
         dtype=torch.float16,
     ):
         super().__init__()
+        self.config = None
         self.vae_tiled = vae_tiled
         self.vae_tile_size = vae_tile_size
         self.vae_tile_stride = vae_tile_stride
@@ -48,7 +57,7 @@ class BasePipeline:
         raise NotImplementedError()
 
     @classmethod
-    def from_state_dict(cls, state_dicts: BaseStateDicts, pipeline_config: BaseConfig) -> "BasePipeline":
+    def from_state_dict(cls, state_dicts: BaseStateDicts, config: BaseConfig) -> "BasePipeline":
         raise NotImplementedError()
 
     def update_weights(self, state_dicts: BaseStateDicts) -> None:
@@ -259,6 +268,25 @@ class BasePipeline:
             latents.to(device=self.device, dtype=self.dtype),
         )
         return init_latents, latents, sigmas, timesteps
+
+    def get_attn_kwargs(self, latents: torch.Tensor) -> Dict:
+        attn_kwargs = {"attn_impl": self.config.dit_attn_impl.value}
+        if isinstance(self.config.attn_params, SpargeAttentionParams):
+            assert self.config.dit_attn_impl == AttnImpl.SPARGE
+            attn_kwargs.update(
+                {
+                    "smooth_k": self.config.attn_params.smooth_k,
+                    "simthreshd1": self.config.attn_params.simthreshd1,
+                    "cdfthreshd": self.config.attn_params.cdfthreshd,
+                    "pvthreshd": self.config.attn_params.pvthreshd,
+                }
+            )
+        elif isinstance(self.config.attn_params, VideoSparseAttentionParams):
+            assert self.config.dit_attn_impl == AttnImpl.VSA
+            attn_kwargs.update(
+                get_vsa_kwargs(latents.shape[2:], (1, 2, 2), self.config.attn_params.sparsity, device=self.device)
+            )
+        return attn_kwargs
 
     def eval(self):
         for model_name in self.model_names:
