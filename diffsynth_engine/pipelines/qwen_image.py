@@ -24,7 +24,7 @@ from diffsynth_engine.models.qwen_image import (
 from diffsynth_engine.models.qwen_image import QwenImageVAE
 from diffsynth_engine.tokenizers import Qwen2TokenizerFast, Qwen2VLProcessor
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
-from diffsynth_engine.pipelines.utils import calculate_shift
+from diffsynth_engine.pipelines.utils import calculate_shift, pad_and_concat
 from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import (
@@ -148,9 +148,17 @@ class QwenImagePipeline(BasePipeline):
         self.prompt_template_encode_start_idx = 34
         # qwen image edit
         self.edit_system_prompt = "Describe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate."
-        self.edit_prompt_template_encode = "<|im_start|>system\n" + self.edit_system_prompt + "<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{}<|im_end|>\n<|im_start|>assistant\n"
+        self.edit_prompt_template_encode = (
+            "<|im_start|>system\n"
+            + self.edit_system_prompt
+            + "<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{}<|im_end|>\n<|im_start|>assistant\n"
+        )
         # qwen image edit plus
-        self.edit_plus_prompt_template_encode = "<|im_start|>system\n" + self.edit_system_prompt + "<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
+        self.edit_plus_prompt_template_encode = (
+            "<|im_start|>system\n"
+            + self.edit_system_prompt
+            + "<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
+        )
 
         self.edit_prompt_template_encode_start_idx = 64
 
@@ -490,8 +498,8 @@ class QwenImagePipeline(BasePipeline):
         else:
             # cfg by predict noise in one batch
             bs, _, h, w = latents.shape
-            prompt_emb = torch.cat([prompt_emb, negative_prompt_emb], dim=0)
-            prompt_emb_mask = torch.cat([prompt_emb_mask, negative_prompt_emb_mask], dim=0)
+            prompt_emb = pad_and_concat(prompt_emb, negative_prompt_emb)
+            prompt_emb_mask = pad_and_concat(prompt_emb_mask, negative_prompt_emb_mask)
             if entity_prompt_embs is not None:
                 entity_prompt_embs = [
                     torch.cat([x, y], dim=0) for x, y in zip(entity_prompt_embs, negative_entity_prompt_embs)
