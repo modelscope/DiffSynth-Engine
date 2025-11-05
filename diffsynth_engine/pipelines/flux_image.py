@@ -22,7 +22,6 @@ from diffsynth_engine.configs import (
     FluxStateDicts,
     ControlType,
     ControlNetParams,
-    AttnImpl,
 )
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
@@ -615,18 +614,6 @@ class FluxImagePipeline(BasePipeline):
         )
         return image_ids, text_ids, guidance
 
-    def prepare_attn_kwargs(self):
-        attn_kwargs = {"attn_impl": self.config.dit_attn_impl.value}
-        if self.config.dit_attn_impl == AttnImpl.SPARGE:
-            attn_kwargs = {
-                "attn_impl": self.config.dit_attn_impl.value,
-                "smooth_k": self.config.sparge_smooth_k,
-                "cdfthreshd": self.config.sparge_cdfthreshd,
-                "simthreshd1": self.config.sparge_simthreshd1,
-                "pvthreshd": self.config.sparge_pvthreshd,
-            }
-        return attn_kwargs
-
     def predict_noise_with_cfg(
         self,
         latents: torch.Tensor,
@@ -764,7 +751,7 @@ class FluxImagePipeline(BasePipeline):
         latents = latents.to(self.dtype)
         self.load_models_to_device(["dit"])
 
-        attn_kwargs = self.prepare_attn_kwargs()
+        attn_kwargs = self.config.get_attn_kwargs(latents, self.device)
         noise_pred = self.dit(
             hidden_states=latents,
             timestep=timestep,
@@ -899,7 +886,7 @@ class FluxImagePipeline(BasePipeline):
                 empty_cache()
                 param.model.to(self.device)
 
-            attn_kwargs = self.prepare_attn_kwargs()
+            attn_kwargs = self.config.get_attn_kwargs(latents, self.device)
             double_block_output, single_block_output = param.model(
                 hidden_states=latents,
                 control_condition=control_condition,

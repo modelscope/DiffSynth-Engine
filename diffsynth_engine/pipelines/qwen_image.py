@@ -12,7 +12,6 @@ from diffsynth_engine.configs import (
     QwenImageStateDicts,
     QwenImageControlNetParams,
     QwenImageControlType,
-    AttnImpl,
 )
 from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.models.qwen_image import (
@@ -92,7 +91,7 @@ class QwenImageLoRAConverter(LoRAStateDictConverter):
             if "lora_A.weight" in key:
                 lora_a_suffix = "lora_A.weight"
                 lora_b_suffix = "lora_B.weight"
-            
+
             if lora_a_suffix is None:
                 continue
 
@@ -339,18 +338,6 @@ class QwenImagePipeline(BasePipeline):
         )
         return init_latents, latents, sigmas, timesteps
 
-    def prepare_attn_kwargs(self):
-        attn_kwargs = {"attn_impl": self.config.dit_attn_impl.value}
-        if self.config.dit_attn_impl == AttnImpl.SPARGE:
-            attn_kwargs = {
-                "attn_impl": self.config.dit_attn_impl.value,
-                "smooth_k": self.config.sparge_smooth_k,
-                "cdfthreshd": self.config.sparge_cdfthreshd,
-                "simthreshd1": self.config.sparge_simthreshd1,
-                "pvthreshd": self.config.sparge_pvthreshd,
-            }
-        return attn_kwargs
-
     def encode_prompt(
         self,
         prompt: Union[str, List[str]],
@@ -546,7 +533,7 @@ class QwenImagePipeline(BasePipeline):
         entity_masks: Optional[List[torch.Tensor]] = None,
     ):
         self.load_models_to_device(["dit"])
-        attn_kwargs = self.prepare_attn_kwargs()
+        attn_kwargs = self.config.get_attn_kwargs(latents, self.device)
         noise_pred = self.dit(
             image=latents,
             edit=image_latents,

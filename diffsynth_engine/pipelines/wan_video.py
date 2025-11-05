@@ -4,7 +4,7 @@ from typing import Callable, List, Dict, Tuple, Optional
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.configs import WanPipelineConfig, WanStateDicts, AttnImpl
+from diffsynth_engine.configs import WanPipelineConfig, WanStateDicts
 from diffsynth_engine.algorithm.noise_scheduler.flow_match import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.models.wan.wan_dit import WanDiT
@@ -12,7 +12,6 @@ from diffsynth_engine.models.wan.wan_text_encoder import WanTextEncoder
 from diffsynth_engine.models.wan.wan_vae import WanVideoVAE
 from diffsynth_engine.models.wan.wan_image_encoder import WanImageEncoder
 from diffsynth_engine.models.basic.lora import LoRAContext
-from diffsynth_engine.models.basic.video_sparse_attention import get_vsa_kwargs
 from diffsynth_engine.tokenizers import WanT5Tokenizer
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
@@ -302,7 +301,7 @@ class WanVideoPipeline(BasePipeline):
 
     def predict_noise(self, model, latents, image_clip_feature, image_y, timestep, context):
         latents = latents.to(dtype=self.config.model_dtype, device=self.device)
-        attn_kwargs = self.prepare_attn_kwargs(latents)
+        attn_kwargs = self.config.get_attn_kwargs(latents, self.device)
 
         noise_pred = model(
             x=latents,
@@ -345,22 +344,6 @@ class WanVideoPipeline(BasePipeline):
             init_latents = latents.clone()
 
         return init_latents, latents, sigmas, timesteps
-
-    def prepare_attn_kwargs(self, latents):
-        attn_kwargs = {"attn_impl": self.config.dit_attn_impl.value}
-        if self.config.dit_attn_impl == AttnImpl.SPARGE:
-            attn_kwargs = {
-                "attn_impl": self.config.dit_attn_impl.value,
-                "smooth_k": self.config.sparge_smooth_k,
-                "simthreshd1": self.config.sparge_simthreshd1,
-                "cdfthreshd": self.config.sparge_cdfthreshd,
-                "pvthreshd": self.config.sparge_pvthreshd,
-            }
-        elif self.config.dit_attn_impl == AttnImpl.VSA:
-            attn_kwargs.update(
-                get_vsa_kwargs(latents.shape[2:], (1, 2, 2), self.config.vsa_sparsity, device=self.device)
-            )
-        return attn_kwargs
 
     @torch.no_grad()
     def __call__(
