@@ -2,7 +2,7 @@ import torch
 import math
 import functools
 
-from vsa import video_sparse_attn as _video_sparse_attn
+from vsa import video_sparse_attn as vsa_core
 from diffsynth_engine.utils.parallel import get_sp_ulysses_group, get_sp_ring_world_size
 
 VSA_TILE_SIZE = (4, 4, 4)
@@ -46,9 +46,9 @@ def construct_variable_block_sizes(
     device: torch.device,
 ) -> torch.LongTensor:
     """
-    Compute the number of valid (non‑padded) tokens inside every
-    (ts_t × ts_h × ts_w) tile after padding ‑‑ flattened in the order
-    (t‑tile, h‑tile, w‑tile) that `rearrange` uses.
+    Compute the number of valid (non-padded) tokens inside every
+    (ts_t x ts_h x ts_w) tile after padding -- flattened in the order
+    (t-tile, h-tile, w-tile) that `rearrange` uses.
 
     Returns
     -------
@@ -130,7 +130,10 @@ def get_vsa_kwargs(
 
 
 def tile(
-    x: torch.Tensor, num_tiles: list[int], tile_partition_indices: torch.LongTensor, non_pad_index: torch.LongTensor
+    x: torch.Tensor,
+    num_tiles: tuple[int, int, int],
+    tile_partition_indices: torch.LongTensor,
+    non_pad_index: torch.LongTensor,
 ) -> torch.Tensor:
     t_padded_size = num_tiles[0] * VSA_TILE_SIZE[0]
     h_padded_size = num_tiles[1] * VSA_TILE_SIZE[1]
@@ -153,17 +156,17 @@ def untile(
 
 
 def video_sparse_attn(
-    q,
-    k,
-    v,
-    g,
-    sparsity,
-    num_tiles,
-    total_seq_length,
-    tile_partition_indices,
-    reverse_tile_partition_indices,
-    variable_block_sizes,
-    non_pad_index,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    sparsity: float,
+    num_tiles: tuple[int, int, int],
+    total_seq_length: int,
+    tile_partition_indices: torch.LongTensor,
+    reverse_tile_partition_indices: torch.LongTensor,
+    variable_block_sizes: torch.LongTensor,
+    non_pad_index: torch.LongTensor,
 ):
     q = tile(q, num_tiles, tile_partition_indices, non_pad_index)
     k = tile(k, num_tiles, tile_partition_indices, non_pad_index)
@@ -176,7 +179,7 @@ def video_sparse_attn(
     g = g.transpose(1, 2).contiguous()
 
     topk = math.ceil((1 - sparsity) * (total_seq_length / math.prod(VSA_TILE_SIZE)))
-    out = _video_sparse_attn(
+    out = vsa_core(
         q,
         k,
         v,
@@ -190,19 +193,19 @@ def video_sparse_attn(
 
 
 def distributed_video_sparse_attn(
-    q,
-    k,
-    v,
-    g,
-    sparsity,
-    num_tiles,
-    total_seq_length,
-    tile_partition_indices,
-    reverse_tile_partition_indices,
-    variable_block_sizes,
-    non_pad_index,
-    scatter_idx=2,
-    gather_idx=1,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    sparsity: float,
+    num_tiles: tuple[int, int, int],
+    total_seq_length: int,
+    tile_partition_indices: torch.LongTensor,
+    reverse_tile_partition_indices: torch.LongTensor,
+    variable_block_sizes: torch.LongTensor,
+    non_pad_index: torch.LongTensor,
+    scatter_idx: int = 2,
+    gather_idx: int = 1,
 ):
     from yunchang.comm.all_to_all import SeqAllToAll4D
 
@@ -214,27 +217,19 @@ def distributed_video_sparse_attn(
     v = SeqAllToAll4D.apply(sp_ulysses_group, v, scatter_idx, gather_idx)
     g = SeqAllToAll4D.apply(sp_ulysses_group, g, scatter_idx, gather_idx)
 
-    q = tile(q, num_tiles, tile_partition_indices, non_pad_index)
-    k = tile(k, num_tiles, tile_partition_indices, non_pad_index)
-    v = tile(v, num_tiles, tile_partition_indices, non_pad_index)
-    g = tile(g, num_tiles, tile_partition_indices, non_pad_index)
-
-    q = q.transpose(1, 2).contiguous()
-    k = k.transpose(1, 2).contiguous()
-    v = v.transpose(1, 2).contiguous()
-    g = g.transpose(1, 2).contiguous()
-
-    topk = math.ceil((1 - sparsity) * (total_seq_length / math.prod(VSA_TILE_SIZE)))
-    out = _video_sparse_attn(
+    out = video_sparse_attn(
         q,
         k,
         v,
-        variable_block_sizes=variable_block_sizes,
-        topk=topk,
-        block_size=VSA_TILE_SIZE,
-        compress_attn_weight=g,
-    ).transpose(1, 2)
-    out = untile(out, reverse_tile_partition_indices, non_pad_index)
+        g,
+        sparsity,
+        num_tiles,
+        total_seq_length,
+        tile_partition_indices,
+        reverse_tile_partition_indices,
+        variable_block_sizes,
+        non_pad_index,
+    )
 
     out = SeqAllToAll4D.apply(sp_ulysses_group, out, gather_idx, scatter_idx)
     return out
