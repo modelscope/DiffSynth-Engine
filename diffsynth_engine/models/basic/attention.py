@@ -146,6 +146,8 @@ def attention(
         "sage",
         "sparge",
         "vsa",
+        "aiter",
+        "aiter_fp8",
     ]
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
     if attn_impl is None or attn_impl == "auto":
