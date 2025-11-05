@@ -19,8 +19,6 @@ from typing import Dict, List, Set, Type, Union, Optional
 from queue import Empty
 
 import diffsynth_engine.models.basic.attention as attention_ops
-from diffsynth_engine.models import PreTrainedModel
-from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.utils.platform import empty_cache
 from diffsynth_engine.utils import logging
 
@@ -300,14 +298,15 @@ def _worker_loop(
             world_size=world_size,
         )
 
-        def wrap_for_parallel(module: Union[PreTrainedModel, BasePipeline]):
-            if isinstance(module, BasePipeline):
-                for model_name in module.model_names:
-                    if isinstance(submodule := getattr(module, model_name), PreTrainedModel):
+        def wrap_for_parallel(module):
+            if hasattr(module, "model_names"):
+                for model_name in getattr(module, "model_names"):
+                    submodule = getattr(module, model_name)
+                    if getattr(submodule, "_supports_parallelization", False):
                         setattr(module, model_name, wrap_for_parallel(submodule))
                 return module
 
-            if not module._supports_parallelization:
+            if not getattr(module, "_supports_parallelization", False):
                 return module
 
             if tp_degree > 1:
