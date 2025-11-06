@@ -2,6 +2,7 @@ import json
 import torch
 import torch.distributed as dist
 import math
+import sys
 from typing import Callable, List, Dict, Tuple, Optional, Union
 from tqdm import tqdm
 from einops import rearrange
@@ -43,6 +44,32 @@ from diffsynth_engine.utils.download import fetch_model
 logger = logging.get_logger(__name__)
 
 
+def _get_nunchaku_dit_class():
+    try:
+        from diffsynth_engine.models.qwen_image import QwenImageDiTNunchaku
+
+        return QwenImageDiTNunchaku
+    except (ImportError, ModuleNotFoundError):
+        torch_version = getattr(torch, "__version__", "unknown")
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+        error_message = (
+            "\n\n"
+            "ERROR: This model requires the 'nunchaku' library for quantized inference, but it is not installed.\n"
+            "'nunchaku' is not available on PyPI and must be installed manually.\n\n"
+            "Please follow these steps:\n"
+            "1. Visit the nunchaku releases page: https://github.com/nunchaku-tech/nunchaku/releases\n"
+            "2. Find the wheel (.whl) file that matches your environment:\n"
+            f"   - PyTorch version: {torch_version}\n"
+            f"   - Python version: {python_version}\n"
+            f"   - Operating System: {sys.platform}\n"
+            "3. Copy the URL of the correct wheel file.\n"
+            "4. Install it using pip, for example:\n"
+            "   pip install nunchaku @ https://.../your_specific_nunchaku_file.whl\n"
+        )
+        raise ImportError(error_message)
+
+
 class QwenImageLoRAConverter(LoRAStateDictConverter):
     def _from_diffsynth(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         dit_dict = {}
@@ -77,6 +104,7 @@ class QwenImageLoRAConverter(LoRAStateDictConverter):
 
             key = key.replace(f".{lora_a_suffix}", "")
             key = key.replace("base_model.model.", "")
+            key = key.replace("transformer.", "")
 
             if key.startswith("transformer") and "attn.to_out.0" in key:
                 key = key.replace("attn.to_out.0", "attn.to_out")
@@ -185,7 +213,32 @@ class QwenImagePipeline(BasePipeline):
             config = model_path_or_config
 
         logger.info(f"loading state dict from {config.model_path} ...")
-        model_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
+        model_state_dict = cls.load_model_checkpoint(
+            config.model_path, device="cpu", dtype=config.model_dtype, convert_dtype=False
+        )
+        use_nunchaku = False
+        for key in model_state_dict.keys():
+            if "qweight" in key:
+                use_nunchaku = True
+                break
+        if use_nunchaku:
+            logger.info("using nunchaku")
+            config.use_nunchaku = True
+            if "transformer_blocks.0.img_mod.1.qweight" in model_state_dict.keys():
+                config.use_nunchaku_awq = True
+                logger.info("enable nunchaku awq")
+            else:
+                config.use_nunchaku_awq = False
+                logger.info("disable nunchaku awq")
+            if "transformer_blocks.0.attn.to_qkv.qweight" in model_state_dict.keys():
+                config.use_nunchaku_attn = True
+                logger.info("enable nunchaku attn")
+            else:
+                config.use_nunchaku_attn = False
+                logger.info("disable nunchaku attn")
+        else:
+            for key, value in model_state_dict.items():
+                model_state_dict[key] = value.to(config.model_dtype)
 
         if config.vae_path is None:
             config.vae_path = fetch_model(
@@ -270,13 +323,26 @@ class QwenImagePipeline(BasePipeline):
                     dtype=config.model_dtype,
                     relative_l1_threshold=config.fbcache_relative_l1_threshold,
                 )
+            elif config.use_nunchaku:
+                QwenImageDiTNunchaku = _get_nunchaku_dit_class()
+                from diffsynth_engine.models.basic.lora_nunchaku import patch_nunchaku_model_for_lora
+
+                dit = QwenImageDiTNunchaku.from_state_dict(
+                    state_dicts.model,
+                    device=init_device,
+                    dtype=config.model_dtype,
+                    use_nunchaku_awq=config.use_nunchaku_awq,
+                    use_nunchaku_attn=config.use_nunchaku_attn,
+                    nunchaku_rank=config.nunchaku_rank,
+                )
+                patch_nunchaku_model_for_lora(dit)
             else:
                 dit = QwenImageDiT.from_state_dict(
                     state_dicts.model,
                     device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                 )
-            if config.use_fp8_linear:
+            if config.use_fp8_linear and not config.use_nunchaku:
                 enable_fp8_linear(dit)
 
         pipe = cls(

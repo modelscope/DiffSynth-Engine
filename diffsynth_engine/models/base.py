@@ -40,7 +40,7 @@ class PreTrainedModel(nn.Module):
 
     def load_loras(self, lora_args: List[Dict[str, Any]], fused: bool = True):
         for args in lora_args:
-            key = args["name"]
+            key = args["key"]
             module = self.get_submodule(key)
             if not isinstance(module, (LoRALinear, LoRAConv2d)):
                 raise ValueError(f"Unsupported lora key: {key}")

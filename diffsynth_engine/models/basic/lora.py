@@ -132,6 +132,7 @@ class LoRALinear(nn.Linear):
         device: str,
         dtype: torch.dtype,
         save_original_weight: bool = True,
+        **kwargs,
     ):
         if save_original_weight and self._original_weight is None:
             if self.weight.dtype == torch.float8_e4m3fn:

@@ -35,8 +35,16 @@ if __name__ == "__main__":
         device=args.device,
     )
     pipe = WanVideoPipeline.from_pretrained(config)
-    pipe.load_loras_high_noise([(f"{args.lora_dir}/wan22-style1-violetevergarden-16-sel-2-high-000100.safetensors", 1.0)], fused=False, save_original_weight=False)
-    pipe.load_loras_low_noise([(f"{args.lora_dir}/wan22-style1-violetevergarden-16-sel-2-low-4-000060.safetensors", 1.0)], fused=False, save_original_weight=False)
+    pipe.load_loras_high_noise(
+        [(f"{args.lora_dir}/wan22-style1-violetevergarden-16-sel-2-high-000100.safetensors", 1.0)],
+        fused=False,
+        save_original_weight=False,
+    )
+    pipe.load_loras_low_noise(
+        [(f"{args.lora_dir}/wan22-style1-violetevergarden-16-sel-2-low-4-000060.safetensors", 1.0)],
+        fused=False,
+        save_original_weight=False,
+    )
 
     video = pipe(
         prompt="白天，晴天光，侧光，硬光，暖色调，中近景，中心构图，一个银色短发少女戴着精致的皇冠，穿着华丽的长裙，站在阳光明媚的花园中。她面向镜头微笑，眼睛闪烁着光芒。阳光从侧面照来，照亮了她的银色短发和华丽的服饰，营造出一种温暖而高贵的氛围。微风轻拂，吹动着她裙摆上的蕾丝花边，增添了几分动感。背景是盛开的花朵和绿意盎然的植物，为画面增色不少。,anime style",

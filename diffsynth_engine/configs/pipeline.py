@@ -249,6 +249,12 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
     # override OptimizationConfig
     fbcache_relative_l1_threshold = 0.009
 
+    # svd quant
+    use_nunchaku = False
+    use_nunchaku_awq = True
+    use_nunchaku_attn = True
+    nunchaku_rank = 32
+
     @classmethod
     def basic_config(
         cls,

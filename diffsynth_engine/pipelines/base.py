@@ -106,7 +106,8 @@ class BasePipeline:
                 for key, param in state_dict.items():
                     lora_args.append(
                         {
-                            "name": key,
+                            "name": lora_path,
+                            "key": key,
                             "scale": lora_scale,
                             "rank": param["rank"],
                             "alpha": param["alpha"],
@@ -130,7 +131,10 @@ class BasePipeline:
 
     @staticmethod
     def load_model_checkpoint(
-        checkpoint_path: str | List[str], device: str = "cpu", dtype: torch.dtype = torch.float16
+        checkpoint_path: str | List[str],
+        device: str = "cpu",
+        dtype: torch.dtype = torch.float16,
+        convert_dtype: bool = True,
     ) -> Dict[str, torch.Tensor]:
         if isinstance(checkpoint_path, str):
             checkpoint_path = [checkpoint_path]
@@ -140,8 +144,11 @@ class BasePipeline:
                 raise FileNotFoundError(f"{path} is not a file")
             elif path.endswith(".safetensors"):
                 state_dict_ = load_file(path, device=device)
-                for key, value in state_dict_.items():
-                    state_dict[key] = value.to(dtype)
+                if convert_dtype:
+                    for key, value in state_dict_.items():
+                        state_dict[key] = value.to(dtype)
+                else:
+                    state_dict.update(state_dict_)
 
             elif path.endswith(".gguf"):
                 state_dict.update(**load_gguf_checkpoint(path, device=device, dtype=dtype))
