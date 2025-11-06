@@ -334,6 +334,13 @@ def long_context_attention(
                 logger.warning(
                     f"head_dim={q.shape[-1]}, but flash_attn_3 only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
                 )
+        if AITER_AVAILABLE:
+            if flash_attn3_compatible:
+                return LongContextAttention(attn_type=AttnType.AITER)(q, k, v, softmax_scale=scale)
+            else:
+                logger.warning(
+                    f"head_dim={q.shape[-1]}, but aiter only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
+                )
         if SDPA_AVAILABLE:
             return LongContextAttention(attn_type=AttnType.TORCH)(q, k, v, softmax_scale=scale)
         if FLASH_ATTN_2_AVAILABLE:
