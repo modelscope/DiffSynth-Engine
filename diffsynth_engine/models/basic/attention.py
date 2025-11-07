@@ -141,8 +141,8 @@ def attention(
         "fa2",
         "fa3",
         "fa3_fp8",
-        "aiter",
-        "aiter_fp8",
+        "aiter_fa",
+        "aiter_fa_fp8",
         "xformers",
         "sdpa",
         "sage",
@@ -168,7 +168,7 @@ def attention(
                 return aiter_flash_attn(q, k, v, softmax_scale=scale)
             else:
                 logger.warning(
-                    f"head_dim={q.shape[-1]}, but aiter only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
+                    f"head_dim={q.shape[-1]}, but aiter_flash_attn only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
                 )
         if XFORMERS_AVAILABLE:
             return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
@@ -196,14 +196,14 @@ def attention(
                 v = v.to(dtype=DTYPE_FP8)
                 out = flash_attn3(q, k, v, softmax_scale=scale)
                 return out.to(dtype=origin_dtype)
-        if attn_impl == "aiter" or attn_impl == "aiter_fp8":
+        if attn_impl == "aiter_fa" or attn_impl == "aiter_fa_fp8":
             if not flash_attn3_compatible:
                 raise RuntimeError(
-                    f"head_dim={q.shape[-1]}, but aiter_attn only supports head dimension at most {FA3_MAX_HEADDIM}"
+                    f"head_dim={q.shape[-1]}, but aiter_flash_attn only supports head dimension at most {FA3_MAX_HEADDIM}"
                 )
             if attn_mask is not None:
-                raise RuntimeError("aiter_attn does not support attention mask")
-            if attn_impl == "aiter" :
+                raise RuntimeError("aiter_flash_attn does not support attention mask")
+            if attn_impl == "aiter_fa" :
                 return aiter_flash_attn(q, k, v, softmax_scale=scale)
             else:
                 origin_dtype = q.dtype
@@ -317,8 +317,8 @@ def long_context_attention(
         "fa2",
         "fa3",
         "fa3_fp8",
-        "aiter",
-        "aiter_fp8",
+        "aiter_fa",
+        "aiter_fa_fp8",
         "sdpa",
         "sage",
         "sparge",
@@ -339,7 +339,7 @@ def long_context_attention(
                 return LongContextAttention(attn_type=AttnType.AITER)(q, k, v, softmax_scale=scale)
             else:
                 logger.warning(
-                    f"head_dim={q.shape[-1]}, but aiter only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
+                    f"head_dim={q.shape[-1]}, but aiter_flash_attn only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
                 )
         if SDPA_AVAILABLE:
             return LongContextAttention(attn_type=AttnType.TORCH)(q, k, v, softmax_scale=scale)
@@ -361,12 +361,12 @@ def long_context_attention(
             v = v.to(dtype=DTYPE_FP8)
             out = LongContextAttention(attn_type=AttnType.FA3)(q, k, v, softmax_scale=scale)
             return out.to(dtype=origin_dtype)
-        if attn_impl == "aiter" or attn_impl == "aiter_fp8":
+        if attn_impl == "aiter_fa" or attn_impl == "aiter_fa_fp8":
             if not flash_attn3_compatible:
                 raise RuntimeError(
-                    f"head_dim={q.shape[-1]}, but aiter_attn only supports head dimension at most {FA3_MAX_HEADDIM}"
+                    f"head_dim={q.shape[-1]}, but aiter_flash_attn only supports head dimension at most {FA3_MAX_HEADDIM}"
                 )
-            if attn_impl == "aiter":
+            if attn_impl == "aiter_fa":
                 return LongContextAttention(attn_type=AttnType.AITER)(q, k, v, softmax_scale=scale)
 
             origin_dtype = q.dtype
