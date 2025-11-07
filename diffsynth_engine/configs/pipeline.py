@@ -27,13 +27,13 @@ class AttnImpl(Enum):
     FA2 = "fa2"  # Flash Attention 2
     FA3 = "fa3"  # Flash Attention 3
     FA3_FP8 = "fa3_fp8"  # Flash Attention 3 with FP8
+    AITER = "aiter"  # Aiter Flash Attention
+    AITER_FP8 = "aiter_fp8"  # Aiter Flash Attention with FP8
     XFORMERS = "xformers"  # XFormers
     SDPA = "sdpa"  # Scaled Dot Product Attention
     SAGE = "sage"  # Sage Attention
     SPARGE = "sparge"  # Sparge Attention
     VSA = "vsa"  # Video Sparse Attention
-    AITER = "aiter"  # Aiter Flash Attention
-    AITER_FP8 = "aiter_fp8"  # Aiter Flash Attention with FP8
 
 
 @dataclass
