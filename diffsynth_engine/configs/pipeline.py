@@ -32,8 +32,8 @@ class AttnImpl(Enum):
     SAGE = "sage"  # Sage Attention
     SPARGE = "sparge"  # Sparge Attention
     VSA = "vsa"  # Video Sparse Attention
-    AITER_FA = "aiter_fa"  # Aiter Flash Attention
-    AITER_FA_FP8 = "aiter_fa_fp8"  # Aiter Flash Attention with FP8
+    AITER = "aiter"  # Aiter Flash Attention
+    AITER_FP8 = "aiter_fp8"  # Aiter Flash Attention with FP8
 
 
 @dataclass
