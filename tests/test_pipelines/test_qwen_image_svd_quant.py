@@ -1,11 +1,11 @@
 import unittest
 import torch
+import math
 
 from diffsynth_engine import QwenImagePipelineConfig
 from diffsynth_engine.pipelines import QwenImagePipeline
 from diffsynth_engine.utils.download import fetch_model
 from tests.common.test_case import ImageTestCase
-import math
 
 
 class TestQwenImagePipelineSVDQuant(ImageTestCase):
@@ -22,7 +22,6 @@ class TestQwenImagePipelineSVDQuant(ImageTestCase):
             vae_dtype=torch.float32,
             offload_mode="cpu_offload",
         )
-        config.nunchaku_rank = 128
         cls.pipe = QwenImagePipeline.from_pretrained(config)
 
     @classmethod

@@ -50,3 +50,9 @@ if VIDEO_SPARSE_ATTN_AVAILABLE:
     logger.info("Video sparse attention is available")
 else:
     logger.info("Video sparse attention is not available")
+
+NUNCHAKU_AVAILABLE = importlib.util.find_spec("nunchaku") is not None
+if NUNCHAKU_AVAILABLE:
+    logger.info("Nunchaku is available")
+else:
+    logger.info("Nunchaku is not available")

@@ -16,7 +16,6 @@ from diffsynth_engine.models.qwen_image.qwen_image_dit import (
 )
 
 from nunchaku.models.utils import fuse_linears
-from nunchaku.models.attention import _patch_linear
 from nunchaku.ops.fused import fused_gelu_mlp
 from nunchaku.models.linear import AWQW4A16Linear, SVDQW4A4Linear
 from diffsynth_engine.models.basic.lora import LoRALinear, LoRAConv2d
@@ -95,9 +94,15 @@ class QwenDoubleStreamAttentionNunchaku(nn.Module):
 
 
 class QwenFeedForwardNunchaku(nn.Module):
-    def __init__(self, origin_ff: QwenFeedForward, **kwargs):
+    def __init__(
+        self,
+        origin_ff: QwenFeedForward,
+        rank: int = 32,
+    ):
         super().__init__()
-        self.net = _patch_linear(origin_ff.net, SVDQW4A4Linear, **kwargs)
+        self.net = origin_ff.net
+        self.net[0].proj = SVDQW4A4Linear.from_linear(self.net[0].proj, rank=rank)
+        self.net[2] = SVDQW4A4Linear.from_linear(self.net[2], rank=rank)
         self.net[2].act_unsigned = self.net[2].precision != "nvfp4"
 
     def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:

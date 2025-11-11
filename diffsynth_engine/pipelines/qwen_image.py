@@ -39,35 +39,10 @@ from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.download import fetch_model
+from diffsynth_engine.utils.flag import NUNCHAKU_AVAILABLE
 
 
 logger = logging.get_logger(__name__)
-
-
-def _get_nunchaku_dit_class():
-    try:
-        from diffsynth_engine.models.qwen_image import QwenImageDiTNunchaku
-
-        return QwenImageDiTNunchaku
-    except (ImportError, ModuleNotFoundError):
-        torch_version = getattr(torch, "__version__", "unknown")
-        python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-
-        error_message = (
-            "\n\n"
-            "ERROR: This model requires the 'nunchaku' library for quantized inference, but it is not installed.\n"
-            "'nunchaku' is not available on PyPI and must be installed manually.\n\n"
-            "Please follow these steps:\n"
-            "1. Visit the nunchaku releases page: https://github.com/nunchaku-tech/nunchaku/releases\n"
-            "2. Find the wheel (.whl) file that matches your environment:\n"
-            f"   - PyTorch version: {torch_version}\n"
-            f"   - Python version: {python_version}\n"
-            f"   - Operating System: {sys.platform}\n"
-            "3. Copy the URL of the correct wheel file.\n"
-            "4. Install it using pip, for example:\n"
-            "   pip install nunchaku @ https://.../your_specific_nunchaku_file.whl\n"
-        )
-        raise ImportError(error_message)
 
 
 class QwenImageLoRAConverter(LoRAStateDictConverter):
@@ -206,6 +181,33 @@ class QwenImagePipeline(BasePipeline):
         ]
 
     @classmethod
+    def _setup_nunchaku_config(
+        cls, model_state_dict: Dict[str, torch.Tensor], config: QwenImagePipelineConfig
+    ) -> QwenImagePipelineConfig:
+        is_nunchaku_model = any("qweight" in key for key in model_state_dict)
+
+        if is_nunchaku_model:
+            logger.info("Nunchaku quantized model detected. Configuring for nunchaku.")
+            config.use_nunchaku = True
+            config.nunchaku_rank = model_state_dict["transformer_blocks.0.attn.add_qkv_proj.proj_up"].shape[1]
+
+            if "transformer_blocks.0.img_mod.1.qweight" in model_state_dict:
+                config.use_nunchaku_awq = True
+                logger.info("Enable nunchaku AWQ.")
+            else:
+                config.use_nunchaku_awq = False
+                logger.info("Disable nunchaku AWQ.")
+
+            if "transformer_blocks.0.attn.to_qkv.qweight" in model_state_dict:
+                config.use_nunchaku_attn = True
+                logger.info("Enable nunchaku attention quantization.")
+            else:
+                config.use_nunchaku_attn = False
+                logger.info("Disable nunchaku attention quantization.")
+
+        return config
+
+    @classmethod
     def from_pretrained(cls, model_path_or_config: str | QwenImagePipelineConfig) -> "QwenImagePipeline":
         if isinstance(model_path_or_config, str):
             config = QwenImagePipelineConfig(model_path=model_path_or_config)
@@ -216,27 +218,11 @@ class QwenImagePipeline(BasePipeline):
         model_state_dict = cls.load_model_checkpoint(
             config.model_path, device="cpu", dtype=config.model_dtype, convert_dtype=False
         )
-        use_nunchaku = False
-        for key in model_state_dict.keys():
-            if "qweight" in key:
-                use_nunchaku = True
-                break
-        if use_nunchaku:
-            logger.info("using nunchaku")
-            config.use_nunchaku = True
-            if "transformer_blocks.0.img_mod.1.qweight" in model_state_dict.keys():
-                config.use_nunchaku_awq = True
-                logger.info("enable nunchaku awq")
-            else:
-                config.use_nunchaku_awq = False
-                logger.info("disable nunchaku awq")
-            if "transformer_blocks.0.attn.to_qkv.qweight" in model_state_dict.keys():
-                config.use_nunchaku_attn = True
-                logger.info("enable nunchaku attn")
-            else:
-                config.use_nunchaku_attn = False
-                logger.info("disable nunchaku attn")
-        else:
+
+        config = cls._setup_nunchaku_config(model_state_dict, config)
+
+        # for svd quant model fp4/int4 linear layers, do not convert dtype here
+        if not config.use_nunchaku:
             for key, value in model_state_dict.items():
                 model_state_dict[key] = value.to(config.model_dtype)
 
@@ -274,6 +260,8 @@ class QwenImagePipeline(BasePipeline):
 
     @classmethod
     def from_state_dict(cls, state_dicts: QwenImageStateDicts, config: QwenImagePipelineConfig) -> "QwenImagePipeline":
+        config = cls._setup_nunchaku_config(state_dicts.model, config)
+
         if config.parallelism > 1:
             pipe = ParallelWrapper(
                 cfg_degree=config.cfg_degree,
@@ -324,7 +312,26 @@ class QwenImagePipeline(BasePipeline):
                     relative_l1_threshold=config.fbcache_relative_l1_threshold,
                 )
             elif config.use_nunchaku:
-                QwenImageDiTNunchaku = _get_nunchaku_dit_class()
+                if not NUNCHAKU_AVAILABLE:
+                    torch_version = getattr(torch, "__version__", "unknown")
+                    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+                    error_message = (
+                        "\n\n"
+                        "ERROR: This model requires the 'nunchaku' library for quantized inference, but it is not installed.\n"
+                        "'nunchaku' is not available on PyPI and must be installed manually.\n\n"
+                        "Please follow these steps:\n"
+                        "1. Visit the nunchaku releases page: https://github.com/nunchaku-tech/nunchaku/releases\n"
+                        "2. Find the wheel (.whl) file that matches your environment:\n"
+                        f"   - PyTorch version: {torch_version}\n"
+                        f"   - Python version: {python_version}\n"
+                        f"   - Operating System: {sys.platform}\n"
+                        "3. Copy the URL of the correct wheel file.\n"
+                        "4. Install it using pip, for example:\n"
+                        "   pip install nunchaku @ https://.../your_specific_nunchaku_file.whl\n"
+                    )
+                    raise ImportError(error_message)
+
+                from diffsynth_engine.models.qwen_image import QwenImageDiTNunchaku
                 from diffsynth_engine.models.basic.lora_nunchaku import patch_nunchaku_model_for_lora
 
                 dit = QwenImageDiTNunchaku.from_state_dict(

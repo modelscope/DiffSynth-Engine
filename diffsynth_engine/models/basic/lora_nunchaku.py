@@ -197,15 +197,11 @@ class LoRAAWQW4A16Linear(nn.Module):
             raise ValueError(f"LoRA name {name} not found in {self.__class__.__name__}")
         self._lora_dict[name].scale = scale
 
-    def clear(self, release_all_cpu_memory: bool = False):
-        if self.patched_frozen_lora:
-            raise RuntimeError("Cannot clear frozen LoRA from a quantized layer.")
-        self._lora_dict.clear()
-
     def add_frozen_lora(self, *args, **kwargs):
-        raise NotImplementedError(
-            "Frozen LoRA (merging weights) is not supported for quantized layers like SVDQW4A4Linear."
-        )
+        raise NotImplementedError("Frozen LoRA (merging weights) is not supported for AWQW4A16Linear.")
+
+    def clear(self, *args, **kwargs):
+        self._lora_dict.clear()
 
 
 def patch_nunchaku_model_for_lora(model: nn.Module):
