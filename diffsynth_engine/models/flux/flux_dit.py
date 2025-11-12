@@ -16,6 +16,7 @@ from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
+from diffsynth_engine.utils.aiter_linear import use_swizzle_hipblaslt 
 from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
 from diffsynth_engine.utils.parallel import (
     cfg_parallel,
@@ -409,6 +410,7 @@ class FluxDiT(PreTrainedModel):
         use_cfg = hidden_states.shape[0] > 1
         with (
             fp8_inference(fp8_linear_enabled),
+            use_swizzle_hipblaslt(swizzle=True, use_fp8_linear=fp8_linear_enabled),
             gguf_inference(),
             cfg_parallel(
                 (
