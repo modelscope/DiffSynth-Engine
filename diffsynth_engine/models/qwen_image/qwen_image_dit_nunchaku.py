@@ -22,29 +22,30 @@ from diffsynth_engine.models.basic.lora import LoRALinear, LoRAConv2d
 from diffsynth_engine.models.basic.lora_nunchaku import LoRASVDQW4A4Linear, LoRAAWQW4A16Linear
 
 
-class QwenDoubleStreamAttentionNunchaku(nn.Module):
+class QwenDoubleStreamAttentionNunchaku(QwenDoubleStreamAttention):
     def __init__(
         self,
-        origin_attn: QwenDoubleStreamAttention,
+        dim_a,
+        dim_b,
+        num_heads,
+        head_dim,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
         nunchaku_rank: int = 32,
     ):
-        super().__init__()
-        self.num_heads = origin_attn.num_heads
-        self.head_dim = origin_attn.head_dim
+        super().__init__(dim_a, dim_b, num_heads, head_dim, device=device, dtype=dtype)
 
-        self.norm_q = origin_attn.norm_q
-        self.norm_k = origin_attn.norm_k
-
-        self.norm_added_q = origin_attn.norm_added_q
-        self.norm_added_k = origin_attn.norm_added_k
-
-        to_qkv = fuse_linears([origin_attn.to_q, origin_attn.to_k, origin_attn.to_v])
+        to_qkv = fuse_linears([self.to_q, self.to_k, self.to_v])
         self.to_qkv = SVDQW4A4Linear.from_linear(to_qkv, rank=nunchaku_rank)
-        self.to_out = SVDQW4A4Linear.from_linear(origin_attn.to_out, rank=nunchaku_rank)
+        self.to_out = SVDQW4A4Linear.from_linear(self.to_out, rank=nunchaku_rank)
 
-        add_qkv_proj = fuse_linears([origin_attn.add_q_proj, origin_attn.add_k_proj, origin_attn.add_v_proj])
+        del self.to_q, self.to_k, self.to_v
+
+        add_qkv_proj = fuse_linears([self.add_q_proj, self.add_k_proj, self.add_v_proj])
         self.add_qkv_proj = SVDQW4A4Linear.from_linear(add_qkv_proj, rank=nunchaku_rank)
-        self.to_add_out = SVDQW4A4Linear.from_linear(origin_attn.to_add_out, rank=nunchaku_rank)
+        self.to_add_out = SVDQW4A4Linear.from_linear(self.to_add_out, rank=nunchaku_rank)
+
+        del self.add_q_proj, self.add_k_proj, self.add_v_proj
 
     def forward(
         self,
@@ -93,14 +94,17 @@ class QwenDoubleStreamAttentionNunchaku(nn.Module):
         return img_attn_output, txt_attn_output
 
 
-class QwenFeedForwardNunchaku(nn.Module):
+class QwenFeedForwardNunchaku(QwenFeedForward):
     def __init__(
         self,
-        origin_ff: QwenFeedForward,
+        dim: int,
+        dim_out: Optional[int] = None,
+        dropout: float = 0.0,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
         rank: int = 32,
     ):
-        super().__init__()
-        self.net = origin_ff.net
+        super().__init__(dim, dim_out, dropout, device=device, dtype=dtype)
         self.net[0].proj = SVDQW4A4Linear.from_linear(self.net[0].proj, rank=rank)
         self.net[2] = SVDQW4A4Linear.from_linear(self.net[2], rank=rank)
         self.net[2].act_unsigned = self.net[2].precision != "nvfp4"
@@ -109,41 +113,52 @@ class QwenFeedForwardNunchaku(nn.Module):
         return fused_gelu_mlp(hidden_states, self.net[0].proj, self.net[2])
 
 
-class QwenImageTransformerBlockNunchaku(nn.Module):
+class QwenImageTransformerBlockNunchaku(QwenImageTransformerBlock):
     def __init__(
         self,
-        origin_block: QwenImageTransformerBlock,
+        dim: int,
+        num_attention_heads: int,
+        attention_head_dim: int,
+        eps: float = 1e-6,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
         scale_shift: float = 1.0,
         use_nunchaku_awq: bool = True,
         use_nunchaku_attn: bool = True,
         nunchaku_rank: int = 32,
     ):
-        super().__init__()
-        self.dim = origin_block.dim
-        self.num_attention_heads = origin_block.num_attention_heads
-        self.attention_head_dim = origin_block.attention_head_dim
+        super().__init__(dim, num_attention_heads, attention_head_dim, eps, device=device, dtype=dtype)
 
-        self.img_mod = origin_block.img_mod
         self.use_nunchaku_awq = use_nunchaku_awq
         if use_nunchaku_awq:
-            self.img_mod[1] = AWQW4A16Linear.from_linear(origin_block.img_mod[1], rank=nunchaku_rank)
-        self.img_norm1 = origin_block.img_norm1
+            self.img_mod[1] = AWQW4A16Linear.from_linear(self.img_mod[1], rank=nunchaku_rank)
+
         if use_nunchaku_attn:
             self.attn = QwenDoubleStreamAttentionNunchaku(
-                origin_block.attn,
+                dim_a=dim,
+                dim_b=dim,
+                num_heads=num_attention_heads,
+                head_dim=attention_head_dim,
+                device=device,
+                dtype=dtype,
                 nunchaku_rank=nunchaku_rank,
             )
         else:
-            self.attn = origin_block.attn
-        self.img_norm2 = origin_block.img_norm2
-        self.img_mlp = QwenFeedForwardNunchaku(origin_block.img_mlp, rank=nunchaku_rank)
+            self.attn = QwenDoubleStreamAttention(
+                dim_a=dim,
+                dim_b=dim,
+                num_heads=num_attention_heads,
+                head_dim=attention_head_dim,
+                device=device,
+                dtype=dtype,
+            )
 
-        self.txt_mod = origin_block.txt_mod
+        self.img_mlp = QwenFeedForwardNunchaku(dim=dim, dim_out=dim, device=device, dtype=dtype, rank=nunchaku_rank)
+
         if use_nunchaku_awq:
-            self.txt_mod[1] = AWQW4A16Linear.from_linear(origin_block.txt_mod[1], rank=nunchaku_rank)
-        self.txt_norm1 = origin_block.txt_norm1
-        self.txt_norm2 = origin_block.txt_norm2
-        self.txt_mlp = QwenFeedForwardNunchaku(origin_block.txt_mlp, rank=nunchaku_rank)
+            self.txt_mod[1] = AWQW4A16Linear.from_linear(self.txt_mod[1], rank=nunchaku_rank)
+
+        self.txt_mlp = QwenFeedForwardNunchaku(dim=dim, dim_out=dim, device=device, dtype=dtype, rank=nunchaku_rank)
 
         self.scale_shift = scale_shift
 
@@ -239,13 +254,11 @@ class QwenImageDiTNunchaku(QwenImageDiT):
         self.transformer_blocks = nn.ModuleList(
             [
                 QwenImageTransformerBlockNunchaku(
-                    QwenImageTransformerBlock(
-                        dim=3072,
-                        num_attention_heads=24,
-                        attention_head_dim=128,
-                        device=device,
-                        dtype=dtype,
-                    ),
+                    dim=3072,
+                    num_attention_heads=24,
+                    attention_head_dim=128,
+                    device=device,
+                    dtype=dtype,
                     scale_shift=0,
                     use_nunchaku_awq=use_nunchaku_awq,
                     use_nunchaku_attn=use_nunchaku_attn,
