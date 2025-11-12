@@ -189,7 +189,7 @@ class QwenImagePipeline(BasePipeline):
         if is_nunchaku_model:
             logger.info("Nunchaku quantized model detected. Configuring for nunchaku.")
             config.use_nunchaku = True
-            config.nunchaku_rank = model_state_dict["transformer_blocks.0.attn.add_qkv_proj.proj_up"].shape[1]
+            config.nunchaku_rank = model_state_dict["transformer_blocks.0.img_mlp.net.0.proj.proj_up"].shape[1]
 
             if "transformer_blocks.0.img_mod.1.qweight" in model_state_dict:
                 config.use_nunchaku_awq = True
