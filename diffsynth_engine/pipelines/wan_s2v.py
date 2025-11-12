@@ -656,6 +656,8 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         )
 
         with LoRAContext():
+            cls._auto_enable_vsa(state_dicts.model, config)
+
             dit = WanS2VDiT.from_state_dict(
                 state_dicts.model,
                 config=model_config,

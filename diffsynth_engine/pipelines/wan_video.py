@@ -4,7 +4,7 @@ from typing import Callable, List, Dict, Tuple, Optional
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.configs import WanPipelineConfig, WanStateDicts
+from diffsynth_engine.configs import WanPipelineConfig, WanStateDicts, AttnImpl, VideoSparseAttentionParams
 from diffsynth_engine.algorithm.noise_scheduler.flow_match import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.models.wan.wan_dit import WanDiT
@@ -584,6 +584,8 @@ class WanVideoPipeline(BasePipeline):
             dit_state_dict = state_dicts.model
 
         with LoRAContext():
+            cls._auto_enable_vsa(dit_state_dict, config)
+
             dit = WanDiT.from_state_dict(
                 dit_state_dict,
                 config=dit_config,
@@ -667,6 +669,16 @@ class WanVideoPipeline(BasePipeline):
         if vae_state_dict["encoder.conv1.weight"].shape[1] == 12:  # in_channels
             vae_type = "wan2.2-vae"
         return vae_type
+
+    @staticmethod
+    def _auto_enable_vsa(state_dict: Dict[str, torch.Tensor], config: WanPipelineConfig):
+        def has_any_key(*xs):
+            return any(x in state_dict for x in xs)
+
+        if has_any_key("blocks.0.to_gate_compress.weight", "blocks.0.self_attn.gate_compress.weight"):
+            config.dit_attn_impl = AttnImpl.VSA
+            if config.attn_params is None:
+                config.attn_params = VideoSparseAttentionParams(sparsity=0.9)
 
     def compile(self):
         self.dit.compile_repeated_blocks()
