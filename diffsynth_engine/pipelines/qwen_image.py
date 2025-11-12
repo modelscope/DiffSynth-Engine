@@ -205,6 +205,9 @@ class QwenImagePipeline(BasePipeline):
                 config.use_nunchaku_attn = False
                 logger.info("Disable nunchaku attention quantization.")
 
+        else:
+            config.use_nunchaku = False
+
         return config
 
     @classmethod
