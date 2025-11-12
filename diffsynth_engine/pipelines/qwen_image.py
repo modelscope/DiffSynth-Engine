@@ -45,6 +45,7 @@ from diffsynth_engine.utils.flag import NUNCHAKU_AVAILABLE
 logger = logging.get_logger(__name__)
 
 
+
 class QwenImageLoRAConverter(LoRAStateDictConverter):
     def _from_diffsynth(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         dit_dict = {}
@@ -204,7 +205,7 @@ class QwenImagePipeline(BasePipeline):
             else:
                 config.use_nunchaku_attn = False
                 logger.info("Disable nunchaku attention quantization.")
-
+        
         else:
             config.use_nunchaku = False
 
@@ -316,23 +317,8 @@ class QwenImagePipeline(BasePipeline):
                 )
             elif config.use_nunchaku:
                 if not NUNCHAKU_AVAILABLE:
-                    torch_version = getattr(torch, "__version__", "unknown")
-                    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-                    error_message = (
-                        "\n\n"
-                        "ERROR: This model requires the 'nunchaku' library for quantized inference, but it is not installed.\n"
-                        "'nunchaku' is not available on PyPI and must be installed manually.\n\n"
-                        "Please follow these steps:\n"
-                        "1. Visit the nunchaku releases page: https://github.com/nunchaku-tech/nunchaku/releases\n"
-                        "2. Find the wheel (.whl) file that matches your environment:\n"
-                        f"   - PyTorch version: {torch_version}\n"
-                        f"   - Python version: {python_version}\n"
-                        f"   - Operating System: {sys.platform}\n"
-                        "3. Copy the URL of the correct wheel file.\n"
-                        "4. Install it using pip, for example:\n"
-                        "   pip install nunchaku @ https://.../your_specific_nunchaku_file.whl\n"
-                    )
-                    raise ImportError(error_message)
+                    from diffsynth_engine.utils.flag import NUNCHAKU_IMPORT_ERROR
+                    raise ImportError(NUNCHAKU_IMPORT_ERROR)
 
                 from diffsynth_engine.models.qwen_image import QwenImageDiTNunchaku
                 from diffsynth_engine.models.basic.lora_nunchaku import patch_nunchaku_model_for_lora

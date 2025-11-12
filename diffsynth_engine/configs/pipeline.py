@@ -249,6 +249,11 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
     # override OptimizationConfig
     fbcache_relative_l1_threshold = 0.009
 
+    # svd 
+    use_nunchaku: Optional[bool] = field(default=None, init=False) 
+    use_nunchaku_awq: Optional[bool] = field(default=None, init=False) 
+    use_nunchaku_attn: Optional[bool] = field(default=None, init=False) 
+    
     @classmethod
     def basic_config(
         cls,

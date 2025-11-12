@@ -52,7 +52,25 @@ else:
     logger.info("Video sparse attention is not available")
 
 NUNCHAKU_AVAILABLE = importlib.util.find_spec("nunchaku") is not None
+NUNCHAKU_IMPORT_ERROR = None
 if NUNCHAKU_AVAILABLE:
     logger.info("Nunchaku is available")
 else:
     logger.info("Nunchaku is not available")
+    import sys
+    torch_version = getattr(torch, "__version__", "unknown")
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    NUNCHAKU_IMPORT_ERROR = (
+        "\n\n"
+        "ERROR: This model requires the 'nunchaku' library for quantized inference, but it is not installed.\n"
+        "'nunchaku' is not available on PyPI and must be installed manually.\n\n"
+        "Please follow these steps:\n"
+        "1. Visit the nunchaku releases page: https://github.com/nunchaku-tech/nunchaku/releases\n"
+        "2. Find the wheel (.whl) file that matches your environment:\n"
+        f"   - PyTorch version: {torch_version}\n"
+        f"   - Python version: {python_version}\n"
+        f"   - Operating System: {sys.platform}\n"
+        "3. Copy the URL of the correct wheel file.\n"
+        "4. Install it using pip, for example:\n"
+        "   pip install nunchaku @ https://.../your_specific_nunchaku_file.whl\n"
+    )
