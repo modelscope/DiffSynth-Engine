@@ -3,10 +3,22 @@ import math
 import functools
 
 from diffsynth_engine.utils.flag import VIDEO_SPARSE_ATTN_AVAILABLE
-from diffsynth_engine.utils.parallel import get_sp_ulysses_group, get_sp_ring_world_size
 
+# Lazy import to avoid circular dependency
+def get_sp_ulysses_group():
+    from diffsynth_engine.utils.parallel import get_sp_ulysses_group as _get_sp_ulysses_group
+    return _get_sp_ulysses_group()
+
+def get_sp_ring_world_size():
+    from diffsynth_engine.utils.parallel import get_sp_ring_world_size as _get_sp_ring_world_size
+    return _get_sp_ring_world_size()
+
+vsa_core = None
 if VIDEO_SPARSE_ATTN_AVAILABLE:
-    from vsa import video_sparse_attn as vsa_core
+    try:
+        from vsa import video_sparse_attn as vsa_core
+    except Exception:
+        vsa_core = None
 
 VSA_TILE_SIZE = (4, 4, 4)
 
@@ -171,6 +183,12 @@ def video_sparse_attn(
     variable_block_sizes: torch.LongTensor,
     non_pad_index: torch.LongTensor,
 ):
+    if vsa_core is None:
+        raise RuntimeError(
+            "Video sparse attention (VSA) is not available. "
+            "Please install the 'vsa' package and ensure all its dependencies (including pytest) are installed."
+        )
+
     q = tile(q, num_tiles, tile_partition_indices, non_pad_index)
     k = tile(k, num_tiles, tile_partition_indices, non_pad_index)
     v = tile(v, num_tiles, tile_partition_indices, non_pad_index)
@@ -212,7 +230,8 @@ def distributed_video_sparse_attn(
 ):
     from yunchang.comm.all_to_all import SeqAllToAll4D
 
-    assert get_sp_ring_world_size() == 1, "distributed video sparse attention requires ring degree to be 1"
+    ring_world_size = get_sp_ring_world_size()
+    assert ring_world_size == 1, "distributed video sparse attention requires ring degree to be 1"
     sp_ulysses_group = get_sp_ulysses_group()
 
     q = SeqAllToAll4D.apply(sp_ulysses_group, q, scatter_idx, gather_idx)
