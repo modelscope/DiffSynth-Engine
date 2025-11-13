@@ -650,7 +650,7 @@ class WanVideoPipeline(BasePipeline):
                 dit_type = "wan2.2-i2v-a14b"
             elif model_state_dict["high_noise_model"]["patch_embedding.weight"].shape[1] == 16:
                 dit_type = "wan2.2-t2v-a14b"
-        elif model_state_dict["patch_embedding.weight"].shape[1] == 48:
+        elif has_any_key("patch_embedding.weight") and model_state_dict["patch_embedding.weight"].shape[1] == 48:
             dit_type = "wan2.2-ti2v-5b"
         elif has_any_key("img_emb.emb_pos", "condition_embedder.image_embedder.pos_embed"):
             dit_type = "wan2.1-flf2v-14b"
