@@ -13,6 +13,7 @@ from diffsynth_engine.configs import (
     SpargeAttentionParams,
     VideoSparseAttentionParams,
 )
+from diffsynth_engine.models.basic.video_sparse_attention import get_vsa_kwargs
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload, offload_model_to_dict, restore_model_from_dict
 from diffsynth_engine.utils.fp8_linear import enable_fp8_autocast
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
@@ -289,8 +290,6 @@ class BasePipeline:
             )
         elif isinstance(self.config.attn_params, VideoSparseAttentionParams):
             assert self.config.dit_attn_impl == AttnImpl.VSA
-            # Lazy import to avoid circular dependency
-            from diffsynth_engine.models.basic.video_sparse_attention import get_vsa_kwargs
             attn_kwargs.update(
                 get_vsa_kwargs(latents.shape[2:], (1, 2, 2), self.config.attn_params.sparsity, device=self.device)
             )
