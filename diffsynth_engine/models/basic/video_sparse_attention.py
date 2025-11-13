@@ -3,15 +3,8 @@ import math
 import functools
 
 from diffsynth_engine.utils.flag import VIDEO_SPARSE_ATTN_AVAILABLE
+from diffsynth_engine.utils.process_group import get_sp_ulysses_group, get_sp_ring_world_size
 
-# Lazy import to avoid circular dependency
-def get_sp_ulysses_group():
-    from diffsynth_engine.utils.parallel import get_sp_ulysses_group as _get_sp_ulysses_group
-    return _get_sp_ulysses_group()
-
-def get_sp_ring_world_size():
-    from diffsynth_engine.utils.parallel import get_sp_ring_world_size as _get_sp_ring_world_size
-    return _get_sp_ring_world_size()
 
 vsa_core = None
 if VIDEO_SPARSE_ATTN_AVAILABLE:
