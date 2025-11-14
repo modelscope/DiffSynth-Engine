@@ -74,9 +74,9 @@ class BasePipeline:
             component.load_state_dict(state_dict, assign=True)
             component.to(device=device, dtype=dtype, non_blocking=True)
 
-    def load_loras(
+    def _load_lora_state_dicts(
         self,
-        lora_list: List[Tuple[str, Union[float, LoraConfig]]],
+        lora_state_dict_list: List[Tuple[Dict[str, torch.Tensor], Union[float, LoraConfig], str]],
         fused: bool = True,
         save_original_weight: bool = False,
         lora_converter: Optional[LoRAStateDictConverter] = None,
@@ -84,29 +84,30 @@ class BasePipeline:
         if not lora_converter:
             lora_converter = self.lora_converter
 
-        for lora_path, lora_item in lora_list:
+        for state_dict, lora_item, lora_name in lora_state_dict_list:
             if isinstance(lora_item, float):
                 lora_scale = lora_item
                 scheduler_config = None
-            if isinstance(lora_item, LoraConfig):
+            elif isinstance(lora_item, LoraConfig):
                 lora_scale = lora_item.scale
                 scheduler_config = lora_item.scheduler_config
+            else:
+                raise ValueError(f"lora_item must be float or LoraConfig, got {type(lora_item)}")
 
-            logger.info(f"loading lora from {lora_path} with LoraConfig (scale={lora_scale})")
-            state_dict = load_file(lora_path, device=self.device)
+            logger.info(f"loading lora from state_dict '{lora_name}' with scale={lora_scale}")
 
             if scheduler_config is not None:
                 self.apply_scheduler_config(scheduler_config)
                 logger.info(f"Applied scheduler args from LoraConfig: {scheduler_config}")
 
             lora_state_dict = lora_converter.convert(state_dict)
-            for model_name, state_dict in lora_state_dict.items():
+            for model_name, model_state_dict in lora_state_dict.items():
                 model = getattr(self, model_name)
                 lora_args = []
-                for key, param in state_dict.items():
+                for key, param in model_state_dict.items():
                     lora_args.append(
                         {
-                            "name": lora_path,
+                            "name": lora_name,
                             "key": key,
                             "scale": lora_scale,
                             "rank": param["rank"],
@@ -119,6 +120,26 @@ class BasePipeline:
                         }
                     )
                 model.load_loras(lora_args, fused=fused)
+
+    def load_loras(
+        self,
+        lora_list: List[Tuple[str, Union[float, LoraConfig]]],
+        fused: bool = True,
+        save_original_weight: bool = False,
+        lora_converter: Optional[LoRAStateDictConverter] = None,
+    ):
+        lora_state_dict_list = []
+        for lora_path, lora_item in lora_list:
+            logger.info(f"loading lora from {lora_path}")
+            state_dict = load_file(lora_path, device=self.device)
+            lora_state_dict_list.append((state_dict, lora_item, lora_path))
+
+        self._load_lora_state_dicts(
+            lora_state_dict_list=lora_state_dict_list,
+            fused=fused,
+            save_original_weight=save_original_weight,
+            lora_converter=lora_converter,
+        )
 
     def load_lora(self, path: str, scale: float, fused: bool = True, save_original_weight: bool = False):
         self.load_loras([(path, scale)], fused, save_original_weight)
