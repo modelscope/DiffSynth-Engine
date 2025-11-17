@@ -38,7 +38,7 @@ class T5LayerNorm(nn.Module):
 
 
 class T5Attention(nn.Module):
-    def __init__(self, dim, dim_attn, num_heads, device, dropout=0.0):
+    def __init__(self, dim, dim_attn, num_heads, dropout=0.0, device="cuda:0"):
         assert dim_attn % num_heads == 0
         super(T5Attention, self).__init__()
         self.dim = dim
@@ -91,7 +91,7 @@ class T5Attention(nn.Module):
 
 
 class T5FeedForward(nn.Module):
-    def __init__(self, dim, dim_ffn, device, dropout=0.0):
+    def __init__(self, dim, dim_ffn, dropout=0.0, device="cuda:0"):
         super(T5FeedForward, self).__init__()
         self.dim = dim
         self.dim_ffn = dim_ffn
@@ -112,7 +112,7 @@ class T5FeedForward(nn.Module):
 
 
 class T5SelfAttention(nn.Module):
-    def __init__(self, dim, dim_attn, dim_ffn, num_heads, num_buckets, device, shared_pos=True, dropout=0.0):
+    def __init__(self, dim, dim_attn, dim_ffn, num_heads, num_buckets, shared_pos=True, dropout=0.0, device="cuda:0"):
         super(T5SelfAttention, self).__init__()
         self.dim = dim
         self.dim_attn = dim_attn
@@ -124,9 +124,9 @@ class T5SelfAttention(nn.Module):
 
         # layers
         self.norm1 = T5LayerNorm(dim)
-        self.attn = T5Attention(dim, dim_attn, num_heads, device, dropout)
+        self.attn = T5Attention(dim, dim_attn, num_heads, dropout, device)
         self.norm2 = T5LayerNorm(dim)
-        self.ffn = T5FeedForward(dim, dim_ffn, device, dropout)
+        self.ffn = T5FeedForward(dim, dim_ffn, dropout, device)
         self.pos_embedding = None if shared_pos else T5RelativeEmbedding(num_buckets, num_heads, bidirectional=True, device=device)
 
     def forward(self, x, mask=None, pos_bias=None):
@@ -137,7 +137,7 @@ class T5SelfAttention(nn.Module):
 
 
 class T5RelativeEmbedding(nn.Module):
-    def __init__(self, num_buckets, num_heads, bidirectional, device, max_dist=128):
+    def __init__(self, num_buckets, num_heads, bidirectional, max_dist=128, device="cuda:0"):
         super(T5RelativeEmbedding, self).__init__()
         self.num_buckets = num_buckets
         self.num_heads = num_heads
@@ -266,7 +266,7 @@ class WanTextEncoder(PreTrainedModel):
         self.dropout = nn.Dropout(dropout)
         self.blocks = nn.ModuleList(
             [
-                T5SelfAttention(dim, dim_attn, dim_ffn, num_heads, num_buckets, device, shared_pos, dropout)
+                T5SelfAttention(dim, dim_attn, dim_ffn, num_heads, num_buckets, shared_pos, dropout, device)
                 for _ in range(num_layers)
             ]
         )
