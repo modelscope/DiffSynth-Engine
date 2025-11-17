@@ -38,19 +38,20 @@ class T5LayerNorm(nn.Module):
 
 
 class T5Attention(nn.Module):
-    def __init__(self, dim, dim_attn, num_heads, dropout=0.0):
+    def __init__(self, dim, dim_attn, num_heads, device, dropout=0.0):
         assert dim_attn % num_heads == 0
         super(T5Attention, self).__init__()
         self.dim = dim
         self.dim_attn = dim_attn
         self.num_heads = num_heads
         self.head_dim = dim_attn // num_heads
+        self.device = device
 
         # layers
-        self.q = nn.Linear(dim, dim_attn, bias=False)
-        self.k = nn.Linear(dim, dim_attn, bias=False)
-        self.v = nn.Linear(dim, dim_attn, bias=False)
-        self.o = nn.Linear(dim_attn, dim, bias=False)
+        self.q = nn.Linear(dim, dim_attn, bias=False, device=device)
+        self.k = nn.Linear(dim, dim_attn, bias=False, device=device)
+        self.v = nn.Linear(dim, dim_attn, bias=False, device=device)
+        self.o = nn.Linear(dim_attn, dim, bias=False, device=device)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, context=None, mask=None, pos_bias=None):
@@ -90,15 +91,16 @@ class T5Attention(nn.Module):
 
 
 class T5FeedForward(nn.Module):
-    def __init__(self, dim, dim_ffn, dropout=0.0):
+    def __init__(self, dim, dim_ffn, device, dropout=0.0):
         super(T5FeedForward, self).__init__()
         self.dim = dim
         self.dim_ffn = dim_ffn
+        self.device = device
 
         # layers
-        self.gate = nn.Sequential(nn.Linear(dim, dim_ffn, bias=False), GELU())
-        self.fc1 = nn.Linear(dim, dim_ffn, bias=False)
-        self.fc2 = nn.Linear(dim_ffn, dim, bias=False)
+        self.gate = nn.Sequential(nn.Linear(dim, dim_ffn, bias=False, device=device), GELU())
+        self.fc1 = nn.Linear(dim, dim_ffn, bias=False, device=device)
+        self.fc2 = nn.Linear(dim_ffn, dim, bias=False, device=device)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
@@ -110,7 +112,7 @@ class T5FeedForward(nn.Module):
 
 
 class T5SelfAttention(nn.Module):
-    def __init__(self, dim, dim_attn, dim_ffn, num_heads, num_buckets, shared_pos=True, dropout=0.0):
+    def __init__(self, dim, dim_attn, dim_ffn, num_heads, num_buckets, device, shared_pos=True, dropout=0.0):
         super(T5SelfAttention, self).__init__()
         self.dim = dim
         self.dim_attn = dim_attn
@@ -118,13 +120,14 @@ class T5SelfAttention(nn.Module):
         self.num_heads = num_heads
         self.num_buckets = num_buckets
         self.shared_pos = shared_pos
+        self.device = device
 
         # layers
         self.norm1 = T5LayerNorm(dim)
-        self.attn = T5Attention(dim, dim_attn, num_heads, dropout)
+        self.attn = T5Attention(dim, dim_attn, num_heads, device, dropout)
         self.norm2 = T5LayerNorm(dim)
-        self.ffn = T5FeedForward(dim, dim_ffn, dropout)
-        self.pos_embedding = None if shared_pos else T5RelativeEmbedding(num_buckets, num_heads, bidirectional=True)
+        self.ffn = T5FeedForward(dim, dim_ffn, device, dropout)
+        self.pos_embedding = None if shared_pos else T5RelativeEmbedding(num_buckets, num_heads, bidirectional=True, device=device)
 
     def forward(self, x, mask=None, pos_bias=None):
         e = pos_bias if self.shared_pos else self.pos_embedding(x.size(1), x.size(1))
@@ -134,15 +137,16 @@ class T5SelfAttention(nn.Module):
 
 
 class T5RelativeEmbedding(nn.Module):
-    def __init__(self, num_buckets, num_heads, bidirectional, max_dist=128):
+    def __init__(self, num_buckets, num_heads, bidirectional, device, max_dist=128):
         super(T5RelativeEmbedding, self).__init__()
         self.num_buckets = num_buckets
         self.num_heads = num_heads
         self.bidirectional = bidirectional
         self.max_dist = max_dist
+        self.device = device
 
         # layers
-        self.embedding = nn.Embedding(num_buckets, num_heads)
+        self.embedding = nn.Embedding(num_buckets, num_heads, device=device)
 
     def forward(self, lq, lk):
         device = self.embedding.weight.device
@@ -257,12 +261,12 @@ class WanTextEncoder(PreTrainedModel):
         self.shared_pos = shared_pos
 
         # layers
-        self.token_embedding = vocab if isinstance(vocab, nn.Embedding) else nn.Embedding(vocab, dim)
-        self.pos_embedding = T5RelativeEmbedding(num_buckets, num_heads, bidirectional=True) if shared_pos else None
+        self.token_embedding = vocab if isinstance(vocab, nn.Embedding) else nn.Embedding(vocab, dim, device=device)
+        self.pos_embedding = T5RelativeEmbedding(num_buckets, num_heads, bidirectional=True, device=device) if shared_pos else None
         self.dropout = nn.Dropout(dropout)
         self.blocks = nn.ModuleList(
             [
-                T5SelfAttention(dim, dim_attn, dim_ffn, num_heads, num_buckets, shared_pos, dropout)
+                T5SelfAttention(dim, dim_attn, dim_ffn, num_heads, num_buckets, device, shared_pos, dropout)
                 for _ in range(num_layers)
             ]
         )
@@ -289,5 +293,5 @@ class WanTextEncoder(PreTrainedModel):
         model = cls(device="meta", dtype=dtype)
         model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
-        model.to(device=device, dtype=dtype, non_blocking=True)
+        model.to(device=device, dtype=dtype, non_blocking=False)
         return model

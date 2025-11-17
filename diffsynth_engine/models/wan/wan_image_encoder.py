@@ -439,7 +439,7 @@ class WanImageEncoder(PreTrainedModel):
     def __init__(self, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
         # init model
-        self.model, self.transforms = clip_xlm_roberta_vit_h_14(dtype=torch.float32, device="cpu")
+        self.model, self.transforms = clip_xlm_roberta_vit_h_14(dtype=torch.float32, device=device)
 
     def encode_image(self, images: List[torch.Tensor]):
         # preprocess
