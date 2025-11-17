@@ -293,5 +293,5 @@ class WanTextEncoder(PreTrainedModel):
         model = cls(device="meta", dtype=dtype)
         model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
-        model.to(device=device, dtype=dtype, non_blocking=False)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
