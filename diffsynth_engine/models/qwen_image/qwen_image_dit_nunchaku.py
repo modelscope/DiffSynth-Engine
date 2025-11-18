@@ -240,7 +240,7 @@ class QwenImageDiTNunchaku(QwenImageDiT):
         use_nunchaku_attn: bool = True,
         nunchaku_rank: int = 32,
     ):
-        super().__init__()
+        super().__init__(num_layers, device=device, dtype=dtype)
 
         self.pos_embed = QwenEmbedRope(theta=10000, axes_dim=[16, 56, 56], scale_rope=True, device=device)
 
