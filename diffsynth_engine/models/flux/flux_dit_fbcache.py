@@ -3,7 +3,6 @@ import numpy as np
 from typing import Any, Dict, List, Optional
 
 from diffsynth_engine.utils.gguf import gguf_inference
-from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.parallel import (
     cfg_parallel,
     cfg_parallel_unshard,
@@ -68,10 +67,8 @@ class FluxDiTFBCache(FluxDiT):
             controlnet_single_block_output if controlnet_single_block_output is not None else ()
         )
 
-        fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         use_cfg = hidden_states.shape[0] > 1
         with (
-            fp8_inference(fp8_linear_enabled),
             gguf_inference(),
             cfg_parallel(
                 (

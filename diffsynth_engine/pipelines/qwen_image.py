@@ -2,7 +2,6 @@ import json
 import torch
 import torch.distributed as dist
 import math
-import sys
 from typing import Callable, List, Dict, Tuple, Optional, Union
 from tqdm import tqdm
 from einops import rearrange
@@ -37,13 +36,11 @@ from diffsynth_engine.utils.constants import (
 )
 from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.flag import NUNCHAKU_AVAILABLE
 
 
 logger = logging.get_logger(__name__)
-
 
 
 class QwenImageLoRAConverter(LoRAStateDictConverter):
@@ -205,7 +202,7 @@ class QwenImagePipeline(BasePipeline):
             else:
                 config.use_nunchaku_attn = False
                 logger.info("Disable nunchaku attention quantization.")
-        
+
         else:
             config.use_nunchaku = False
 
@@ -318,6 +315,7 @@ class QwenImagePipeline(BasePipeline):
             elif config.use_nunchaku:
                 if not NUNCHAKU_AVAILABLE:
                     from diffsynth_engine.utils.flag import NUNCHAKU_IMPORT_ERROR
+
                     raise ImportError(NUNCHAKU_IMPORT_ERROR)
 
                 from diffsynth_engine.models.qwen_image import QwenImageDiTNunchaku
@@ -339,7 +337,7 @@ class QwenImagePipeline(BasePipeline):
                     dtype=config.model_dtype,
                 )
             if config.use_fp8_linear and not config.use_nunchaku:
-                enable_fp8_linear(dit)
+                dit.enable_fp8_linear()
 
         pipe = cls(
             config=config,

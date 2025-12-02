@@ -24,7 +24,6 @@ from diffsynth_engine.models.basic.lora import LoRAContext
 from diffsynth_engine.tokenizers import WanT5Tokenizer
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_model
-from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.image import resize_and_center_crop
 from diffsynth_engine.utils.video import read_n_frames
 from diffsynth_engine.utils.parallel import ParallelWrapper
@@ -666,7 +665,7 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
                 use_vsa=(config.dit_attn_impl.value == "vsa"),
             )
             if config.use_fp8_linear:
-                enable_fp8_linear(dit)
+                dit.enable_fp8_linear()
 
         pipe = cls(
             config=config,

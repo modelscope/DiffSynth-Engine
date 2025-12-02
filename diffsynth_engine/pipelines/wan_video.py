@@ -16,7 +16,6 @@ from diffsynth_engine.tokenizers import WanT5Tokenizer
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_model
-from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
 
@@ -594,7 +593,7 @@ class WanVideoPipeline(BasePipeline):
                 use_vsa=(config.dit_attn_impl.value == "vsa"),
             )
             if config.use_fp8_linear:
-                enable_fp8_linear(dit)
+                dit.enable_fp8_linear()
 
             dit2 = None
             if dit2_state_dict is not None:
@@ -606,7 +605,7 @@ class WanVideoPipeline(BasePipeline):
                     use_vsa=(config.dit_attn_impl.value == "vsa"),
                 )
                 if config.use_fp8_linear:
-                    enable_fp8_linear(dit2)
+                    dit2.enable_fp8_linear()
 
         pipe = cls(
             config=config,
@@ -681,8 +680,9 @@ class WanVideoPipeline(BasePipeline):
                 config.attn_params = VideoSparseAttentionParams(sparsity=0.9)
 
     def update_weights(self, state_dicts: WanStateDicts) -> None:
-        is_dual_model_state_dict = (isinstance(state_dicts.model, dict) and
-                                     ("high_noise_model" in state_dicts.model or "low_noise_model" in state_dicts.model))
+        is_dual_model_state_dict = isinstance(state_dicts.model, dict) and (
+            "high_noise_model" in state_dicts.model or "low_noise_model" in state_dicts.model
+        )
         is_dual_model_pipeline = self.dit2 is not None
 
         if is_dual_model_state_dict != is_dual_model_pipeline:
@@ -694,15 +694,21 @@ class WanVideoPipeline(BasePipeline):
 
         if is_dual_model_state_dict:
             if "high_noise_model" in state_dicts.model:
-                self.update_component(self.dit, state_dicts.model["high_noise_model"], self.config.device, self.config.model_dtype)
+                self.update_component(
+                    self.dit, state_dicts.model["high_noise_model"], self.config.device, self.config.model_dtype
+                )
             if "low_noise_model" in state_dicts.model:
-                self.update_component(self.dit2, state_dicts.model["low_noise_model"], self.config.device, self.config.model_dtype)
+                self.update_component(
+                    self.dit2, state_dicts.model["low_noise_model"], self.config.device, self.config.model_dtype
+                )
         else:
             self.update_component(self.dit, state_dicts.model, self.config.device, self.config.model_dtype)
 
         self.update_component(self.text_encoder, state_dicts.t5, self.config.device, self.config.t5_dtype)
         self.update_component(self.vae, state_dicts.vae, self.config.device, self.config.vae_dtype)
-        self.update_component(self.image_encoder, state_dicts.image_encoder, self.config.device, self.config.image_encoder_dtype)
+        self.update_component(
+            self.image_encoder, state_dicts.image_encoder, self.config.device, self.config.image_encoder_dtype
+        )
 
     def compile(self):
         self.dit.compile_repeated_blocks()

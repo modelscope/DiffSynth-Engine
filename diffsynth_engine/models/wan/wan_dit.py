@@ -9,6 +9,7 @@ from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.basic.attention import attention
 from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
+from diffsynth_engine.models.basic.lora import LoRAFP8Linear
 from diffsynth_engine.utils.constants import (
     WAN2_1_DIT_T2V_1_3B_CONFIG_FILE,
     WAN2_1_DIT_I2V_14B_CONFIG_FILE,
@@ -20,7 +21,6 @@ from diffsynth_engine.utils.constants import (
     WAN_DIT_KEYMAP_FILE,
 )
 from diffsynth_engine.utils.gguf import gguf_inference
-from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.parallel import (
     cfg_parallel,
     cfg_parallel_unshard,
@@ -386,10 +386,8 @@ class WanDiT(PreTrainedModel):
         y: Optional[torch.Tensor] = None,  # vae_encoder(img)
         attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
-        fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         use_cfg = x.shape[0] > 1
         with (
-            fp8_inference(fp8_linear_enabled),
             gguf_inference(),
             cfg_parallel((x, context, timestep, clip_feature, y), use_cfg=use_cfg),
         ):
@@ -541,3 +539,9 @@ class WanDiT(PreTrainedModel):
 
     def get_fsdp_module_cls(self):
         return {DiTBlock}
+
+    def enable_fp8_linear(self):
+        target_names = ["blocks"]
+        for name, module in self.named_modules():
+            if any([t in name for t in target_names]) and isinstance(module, nn.Linear):
+                self.set_submodule(name, LoRAFP8Linear.from_linear(module))

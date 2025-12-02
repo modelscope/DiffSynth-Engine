@@ -5,6 +5,9 @@ from typing import Union
 from collections import OrderedDict
 from contextlib import contextmanager
 
+from diffsynth_engine.models.basic.linear import fp8_linear
+from diffsynth_engine.utils.platform import DTYPE_FP8
+
 
 class LoRA(nn.Module):
     def __init__(
@@ -159,6 +162,41 @@ class LoRALinear(nn.Linear):
 
     def forward(self, x):
         w_x = super().forward(x)
+        for name, lora in self._lora_dict.items():
+            w_x += lora(x)
+        return w_x
+
+
+class LoRAFP8Linear(LoRALinear):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = True,
+        device=None,
+        dtype=None,
+        scaling: bool = True,
+    ) -> None:
+        super().__init__(in_features, out_features, bias, device, dtype)
+        self.weight.data = self.weight.data.to(DTYPE_FP8)
+        self.scaling = scaling
+
+    @staticmethod
+    def from_linear(linear: nn.Linear, scaling: bool = True):
+        lora_linear = LoRAFP8Linear(
+            linear.in_features,
+            linear.out_features,
+            linear.bias is not None,
+            device="meta",
+            dtype=linear.weight.dtype,
+            scaling=scaling,
+        ).to_empty(device=linear.weight.device)
+        lora_linear.weight.data = linear.weight.data.to(DTYPE_FP8)
+        lora_linear.bias = linear.bias
+        return lora_linear
+
+    def forward(self, x):
+        w_x = fp8_linear(x, self.weight, self.bias, self.scaling)  # only use fp8 linear for base layer
         for name, lora in self._lora_dict.items():
             w_x += lora(x)
         return w_x

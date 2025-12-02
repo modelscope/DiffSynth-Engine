@@ -12,6 +12,8 @@ if torch.version.hip and "gfx94" in torch.cuda.get_device_properties(0).gcnArchN
 else:
     DTYPE_FP8 = torch.float8_e4m3fn
 
+FP8_MAX = torch.finfo(DTYPE_FP8).max
+
 
 def empty_cache():
     gc.collect()

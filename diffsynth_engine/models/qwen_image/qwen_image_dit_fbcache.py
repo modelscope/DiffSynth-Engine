@@ -3,7 +3,6 @@ from typing import Any, Dict, Optional
 
 from diffsynth_engine.models.qwen_image import QwenImageDiT
 from diffsynth_engine.utils.gguf import gguf_inference
-from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.parallel import cfg_parallel, cfg_parallel_unshard
 
 
@@ -45,10 +44,8 @@ class QwenImageDiTFBCache(QwenImageDiT):
         attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
         h, w = image.shape[-2:]
-        fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         use_cfg = image.shape[0] > 1
         with (
-            fp8_inference(fp8_linear_enabled),
             gguf_inference(),
             cfg_parallel(
                 (
