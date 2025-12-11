@@ -145,7 +145,7 @@ class BasePipeline:
         self.load_loras([(path, scale)], fused, save_original_weight)
 
     def apply_scheduler_config(self, scheduler_config: Dict):
-        pass
+        self.noise_scheduler.update_config(scheduler_config)
 
     def unload_loras(self):
         raise NotImplementedError()

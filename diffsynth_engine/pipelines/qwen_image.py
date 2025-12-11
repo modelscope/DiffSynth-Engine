@@ -2,7 +2,6 @@ import json
 import torch
 import torch.distributed as dist
 import math
-import sys
 from typing import Callable, List, Dict, Tuple, Optional, Union
 from tqdm import tqdm
 from einops import rearrange
@@ -43,7 +42,6 @@ from diffsynth_engine.utils.flag import NUNCHAKU_AVAILABLE
 
 
 logger = logging.get_logger(__name__)
-
 
 
 class QwenImageLoRAConverter(LoRAStateDictConverter):
@@ -205,7 +203,7 @@ class QwenImagePipeline(BasePipeline):
             else:
                 config.use_nunchaku_attn = False
                 logger.info("Disable nunchaku attention quantization.")
-        
+
         else:
             config.use_nunchaku = False
 
@@ -318,6 +316,7 @@ class QwenImagePipeline(BasePipeline):
             elif config.use_nunchaku:
                 if not NUNCHAKU_AVAILABLE:
                     from diffsynth_engine.utils.flag import NUNCHAKU_IMPORT_ERROR
+
                     raise ImportError(NUNCHAKU_IMPORT_ERROR)
 
                 from diffsynth_engine.models.qwen_image import QwenImageDiTNunchaku
@@ -392,9 +391,6 @@ class QwenImagePipeline(BasePipeline):
     def unload_loras(self):
         self.dit.unload_loras()
         self.noise_scheduler.restore_config()
-
-    def apply_scheduler_config(self, scheduler_config: Dict):
-        self.noise_scheduler.update_config(scheduler_config)
 
     def prepare_latents(
         self,

@@ -43,6 +43,24 @@ class WanLoRAConverter(LoRAStateDictConverter):
             dit_dict[key] = lora_args
         return {"dit": dit_dict}
 
+    def _from_diffusers(self, state_dict):
+        dit_dict = {}
+        for key, param in state_dict.items():
+            if ".lora_down.weight" not in key:
+                continue
+
+            lora_args = {}
+            lora_args["up"] = state_dict[key.replace(".lora_down.weight", ".lora_up.weight")]
+            lora_args["down"] = param
+            lora_args["rank"] = lora_args["up"].shape[1]
+            if key.replace(".lora_down.weight", ".alpha") in state_dict:
+                lora_args["alpha"] = state_dict[key.replace(".lora_down.weight", ".alpha")]
+            else:
+                lora_args["alpha"] = lora_args["rank"]
+            key = key.replace("diffusion_model.", "").replace(".lora_down.weight", "")
+            dit_dict[key] = lora_args
+        return {"dit": dit_dict}
+
     def _from_civitai(self, state_dict):
         dit_dict = {}
         for key, param in state_dict.items():
@@ -86,6 +104,9 @@ class WanLoRAConverter(LoRAStateDictConverter):
         if "lora_unet_blocks_0_cross_attn_k.lora_down.weight" in state_dict:
             state_dict = self._from_fun(state_dict)
             logger.info("use fun format state dict")
+        elif "diffusion_model.blocks.0.cross_attn.k.lora_down.weight" in state_dict:
+            state_dict = self._from_diffusers(state_dict)
+            logger.info("use diffusers format state dict")
         elif "diffusion_model.blocks.0.cross_attn.k.lora_A.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")
@@ -681,8 +702,9 @@ class WanVideoPipeline(BasePipeline):
                 config.attn_params = VideoSparseAttentionParams(sparsity=0.9)
 
     def update_weights(self, state_dicts: WanStateDicts) -> None:
-        is_dual_model_state_dict = (isinstance(state_dicts.model, dict) and
-                                     ("high_noise_model" in state_dicts.model or "low_noise_model" in state_dicts.model))
+        is_dual_model_state_dict = isinstance(state_dicts.model, dict) and (
+            "high_noise_model" in state_dicts.model or "low_noise_model" in state_dicts.model
+        )
         is_dual_model_pipeline = self.dit2 is not None
 
         if is_dual_model_state_dict != is_dual_model_pipeline:
@@ -694,15 +716,21 @@ class WanVideoPipeline(BasePipeline):
 
         if is_dual_model_state_dict:
             if "high_noise_model" in state_dicts.model:
-                self.update_component(self.dit, state_dicts.model["high_noise_model"], self.config.device, self.config.model_dtype)
+                self.update_component(
+                    self.dit, state_dicts.model["high_noise_model"], self.config.device, self.config.model_dtype
+                )
             if "low_noise_model" in state_dicts.model:
-                self.update_component(self.dit2, state_dicts.model["low_noise_model"], self.config.device, self.config.model_dtype)
+                self.update_component(
+                    self.dit2, state_dicts.model["low_noise_model"], self.config.device, self.config.model_dtype
+                )
         else:
             self.update_component(self.dit, state_dicts.model, self.config.device, self.config.model_dtype)
 
         self.update_component(self.text_encoder, state_dicts.t5, self.config.device, self.config.t5_dtype)
         self.update_component(self.vae, state_dicts.vae, self.config.device, self.config.vae_dtype)
-        self.update_component(self.image_encoder, state_dicts.image_encoder, self.config.device, self.config.image_encoder_dtype)
+        self.update_component(
+            self.image_encoder, state_dicts.image_encoder, self.config.device, self.config.image_encoder_dtype
+        )
 
     def compile(self):
         self.dit.compile_repeated_blocks()
