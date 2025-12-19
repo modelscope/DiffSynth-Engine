@@ -130,7 +130,7 @@ class Wav2Vec2Attention(nn.Module):
         q = rearrange(q, "b s (h d) -> b s h d", h=self.num_heads).contiguous()
         k = rearrange(k, "b s (h d) -> b s h d", h=self.num_heads).contiguous()
         v = rearrange(v, "b s (h d) -> b s h d", h=self.num_heads).contiguous()
-        attn_output = attention_ops.attention(q=q, k=k, v=v)
+        attn_output = attention_ops.attention(q=q, k=k, v=v, attn_impl="sdpa")
         attn_output = rearrange(attn_output, "b s h d -> b s (h d)").contiguous()
         attn_output = self.out_proj(attn_output)
         return attn_output
