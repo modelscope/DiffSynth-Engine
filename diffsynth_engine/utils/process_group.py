@@ -20,7 +20,7 @@ class Singleton:
 
 class ProcessGroupSingleton(Singleton):
     def __init__(self):
-        if not hasattr(self, 'initialized'):
+        if not hasattr(self, "initialized"):
             self.CFG_GROUP: Optional[dist.ProcessGroup] = None
             self.SP_GROUP: Optional[dist.ProcessGroup] = None
             self.SP_ULYSSUES_GROUP: Optional[dist.ProcessGroup] = None

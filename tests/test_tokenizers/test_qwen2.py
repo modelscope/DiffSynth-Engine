@@ -1,7 +1,7 @@
 import torch
 
 from diffsynth_engine.tokenizers.qwen2 import Qwen2TokenizerFast
-from diffsynth_engine.utils.constants import QWEN_IMAGE_TOKENIZER_CONF_PATH
+from diffsynth_engine.utils.constants import QWEN_IMAGE_TOKENIZER_CONF_PATH, Z_IMAGE_TOKENIZER_CONF_PATH
 from tests.common.test_case import TestCase
 
 
@@ -9,6 +9,7 @@ class TestQwen2TokenizerFast(TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tokenizer = Qwen2TokenizerFast.from_pretrained(QWEN_IMAGE_TOKENIZER_CONF_PATH)
+        cls.z_image_tokenizer = Qwen2TokenizerFast.from_pretrained(Z_IMAGE_TOKENIZER_CONF_PATH)
 
     # TODO: fix
     def test_tokenize(self):
@@ -270,3 +271,12 @@ Cross-Platform Support: Runnable on Windows, macOS (Apple Silicon), and Linux, e
             self.assertEqual(shape, result.shape)
             truncated = result[:, : expected.shape[1]]
             self.assertTrue(torch.equal(expected, truncated))
+
+    def test_z_image(self):
+        expects = self.get_input_tensor("z_image/z_image_text_encoder.safetensors")
+        prompt = [
+            "<|im_start|>user\nYoung Chinese woman in red Hanfu, intricate embroidery. Impeccable makeup, red floral forehead pattern. Elaborate high bun, golden phoenix headdress, red flowers, beads. Holds round folding fan with lady, trees, bird. Neon lightning-bolt lamp (⚡️), bright yellow glow, above extended left palm. Soft-lit outdoor night background, silhouetted tiered pagoda (西安大雁塔), blurred colorful distant lights.<|im_end|>\n<|im_start|>assistant\n"
+        ]
+        result = self.z_image_tokenizer(prompt, max_length=512, padding_side="right", padding_strategy="max_length")
+        self.assertTrue(torch.equal(expects["text_input_ids"], result["input_ids"]))
+        self.assertTrue(torch.equal(expects["prompt_masks"], result["attention_mask"]))

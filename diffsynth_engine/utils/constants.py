@@ -14,6 +14,7 @@ SDXL_TOKENIZER_2_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "sdxl", "toke
 WAN_TOKENIZER_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "wan", "umt5-xxl")
 QWEN_IMAGE_TOKENIZER_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "qwen_image", "tokenizer")
 QWEN_IMAGE_PROCESSOR_CONFIG_FILE = os.path.join(CONF_PATH, "tokenizers", "qwen_image", "qwen2_vl_image_processor.json")
+Z_IMAGE_TOKENIZER_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "z_image", "tokenizer")
 
 # models
 VAE_CONFIG_FILE = os.path.join(CONF_PATH, "models", "components", "vae.json")
@@ -45,6 +46,8 @@ QWEN_IMAGE_CONFIG_FILE = os.path.join(CONF_PATH, "models", "qwen_image", "qwen2_
 QWEN_IMAGE_VISION_CONFIG_FILE = os.path.join(CONF_PATH, "models", "qwen_image", "qwen2_5_vl_vision_config.json")
 QWEN_IMAGE_VAE_CONFIG_FILE = os.path.join(CONF_PATH, "models", "qwen_image", "qwen_image_vae.json")
 QWEN_IMAGE_VAE_KEYMAP_FILE = os.path.join(CONF_PATH, "models", "qwen_image", "qwen_image_vae_keymap.json")
+
+Z_IMAGE_TEXT_ENCODER_CONFIG_FILE = os.path.join(CONF_PATH, "models", "z_image", "qwen3_config.json")
 
 # data size
 KB = 1024

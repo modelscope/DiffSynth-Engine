@@ -299,6 +299,42 @@ class HunyuanPipelineConfig(BaseConfig):
 
 
 @dataclass
+class ZImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, BaseConfig):
+    model_path: str | os.PathLike | List[str | os.PathLike]
+    model_dtype: torch.dtype = torch.float16
+    vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    vae_dtype: torch.dtype = torch.float16
+    encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    encoder_dtype: torch.dtype = torch.float16
+
+    @classmethod
+    def basic_config(
+        cls,
+        model_path: str | os.PathLike | List[str | os.PathLike],
+        encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None,
+        vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None,
+        device: str = "cuda",
+        parallelism: int = 1,
+        offload_mode: Optional[str] = None,
+        offload_to_disk: bool = False,
+    ) -> "ZImagePipelineConfig":
+        return cls(
+            model_path=model_path,
+            device=device,
+            encoder_path=encoder_path,
+            vae_path=vae_path,
+            parallelism=parallelism,
+            use_cfg_parallel=True if parallelism > 1 else False,
+            use_fsdp=True if parallelism > 1 else False,
+            offload_mode=offload_mode,
+            offload_to_disk=offload_to_disk,
+        )
+
+    def __post_init__(self):
+        init_parallel_config(self)
+
+
+@dataclass
 class BaseStateDicts:
     pass
 
@@ -344,6 +380,13 @@ class WanS2VStateDicts:
 
 @dataclass
 class QwenImageStateDicts:
+    model: Dict[str, torch.Tensor]
+    encoder: Dict[str, torch.Tensor]
+    vae: Dict[str, torch.Tensor]
+
+
+@dataclass
+class ZImageStateDicts:
     model: Dict[str, torch.Tensor]
     encoder: Dict[str, torch.Tensor]
     vae: Dict[str, torch.Tensor]

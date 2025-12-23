@@ -6,6 +6,7 @@ from .wan_video import WanVideoPipeline
 from .wan_s2v import WanSpeech2VideoPipeline
 from .qwen_image import QwenImagePipeline
 from .hunyuan3d_shape import Hunyuan3DShapePipeline
+from .z_image import ZImagePipeline
 
 __all__ = [
     "BasePipeline",
@@ -17,4 +18,5 @@ __all__ = [
     "WanSpeech2VideoPipeline",
     "QwenImagePipeline",
     "Hunyuan3DShapePipeline",
+    "ZImagePipeline",
 ]
