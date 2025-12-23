@@ -94,6 +94,7 @@ if SPARGE_ATTN_AVAILABLE:
         )
         return out.transpose(1, 2)
 
+
 if AITER_AVAILABLE:
     from aiter import flash_attn_func as aiter_flash_attn
     from aiter import flash_attn_fp8_pertensor_func as aiter_flash_attn_fp8
@@ -203,7 +204,7 @@ def attention(
                 )
             if attn_mask is not None:
                 raise RuntimeError("aiter_flash_attn does not support attention mask")
-            if attn_impl == "aiter" :
+            if attn_impl == "aiter":
                 return aiter_flash_attn(q, k, v, softmax_scale=scale)
             else:
                 origin_dtype = q.dtype
@@ -211,7 +212,7 @@ def attention(
                 k = k.to(dtype=DTYPE_FP8)
                 v = v.to(dtype=DTYPE_FP8)
                 out = aiter_flash_attn_fp8(q, k, v, softmax_scale=scale)
-                return out.to(dtype=origin_dtype) 
+                return out.to(dtype=origin_dtype)
         if attn_impl == "fa2":
             return flash_attn2(q, k, v, softmax_scale=scale)
         if attn_impl == "xformers":

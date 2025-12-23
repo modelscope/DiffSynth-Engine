@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from typing import Any, Dict, List, Tuple, Union, Optional
 from einops import rearrange
+from math import prod
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.basic import attention as attention_ops
@@ -243,6 +244,7 @@ class QwenImageTransformerBlock(nn.Module):
         num_attention_heads: int,
         attention_head_dim: int,
         eps: float = 1e-6,
+        zero_cond_t: bool = False,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -275,10 +277,30 @@ class QwenImageTransformerBlock(nn.Module):
         self.txt_norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps, device=device, dtype=dtype)
         self.txt_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps, device=device, dtype=dtype)
         self.txt_mlp = QwenFeedForward(dim=dim, dim_out=dim, device=device, dtype=dtype)
+        self.zero_cond_t = zero_cond_t
 
-    def _modulate(self, x, mod_params):
+    def _modulate(self, x, mod_params, index=None):
         shift, scale, gate = mod_params.chunk(3, dim=-1)
-        return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1), gate.unsqueeze(1)
+        if index is not None:
+            actual_batch = shift.size(0) // 2
+            shift_0, shift_1 = shift[:actual_batch], shift[actual_batch:]
+            scale_0, scale_1 = scale[:actual_batch], scale[actual_batch:]
+            gate_0, gate_1 = gate[:actual_batch], gate[actual_batch:]
+            index_expanded = index.unsqueeze(-1)
+            shift_0_exp = shift_0.unsqueeze(1)
+            shift_1_exp = shift_1.unsqueeze(1)
+            scale_0_exp = scale_0.unsqueeze(1)
+            scale_1_exp = scale_1.unsqueeze(1)
+            gate_0_exp = gate_0.unsqueeze(1)
+            gate_1_exp = gate_1.unsqueeze(1)
+            shift_result = torch.where(index_expanded == 0, shift_0_exp, shift_1_exp)
+            scale_result = torch.where(index_expanded == 0, scale_0_exp, scale_1_exp)
+            gate_result = torch.where(index_expanded == 0, gate_0_exp, gate_1_exp)
+        else:
+            shift_result = shift.unsqueeze(1)
+            scale_result = scale.unsqueeze(1)
+            gate_result = gate.unsqueeze(1)
+        return x * (1 + scale_result) + shift_result, gate_result
 
     def forward(
         self,
@@ -288,12 +310,15 @@ class QwenImageTransformerBlock(nn.Module):
         rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attn_mask: Optional[torch.Tensor] = None,
         attn_kwargs: Optional[Dict[str, Any]] = None,
+        modulate_index: Optional[List[int]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         img_mod_attn, img_mod_mlp = self.img_mod(temb).chunk(2, dim=-1)  # [B, 3*dim] each
+        if self.zero_cond_t:
+            temb = torch.chunk(temb, 2, dim=0)[0]
         txt_mod_attn, txt_mod_mlp = self.txt_mod(temb).chunk(2, dim=-1)  # [B, 3*dim] each
 
         img_normed = self.img_norm1(image)
-        img_modulated, img_gate = self._modulate(img_normed, img_mod_attn)
+        img_modulated, img_gate = self._modulate(img_normed, img_mod_attn, modulate_index)
 
         txt_normed = self.txt_norm1(text)
         txt_modulated, txt_gate = self._modulate(txt_normed, txt_mod_attn)
@@ -305,12 +330,11 @@ class QwenImageTransformerBlock(nn.Module):
             attn_mask=attn_mask,
             attn_kwargs=attn_kwargs,
         )
-
         image = image + img_gate * img_attn_out
         text = text + txt_gate * txt_attn_out
 
         img_normed_2 = self.img_norm2(image)
-        img_modulated_2, img_gate_2 = self._modulate(img_normed_2, img_mod_mlp)
+        img_modulated_2, img_gate_2 = self._modulate(img_normed_2, img_mod_mlp, modulate_index)
 
         txt_normed_2 = self.txt_norm2(text)
         txt_modulated_2, txt_gate_2 = self._modulate(txt_normed_2, txt_mod_mlp)
@@ -331,6 +355,7 @@ class QwenImageDiT(PreTrainedModel):
     def __init__(
         self,
         num_layers: int = 60,
+        zero_cond_t: bool = False,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -351,6 +376,7 @@ class QwenImageDiT(PreTrainedModel):
                     dim=3072,
                     num_attention_heads=24,
                     attention_head_dim=128,
+                    zero_cond_t=zero_cond_t,
                     device=device,
                     dtype=dtype,
                 )
@@ -359,6 +385,7 @@ class QwenImageDiT(PreTrainedModel):
         )
         self.norm_out = AdaLayerNorm(3072, device=device, dtype=dtype)
         self.proj_out = nn.Linear(3072, 64, device=device, dtype=dtype)
+        self.zero_cond_t = zero_cond_t
 
     def patchify(self, hidden_states):
         hidden_states = rearrange(hidden_states, "B C (H P) (W Q) -> B (H W) (C P Q)", P=2, Q=2)
@@ -461,6 +488,9 @@ class QwenImageDiT(PreTrainedModel):
                 use_cfg=use_cfg,
             ),
         ):
+            if self.zero_cond_t:
+                timestep = torch.cat([timestep, timestep * 0], dim=0)
+            modulate_index = None
             conditioning = self.time_text_embed(timestep, image.dtype)
             video_fhw = [(1, h // 2, w // 2)]  # frame, height, width
             text_seq_len = text_seq_lens.max().item()
@@ -478,7 +508,12 @@ class QwenImageDiT(PreTrainedModel):
                     img = self.patchify(img)
                     image = torch.cat([image, img], dim=1)
                     video_fhw += [(1, edit_h // 2, edit_w // 2)]
-
+            if self.zero_cond_t:
+                modulate_index = torch.tensor(
+                    [[0] * prod(sample[0]) + [1] * sum([prod(s) for s in sample[1:]]) for sample in [video_fhw]],
+                    device=timestep.device,
+                    dtype=torch.int,
+                )
             rotary_emb = self.pos_embed(video_fhw, text_seq_len, image.device)
 
             image = self.img_in(image)
@@ -510,7 +545,10 @@ class QwenImageDiT(PreTrainedModel):
                         rotary_emb=rotary_emb,
                         attn_mask=attn_mask,
                         attn_kwargs=attn_kwargs,
+                        modulate_index=modulate_index,
                     )
+                if self.zero_cond_t:
+                    conditioning = conditioning.chunk(2, dim=0)[0]
                 image = self.norm_out(image, conditioning)
                 image = self.proj_out(image)
                 (image,) = sequence_parallel_unshard((image,), seq_dims=(1,), seq_lens=(image_seq_len,))
@@ -527,8 +565,9 @@ class QwenImageDiT(PreTrainedModel):
         device: str,
         dtype: torch.dtype,
         num_layers: int = 60,
+        use_zero_cond_t: bool = False,
     ):
-        model = cls(device="meta", dtype=dtype, num_layers=num_layers)
+        model = cls(device="meta", dtype=dtype, num_layers=num_layers, zero_cond_t=use_zero_cond_t)
         model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)

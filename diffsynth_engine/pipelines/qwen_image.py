@@ -2,7 +2,6 @@ import json
 import torch
 import torch.distributed as dist
 import math
-import sys
 from typing import Callable, List, Dict, Tuple, Optional, Union
 from tqdm import tqdm
 from einops import rearrange
@@ -43,7 +42,6 @@ from diffsynth_engine.utils.flag import NUNCHAKU_AVAILABLE
 
 
 logger = logging.get_logger(__name__)
-
 
 
 class QwenImageLoRAConverter(LoRAStateDictConverter):
@@ -205,7 +203,7 @@ class QwenImagePipeline(BasePipeline):
             else:
                 config.use_nunchaku_attn = False
                 logger.info("Disable nunchaku attention quantization.")
-        
+
         else:
             config.use_nunchaku = False
 
@@ -318,6 +316,7 @@ class QwenImagePipeline(BasePipeline):
             elif config.use_nunchaku:
                 if not NUNCHAKU_AVAILABLE:
                     from diffsynth_engine.utils.flag import NUNCHAKU_IMPORT_ERROR
+
                     raise ImportError(NUNCHAKU_IMPORT_ERROR)
 
                 from diffsynth_engine.models.qwen_image import QwenImageDiTNunchaku
@@ -337,6 +336,7 @@ class QwenImagePipeline(BasePipeline):
                     state_dicts.model,
                     device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
+                    use_zero_cond_t=config.use_zero_cond_t,
                 )
             if config.use_fp8_linear and not config.use_nunchaku:
                 enable_fp8_linear(dit)
@@ -704,7 +704,7 @@ class QwenImagePipeline(BasePipeline):
 
         context_latents = None
         for param in controlnet_params:
-            self.load_lora(param.model, param.scale, fused=False, save_original_weight=False)
+            self.load_lora(param.model, param.scale, fused=True, save_original_weight=False)
             if param.control_type == QwenImageControlType.in_context:
                 width, height = param.image.size
                 self.validate_image_size(height, width, minimum=64, multiple_of=16)

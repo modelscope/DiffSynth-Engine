@@ -251,11 +251,14 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
     # override OptimizationConfig
     fbcache_relative_l1_threshold = 0.009
 
-    # svd 
-    use_nunchaku: Optional[bool] = field(default=None, init=False) 
-    use_nunchaku_awq: Optional[bool] = field(default=None, init=False) 
-    use_nunchaku_attn: Optional[bool] = field(default=None, init=False) 
-    
+    # svd
+    use_nunchaku: Optional[bool] = field(default=None, init=False)
+    use_nunchaku_awq: Optional[bool] = field(default=None, init=False)
+    use_nunchaku_attn: Optional[bool] = field(default=None, init=False)
+
+    # for 2511
+    use_zero_cond_t: bool = False
+
     @classmethod
     def basic_config(
         cls,
@@ -266,6 +269,7 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
         parallelism: int = 1,
         offload_mode: Optional[str] = None,
         offload_to_disk: bool = False,
+        use_zero_cond_t: bool = False,
     ) -> "QwenImagePipelineConfig":
         return cls(
             model_path=model_path,
@@ -277,6 +281,7 @@ class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfi
             use_fsdp=True if parallelism > 1 else False,
             offload_mode=offload_mode,
             offload_to_disk=offload_to_disk,
+            use_zero_cond_t=use_zero_cond_t,
         )
 
     def __post_init__(self):
