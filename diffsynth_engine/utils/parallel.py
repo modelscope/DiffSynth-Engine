@@ -26,22 +26,9 @@ from diffsynth_engine.utils.process_group import (
     get_cfg_group,
     get_cfg_world_size,
     get_cfg_rank,
-    get_cfg_ranks,
     get_sp_group,
     get_sp_world_size,
     get_sp_rank,
-    get_sp_ranks,
-    get_sp_ulysses_group,
-    get_sp_ulysses_world_size,
-    get_sp_ulysses_rank,
-    get_sp_ulysses_ranks,
-    get_sp_ring_group,
-    get_sp_ring_world_size,
-    get_sp_ring_rank,
-    get_sp_ring_ranks,
-    get_tp_group,
-    get_tp_world_size,
-    get_tp_rank,
     get_tp_ranks,
 )
 
@@ -468,6 +455,35 @@ def sequence_parallel(
         tensor.copy_(original_tensor)
 
     attention_ops.attention = origin_attention
+
+
+def sequence_parallel_shard(
+    tensors: List[torch.Tensor] | None = None,
+    seq_dims: List[int] | None = None,
+):
+    if get_sp_world_size() == 1:
+        return tensors
+
+    tensors = [] if tensors is None else tensors
+    seq_dims = [] if seq_dims is None else seq_dims
+    assert len(tensors) == len(seq_dims), "tensors and seq_dims must have the same number of elements"
+
+    sharded_tensors = []
+    for tensor, seq_dim in zip(tensors, seq_dims):
+        if tensor is None:
+            continue
+        # pad seq_len to multiple of sp_world_size
+        # TODO: long_context_attention does not support attn_mask, may cause loss of numerical precision with padding
+        seq_len = tensor.size(seq_dim)
+        pad_len = math.ceil(seq_len / get_sp_world_size()) * get_sp_world_size() - seq_len
+        padding = [0] * (2 * tensor.ndim)
+        padding[-2 * seq_dim - 1] = pad_len
+        padded_tensor = F.pad(tensor, padding)
+
+        chunks = torch.chunk(padded_tensor, get_sp_world_size(), dim=seq_dim)
+        chunk = chunks[get_sp_rank()]
+        sharded_tensors.append(chunk)
+    return sharded_tensors
 
 
 def sequence_parallel_unshard(

@@ -23,6 +23,7 @@ from diffsynth_engine.utils.parallel import (
     cfg_parallel,
     cfg_parallel_unshard,
     sequence_parallel,
+    sequence_parallel_shard,
     sequence_parallel_unshard,
 )
 
@@ -460,6 +461,7 @@ class WanS2VDiT(WanDiT):
                 motion_latents=motion_latents,
                 drop_motion_frames=drop_motion_frames,
             )
+            ref_seq_len = x.shape[1] - x_seq_len
 
             # f must be divisible by ulysses world size
             x_img, freqs_img = x[:, :x_seq_len], freqs[:, :x_seq_len]
@@ -468,31 +470,33 @@ class WanS2VDiT(WanDiT):
                 tensors=(
                     x_img,
                     freqs_img,
-                    audio_emb_global,
-                    merged_audio_emb,
-                    audio_mask,
-                    void_audio_emb_global,
-                    void_merged_audio_emb,
+                    x_ref_motion,
+                    freqs_ref_motion,
                 ),
-                seq_dims=(1, 1, 1, 1, 1, 1, 1),
+                seq_dims=(1, 1, 1, 1),
             ):
-                x_seq_len_local = x_img.shape[1]
+                local_seq_len = x_img.shape[1]
                 x = torch.concat([x_img, x_ref_motion], dim=1)
                 freqs = torch.concat([freqs_img, freqs_ref_motion], dim=1)
                 for idx, block in enumerate(self.blocks):
                     x = block(
                         x=x,
-                        x_seq_len=x_seq_len_local,
+                        x_seq_len=local_seq_len,
                         context=context,
                         t_mod=t_mod,
                         t_mod_0=t_mod_0,
                         freqs=freqs,
                         attn_kwargs=attn_kwargs,
                     )
+                    x_img, x_ref_motion = x[:, :local_seq_len], x[:, local_seq_len:]
+                    (x_img, x_ref_motion) = sequence_parallel_unshard(
+                        (x_img, x_ref_motion), seq_dims=(1, 1), seq_lens=(x_seq_len, ref_seq_len)
+                    )
+                    x = torch.concat([x_img, x_ref_motion], dim=1)
                     if idx in self.audio_injector.injected_block_id.keys():
                         x = self.inject_audio(
                             x=x,
-                            x_seq_len=x_seq_len_local,
+                            x_seq_len=x_seq_len,
                             block_idx=idx,
                             audio_emb_global=audio_emb_global,
                             merged_audio_emb=merged_audio_emb,
@@ -500,10 +504,13 @@ class WanS2VDiT(WanDiT):
                             void_audio_emb_global=void_audio_emb_global,
                             void_merged_audio_emb=void_merged_audio_emb,
                         )
+                    if idx < len(self.blocks) - 1:
+                        x_img, x_ref_motion = x[:, :x_seq_len], x[:, x_seq_len:]
+                        (x_img, x_ref_motion) = sequence_parallel_shard((x_img, x_ref_motion), seq_dims=(1, 1))
+                        x = torch.concat([x_img, x_ref_motion], dim=1)
 
-                x = x[:, :x_seq_len_local]
+                x = x[:, :x_seq_len]
                 x = self.head(x, t)
-                (x,) = sequence_parallel_unshard((x,), seq_dims=(1,), seq_lens=(x_seq_len,))
             x = self.unpatchify(x, (f, h, w))
             (x,) = cfg_parallel_unshard((x,), use_cfg=use_cfg)
             return x
