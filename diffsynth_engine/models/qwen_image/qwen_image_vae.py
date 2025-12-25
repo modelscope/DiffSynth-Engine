@@ -680,7 +680,7 @@ class VideoVAE(nn.Module):
         x_recon = self.decode(z)
         return x_recon, mu, log_var
 
-    def encode(self, x, scale):
+    def encode(self, x, scale=None):
         feat_cache = {}
         x = patchify(x, patch_size=2 if self.in_channels == 12 else 1)
         t = x.shape[2]
@@ -695,12 +695,13 @@ class VideoVAE(nn.Module):
                 )
                 out = torch.cat([out, out_], 2)
         mu, log_var = self.conv1(out).chunk(2, dim=1)
-        if isinstance(scale[0], torch.Tensor):
-            scale = [s.to(dtype=mu.dtype, device=mu.device) for s in scale]
-            mu = (mu - scale[0].view(1, self.z_dim, 1, 1, 1)) * scale[1].view(1, self.z_dim, 1, 1, 1)
-        else:
-            scale = scale.to(dtype=mu.dtype, device=mu.device)
-            mu = (mu - scale[0]) * scale[1]
+        if scale is not None:
+            if isinstance(scale[0], torch.Tensor):
+                scale = [s.to(dtype=mu.dtype, device=mu.device) for s in scale]
+                mu = (mu - scale[0].view(1, self.z_dim, 1, 1, 1)) * scale[1].view(1, self.z_dim, 1, 1, 1)
+            else:
+                scale = scale.to(dtype=mu.dtype, device=mu.device)
+                mu = (mu - scale[0]) * scale[1]
         return mu
 
     def decode(self, z, scale):
@@ -988,7 +989,12 @@ class QwenImageVAE(PreTrainedModel):
             if dist.is_initialized() and (i % dist.get_world_size() != dist.get_rank()):
                 continue
             hidden_states_batch = video[:, :, :, h:h_, w:w_].to(computation_device)
-            hidden_states_batch = self.model.encode(hidden_states_batch, self.scale).to(data_device)
+            # Get unscaled latents
+            hidden_states_batch = self.model.encode(hidden_states_batch, scale=None)
+            # Apply scaling with the same formula as diffusers: (mu - mean) / std
+            latents_mean = self.mean.view(1, self.z_dim, 1, 1, 1).to(hidden_states_batch.device, hidden_states_batch.dtype)
+            latents_std = self.std.view(1, self.z_dim, 1, 1, 1).to(hidden_states_batch.device, hidden_states_batch.dtype)
+            hidden_states_batch = ((hidden_states_batch - latents_mean) / latents_std).to(data_device)
 
             mask = self.build_mask(
                 hidden_states_batch,
@@ -1028,7 +1034,12 @@ class QwenImageVAE(PreTrainedModel):
 
     def single_encode(self, video, device, progress_callback=None):
         video = video.to(device)
-        x = self.model.encode(video, self.scale)
+        # Get unscaled latents
+        x = self.model.encode(video, scale=None)
+        # Apply scaling with the same formula as diffusers: (mu - mean) / std
+        latents_mean = self.mean.view(1, self.z_dim, 1, 1, 1).to(x.device, x.dtype)
+        latents_std = self.std.view(1, self.z_dim, 1, 1, 1).to(x.device, x.dtype)
+        x = (x - latents_mean) / latents_std
         if progress_callback is not None:
             progress_callback(1, 1, "VAE ENCODING")
         return x.float()

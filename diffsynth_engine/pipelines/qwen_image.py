@@ -799,6 +799,8 @@ class QwenImagePipeline(BasePipeline):
             )[0],
             "C B H W -> B C H W",
         )
+        import time
+        start = time.perf_counter()
         image = self.vae_output_to_image(vae_output)
         # Offload all models
         self.model_lifecycle_finish(["vae"])
