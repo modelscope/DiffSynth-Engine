@@ -286,16 +286,15 @@ class QwenImageTransformerBlock(nn.Module):
             shift_0, shift_1 = shift[:actual_batch], shift[actual_batch:]
             scale_0, scale_1 = scale[:actual_batch], scale[actual_batch:]
             gate_0, gate_1 = gate[:actual_batch], gate[actual_batch:]
-            index_expanded = index.unsqueeze(-1)
             shift_0_exp = shift_0.unsqueeze(1)
             shift_1_exp = shift_1.unsqueeze(1)
             scale_0_exp = scale_0.unsqueeze(1)
             scale_1_exp = scale_1.unsqueeze(1)
             gate_0_exp = gate_0.unsqueeze(1)
             gate_1_exp = gate_1.unsqueeze(1)
-            shift_result = torch.where(index_expanded == 0, shift_0_exp, shift_1_exp)
-            scale_result = torch.where(index_expanded == 0, scale_0_exp, scale_1_exp)
-            gate_result = torch.where(index_expanded == 0, gate_0_exp, gate_1_exp)
+            shift_result = torch.where(index == 0, shift_0_exp, shift_1_exp)
+            scale_result = torch.where(index == 0, scale_0_exp, scale_1_exp)
+            gate_result = torch.where(index == 0, gate_0_exp, gate_1_exp)
         else:
             shift_result = shift.unsqueeze(1)
             scale_result = scale.unsqueeze(1)
@@ -514,6 +513,7 @@ class QwenImageDiT(PreTrainedModel):
                     device=timestep.device,
                     dtype=torch.int,
                 )
+                modulate_index = modulate_index.unsqueeze(-1)
             rotary_emb = self.pos_embed(video_fhw, text_seq_len, image.device)
 
             image = self.img_in(image)
@@ -535,7 +535,7 @@ class QwenImageDiT(PreTrainedModel):
 
             # warning: Eligen does not work with sequence parallel because long context attention does not support attention masks
             img_freqs, txt_freqs = rotary_emb
-            with sequence_parallel((image, text, img_freqs, txt_freqs), seq_dims=(1, 1, 0, 0)):
+            with sequence_parallel((image, text, img_freqs, txt_freqs, modulate_index), seq_dims=(1, 1, 0, 0, 1)):
                 rotary_emb = (img_freqs, txt_freqs)
                 for block in self.transformer_blocks:
                     text, image = block(

@@ -343,7 +343,7 @@ def long_context_attention(
                     f"head_dim={q.shape[-1]}, but aiter_flash_attn only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
                 )
         if SDPA_AVAILABLE:
-            return LongContextAttention(attn_type=AttnType.TORCH)(q, k, v, softmax_scale=scale)
+            return LongContextAttention(attn_type=AttnType.TORCH_EFFICIENT)(q, k, v, softmax_scale=scale)
         if FLASH_ATTN_2_AVAILABLE:
             return LongContextAttention(attn_type=AttnType.FA)(q, k, v, softmax_scale=scale)
         raise ValueError("No available long context attention implementation")
@@ -379,7 +379,7 @@ def long_context_attention(
         if attn_impl == "fa2":
             return LongContextAttention(attn_type=AttnType.FA)(q, k, v, softmax_scale=scale)
         if attn_impl == "sdpa":
-            return LongContextAttention(attn_type=AttnType.TORCH)(q, k, v, softmax_scale=scale)
+            return LongContextAttention(attn_type=AttnType.TORCH_EFFICIENT)(q, k, v, softmax_scale=scale)
         if attn_impl == "sage":
             return LongContextAttention(attn_type=AttnType.SAGE_AUTO)(q, k, v, softmax_scale=scale)
         if attn_impl == "sparge":

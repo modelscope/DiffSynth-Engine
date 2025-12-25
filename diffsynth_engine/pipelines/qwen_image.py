@@ -165,7 +165,7 @@ class QwenImagePipeline(BasePipeline):
         self.edit_prompt_template_encode_start_idx = 64
 
         # sampler
-        self.noise_scheduler = RecifitedFlowScheduler(shift=3.0, use_dynamic_shifting=True)
+        self.noise_scheduler = RecifitedFlowScheduler(shift=3.0, use_dynamic_shifting=True, shift_terminal=0.02)
         self.sampler = FlowMatchEulerSampler()
         # models
         self.tokenizer = tokenizer
@@ -690,8 +690,9 @@ class QwenImagePipeline(BasePipeline):
                 img_width, img_height = img.size
                 condition_width, condition_height = self.calculate_dimensions(384 * 384, img_width / img_height)
                 vae_width, vae_height = self.calculate_dimensions(1024 * 1024, img_width / img_height)
-                condition_images.append(img.resize((condition_width, condition_height), Image.LANCZOS))
-                vae_images.append(img.resize((vae_width, vae_height), Image.LANCZOS))
+                condition_images.append(img.resize((condition_width, condition_height)))
+                vae_images.append(img.resize((vae_width, vae_height)))
+
             if width is None and height is None:
                 width, height = vae_images[-1].size
 

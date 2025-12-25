@@ -685,7 +685,6 @@ class VideoVAE(nn.Module):
         x = patchify(x, patch_size=2 if self.in_channels == 12 else 1)
         t = x.shape[2]
         iter_ = 1 + (t - 1) // 4
-
         for i in range(iter_):
             if i == 0:
                 out = self.encoder(x[:, :, :1, :, :], feat_cache=feat_cache)
