@@ -698,7 +698,7 @@ class QwenImagePipeline(BasePipeline):
 
         if width is None and height is None:
             width, height = 1328, 1328
-        self.validate_image_size(height, width, minimum=64, multiple_of=16)
+        self.validate_image_size(height, width, minimum=16, multiple_of=16)
 
         if not isinstance(controlnet_params, list):
             controlnet_params = [controlnet_params]
