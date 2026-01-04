@@ -46,6 +46,11 @@ QWEN_IMAGE_VISION_CONFIG_FILE = os.path.join(CONF_PATH, "models", "qwen_image", 
 QWEN_IMAGE_VAE_CONFIG_FILE = os.path.join(CONF_PATH, "models", "qwen_image", "qwen_image_vae.json")
 QWEN_IMAGE_VAE_KEYMAP_FILE = os.path.join(CONF_PATH, "models", "qwen_image", "qwen_image_vae_keymap.json")
 
+ACE_TEXT_ENCODER_CONFIG_FILE = os.path.join(CONF_PATH, "models", "ace", "t5.json")
+ACE_DIT_CONFIG_FILE = os.path.join(CONF_PATH, "models", "ace", "dit.json")
+ACE_VAE_DCAE_CONFIG_FILE = os.path.join(CONF_PATH, "models", "ace", "vae", "dcae.json")
+ACE_VAE_VOCODER_CONFIG_FILE = os.path.join(CONF_PATH, "models", "ace", "vae", "vocoder.json")
+
 # data size
 KB = 1024
 MB = 1024 * KB

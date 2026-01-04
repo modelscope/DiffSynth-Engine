@@ -1,0 +1,64 @@
+{
+    "attention_head_dim": 32,
+    "decoder_act_fns": "silu",
+    "decoder_block_out_channels": [
+        128,
+        256,
+        512,
+        1024
+    ],
+    "decoder_block_types": [
+        "ResBlock",
+        "ResBlock",
+        "ResBlock",
+        "EfficientViTBlock"
+    ],
+    "decoder_layers_per_block": [
+        3,
+        3,
+        3,
+        3
+    ],
+    "decoder_norm_types": "rms_norm",
+    "decoder_qkv_multiscales": [
+        [],
+        [],
+        [
+            5
+        ],
+        [
+            5
+        ]
+    ],
+    "encoder_block_out_channels": [
+        128,
+        256,
+        512,
+        1024
+    ],
+    "encoder_block_types": [
+        "ResBlock",
+        "ResBlock",
+        "ResBlock",
+        "EfficientViTBlock"
+    ],
+    "encoder_layers_per_block": [
+        2,
+        2,
+        3,
+        3
+    ],
+    "encoder_qkv_multiscales": [
+        [],
+        [],
+        [
+            5
+        ],
+        [
+            5
+        ]
+    ],
+    "in_channels": 2,
+    "latent_channels": 8,
+    "upsample_block_type": "interpolate"
+}

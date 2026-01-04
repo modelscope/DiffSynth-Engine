@@ -1,0 +1,17 @@
+{
+  "head_dim": 128,
+  "lyric_encoder_vocab_size": 6693,
+  "lyric_hidden_size": 1024,
+  "max_position": 32768,
+  "mlp_ratio": 2.5,
+  "num_heads": 20,
+  "num_layers": 24,
+  "out_channels": 8,
+  "patch_size": [
+    16,
+    1
+  ],
+  "rope_theta": 1000000.0,
+  "speaker_embedding_dim": 512,
+  "text_embedding_dim": 768
+}

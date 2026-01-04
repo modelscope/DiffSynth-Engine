@@ -1,0 +1,76 @@
+{
+    "depths": [
+        3,
+        3,
+        9,
+        3
+    ],
+    "dims": [
+        128,
+        256,
+        384,
+        512
+    ],
+    "f_max": 16000,
+    "f_min": 40,
+    "hop_length": 512,
+    "input_channels": 128,
+    "kernel_sizes": [
+        7
+    ],
+    "n_fft": 2048,
+    "n_mels": 128,
+    "num_mels": 512,
+    "post_conv_kernel_size": 13,
+    "pre_conv_kernel_size": 13,
+    "resblock_dilation_sizes": [
+        [
+            1,
+            3,
+            5
+        ],
+        [
+            1,
+            3,
+            5
+        ],
+        [
+            1,
+            3,
+            5
+        ],
+        [
+            1,
+            3,
+            5
+        ]
+    ],
+    "resblock_kernel_sizes": [
+        3,
+        7,
+        11,
+        13
+    ],
+    "sampling_rate": 44100,
+    "upsample_initial_channel": 1024,
+    "upsample_kernel_sizes": [
+        8,
+        8,
+        4,
+        4,
+        4,
+        4,
+        4
+    ],
+    "upsample_rates": [
+        4,
+        4,
+        2,
+        2,
+        2,
+        2,
+        2
+    ],
+    "use_template": false,
+    "win_length": 2048
+}
