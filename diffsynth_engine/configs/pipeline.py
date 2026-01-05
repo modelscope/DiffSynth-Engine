@@ -301,11 +301,11 @@ class HunyuanPipelineConfig(BaseConfig):
 @dataclass
 class ZImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, BaseConfig):
     model_path: str | os.PathLike | List[str | os.PathLike]
-    model_dtype: torch.dtype = torch.float16
+    model_dtype: torch.dtype = torch.bfloat16
     vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
-    vae_dtype: torch.dtype = torch.float16
+    vae_dtype: torch.dtype = torch.bfloat16
     encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
-    encoder_dtype: torch.dtype = torch.float16
+    encoder_dtype: torch.dtype = torch.bfloat16
 
     @classmethod
     def basic_config(
