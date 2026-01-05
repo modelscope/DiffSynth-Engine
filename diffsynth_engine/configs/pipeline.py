@@ -392,7 +392,7 @@ class ZImageStateDicts:
     vae: Dict[str, torch.Tensor]
 
 
-def init_parallel_config(config: FluxPipelineConfig | QwenImagePipelineConfig | WanPipelineConfig):
+def init_parallel_config(config: FluxPipelineConfig | QwenImagePipelineConfig | WanPipelineConfig | ZImagePipelineConfig):
     assert config.parallelism in (1, 2, 4, 8), "parallelism must be 1, 2, 4 or 8"
     config.batch_cfg = True if config.parallelism > 1 and config.use_cfg_parallel else config.batch_cfg
 
