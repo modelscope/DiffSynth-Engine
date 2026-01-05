@@ -40,20 +40,54 @@ class ZImageLoRAConverter(LoRAStateDictConverter):
         for key, param in lora_state_dict.items():
             if "lora_A.weight" in key:
                 lora_b_key = key.replace("lora_A.weight", "lora_B.weight")
-                target_key = key.replace(".lora_A.weight", "").replace("transformer.", "")
+                target_key = key.replace(".lora_A.weight", "").replace("diffusion_model.", "")
 
-                if "attn.to_out.0" in target_key:
-                    target_key = target_key.replace("attn.to_out.0", "attn.to_out")
+                if "attention.to_out.0" in target_key:
+                    target_key = target_key.replace("attention.to_out.0", "attention.to_out")
+                if "adaLN_modulation.0" in target_key:
+                    target_key = target_key.replace("adaLN_modulation.0", "adaLN_modulation")
+
+                up = lora_state_dict[lora_b_key]
+                rank = up.shape[1]
 
                 dit_dict[target_key] = {
                     "down": param,
-                    "up": lora_state_dict[lora_b_key],
-                    "alpha": lora_state_dict.get(key.replace("lora_A.weight", "alpha"), None),
+                    "up": up,
+                    "rank": rank,
+                    "alpha": lora_state_dict.get(key.replace("lora_A.weight", "alpha"), rank),
                 }
+
         return {"dit": dit_dict}
 
+    def _from_diffsynth(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
+        dit_dict = {}
+        for key, param in lora_state_dict.items():
+            if "lora_A.default.weight" in key:
+                lora_b_key = key.replace("lora_A.default.weight", "lora_B.default.weight")
+                target_key = key.replace(".lora_A.default.weight", "")
+
+                if "attention.to_out.0" in target_key:
+                    target_key = target_key.replace("attention.to_out.0", "attention.to_out")
+
+                up = lora_state_dict[lora_b_key]
+                rank = up.shape[1]
+
+                dit_dict[target_key] = {
+                    "down": param,
+                    "up": up,
+                    "rank": rank,
+                    "alpha": lora_state_dict.get(key.replace("lora_A.default.weight", "alpha"), rank),
+                }
+
+        return {"dit": dit_dict}
+
+
     def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
-        return self._from_diffusers(lora_state_dict)
+        key = list(lora_state_dict.keys())[0]
+        if key.startswith("diffusion_model."):
+            return self._from_diffusers(lora_state_dict)
+        else:
+            return self._from_diffsynth(lora_state_dict)
 
 
 class ZImagePipeline(BasePipeline):
@@ -180,7 +214,7 @@ class ZImagePipeline(BasePipeline):
     def update_weights(self, state_dicts: ZImageStateDicts) -> None:
         self.update_component(self.dit, state_dicts.model, self.config.device, self.config.model_dtype)
         self.update_component(
-            self.text_encoder, state_dicts.text_encoder, self.config.device, self.config.encoder_dtype
+            self.text_encoder, state_dicts.encoder, self.config.device, self.config.encoder_dtype
         )
         self.update_component(self.vae_decoder, state_dicts.vae, self.config.device, self.config.vae_dtype)
 
@@ -276,8 +310,8 @@ class ZImagePipeline(BasePipeline):
             comb_pred = self.predict_noise(latents, t, prompt_emb)[0]
         else:
             if not batch_cfg:
-                positive_noise_pred = self.predict_noise(latents, t, prompt_emb)
-                negative_noise_pred = self.predict_noise(latents, t, negative_prompt_emb)
+                positive_noise_pred = self.predict_noise(latents, t, prompt_emb)[0]
+                negative_noise_pred = self.predict_noise(latents, t, negative_prompt_emb)[0]
             else:
                 latents_input = torch.cat([latents, latents], dim=0)
                 t = torch.cat([t, t], dim=0)
@@ -360,6 +394,7 @@ class ZImagePipeline(BasePipeline):
                 prompt_emb=prompt_embeds,
                 negative_prompt_emb=negative_prompt_embeds,
                 batch_cfg=self.config.batch_cfg,
+                cfg_scale=cfg_scale,
                 cfg_truncation=cfg_truncation,
                 cfg_normalization=cfg_normalization,
             )
