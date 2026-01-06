@@ -32,7 +32,6 @@ class WanDMDPipeline(WanVideoPipeline):
         width=832,
         num_frames=81,
         denoising_step_list: List[int] = None,
-        num_inference_steps=None,
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
         denoising_step_list = [1000, 750, 500, 250] if denoising_step_list is None else denoising_step_list

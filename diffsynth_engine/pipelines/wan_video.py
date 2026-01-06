@@ -501,8 +501,8 @@ class WanVideoPipeline(BasePipeline):
 
         dit_state_dict, dit2_state_dict = None, None
         if isinstance(config.model_path, list):
-            high_noise_model_ckpt = [path for path in config.model_path if "high_noise_model" in path]
-            low_noise_model_ckpt = [path for path in config.model_path if "low_noise_model" in path]
+            high_noise_model_ckpt = [path for path in config.model_path if "high_noise" in path]
+            low_noise_model_ckpt = [path for path in config.model_path if "low_noise" in path]
             if high_noise_model_ckpt and low_noise_model_ckpt:
                 logger.info(f"loading high noise model state dict from {high_noise_model_ckpt} ...")
                 dit_state_dict = cls.load_model_checkpoint(
