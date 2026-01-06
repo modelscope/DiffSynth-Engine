@@ -26,6 +26,7 @@ class AttnImpl(Enum):
     FA2 = "fa2"  # Flash Attention 2
     FA3 = "fa3"  # Flash Attention 3
     FA3_FP8 = "fa3_fp8"  # Flash Attention 3 with FP8
+    FA4 = "fa4"  # Flash Attention 4
     AITER = "aiter"  # Aiter Flash Attention
     AITER_FP8 = "aiter_fp8"  # Aiter Flash Attention with FP8
     XFORMERS = "xformers"  # XFormers

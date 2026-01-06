@@ -7,6 +7,12 @@ logger = logging.get_logger(__name__)
 
 
 # 无损
+FLASH_ATTN_4_AVAILABLE = importlib.util.find_spec("flash_attn.cute.interface") is not None
+if FLASH_ATTN_4_AVAILABLE:
+    logger.info("Flash attention 4 is available")
+else:
+    logger.info("Flash attention 4 is not available")
+
 FLASH_ATTN_3_AVAILABLE = importlib.util.find_spec("flash_attn_interface") is not None
 if FLASH_ATTN_3_AVAILABLE:
     logger.info("Flash attention 3 is available")

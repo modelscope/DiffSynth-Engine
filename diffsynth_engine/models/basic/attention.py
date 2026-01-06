@@ -6,6 +6,7 @@ from typing import Optional
 
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.flag import (
+    FLASH_ATTN_4_AVAILABLE,
     FLASH_ATTN_3_AVAILABLE,
     FLASH_ATTN_2_AVAILABLE,
     XFORMERS_AVAILABLE,
@@ -21,7 +22,8 @@ FA3_MAX_HEADDIM = 256
 
 logger = logging.get_logger(__name__)
 
-
+if FLASH_ATTN_4_AVAILABLE:
+    from flash_attn.cute.interface import flash_attn_func as flash_attn4
 if FLASH_ATTN_3_AVAILABLE:
     from flash_attn_interface import flash_attn_func as flash_attn3
 if FLASH_ATTN_2_AVAILABLE:
@@ -142,6 +144,7 @@ def attention(
         "fa2",
         "fa3",
         "fa3_fp8",
+        "fa4",
         "aiter",
         "aiter_fp8",
         "xformers",
@@ -152,6 +155,22 @@ def attention(
     ]
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
     if attn_impl is None or attn_impl == "auto":
+        if FLASH_ATTN_4_AVAILABLE:
+            # FA4 also has the same max-head-256 limitation as FA3
+            if flash_attn3_compatible and attn_mask is None:
+                attn_out = flash_attn4(q, k, v, softmax_scale=scale)
+                if isinstance(attn_out, tuple):
+                    attn_out = attn_out[0]
+                return attn_out
+            else:
+                if not flash_attn3_compatible:
+                    logger.warning(
+                        f"head_dim={q.shape[-1]}, but flash_attn_4 only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
+                    )
+                else:
+                    logger.debug(
+                        "flash_attn_4 does not support attention mask, will use fallback attention implementation"
+                    )
         if FLASH_ATTN_3_AVAILABLE:
             if flash_attn3_compatible and attn_mask is None:
                 return flash_attn3(q, k, v, softmax_scale=scale)
@@ -213,6 +232,17 @@ def attention(
                 v = v.to(dtype=DTYPE_FP8)
                 out = aiter_flash_attn_fp8(q, k, v, softmax_scale=scale)
                 return out.to(dtype=origin_dtype)
+        if attn_impl == "fa4":
+            if not flash_attn3_compatible:
+                raise RuntimeError(
+                    f"head_dim={q.shape[-1]}, but flash_attn_4 only supports head dimension at most {FA3_MAX_HEADDIM}"
+                )
+            if attn_mask is not None:
+                raise RuntimeError("flash_attn_4 does not support attention mask")
+            attn_out = flash_attn4(q, k, v, softmax_scale=scale)
+            if isinstance(attn_out, tuple):
+                attn_out = attn_out[0]
+            return attn_out
         if attn_impl == "fa2":
             return flash_attn2(q, k, v, softmax_scale=scale)
         if attn_impl == "xformers":
