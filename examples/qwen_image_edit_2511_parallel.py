@@ -4,12 +4,14 @@ import time
 
 if __name__ == "__main__":
     # Configure pipeline with use_zero_cond_t=True for 2511 edit model
-    config = QwenImagePipelineConfig.basic_config(
+    config = QwenImagePipelineConfig(
         model_path=fetch_model("Qwen/Qwen-Image-Edit-2511", revision="master", path="transformer/*.safetensors"),
         encoder_path=fetch_model("Qwen/Qwen-Image-Edit-2511", revision="master", path="text_encoder/*.safetensors"),
         vae_path=fetch_model("Qwen/Qwen-Image-Edit-2511", revision="master", path="vae/*.safetensors"),
         parallelism=2,
         use_zero_cond_t=True,  # Enable zero_cond_t for 2511 edit model
+        use_fp8_linear=False,
+        use_torch_compile=False,
     )
     config.tp_degree = 1
     config.use_fsdp = False
