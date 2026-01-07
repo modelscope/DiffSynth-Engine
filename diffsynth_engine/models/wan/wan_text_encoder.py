@@ -227,10 +227,43 @@ class WanTextEncoderStateDictConverter(StateDictConverter):
                 new_state_dict[rename_dict[key]] = param
         return new_state_dict
 
+    def _from_enc_blk(self, state_dict):
+        # Map enc.blk.* keys to blocks.* keys
+        rename_dict = {
+            "token_embd.weight": "token_embedding.weight",
+            "enc.output_norm.weight": "norm.weight",
+        }
+        for i in range(self.num_encoder_layers):
+            rename_dict.update({
+                f"enc.blk.{i}.attn_norm.weight": f"blocks.{i}.norm1.weight",
+                f"enc.blk.{i}.attn_q.weight": f"blocks.{i}.attn.q.weight",
+                f"enc.blk.{i}.attn_k.weight": f"blocks.{i}.attn.k.weight",
+                f"enc.blk.{i}.attn_v.weight": f"blocks.{i}.attn.v.weight",
+                f"enc.blk.{i}.attn_o.weight": f"blocks.{i}.attn.o.weight",
+                f"enc.blk.{i}.attn_rel_b.weight": f"blocks.{i}.pos_embedding.embedding.weight",
+                f"enc.blk.{i}.ffn_norm.weight": f"blocks.{i}.norm2.weight",
+                f"enc.blk.{i}.ffn_gate.weight": f"blocks.{i}.ffn.gate.0.weight",
+                f"enc.blk.{i}.ffn_up.weight": f"blocks.{i}.ffn.fc1.weight",
+                f"enc.blk.{i}.ffn_down.weight": f"blocks.{i}.ffn.fc2.weight",
+            })
+        new_state_dict = {}
+        for key, param in state_dict.items():
+            if key in rename_dict:
+                new_state_dict[rename_dict[key]] = param
+        return new_state_dict
+
     def convert(self, state_dict):
         if "encoder.final_layer_norm.weight" in state_dict:
             logger.info("use diffusers format state dict")
             return self._from_diffusers(state_dict)
+        if any(k.startswith("enc.blk.") for k in state_dict):
+            logger.info("use enc.blk.* format state dict")
+            return self._from_enc_blk(state_dict)
+        # Try to detect if already in model format (blocks.0.attn.q.weight, etc.)
+        if any(k.startswith("blocks.") for k in state_dict):
+            logger.info("use native model format state dict")
+            return state_dict
+        logger.warning("Unknown state dict format, passing through unchanged")
         return state_dict
 
 
@@ -293,5 +326,7 @@ class WanTextEncoder(PreTrainedModel):
         model = cls(device="meta", dtype=dtype)
         model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
+        # Allow partial loading for missing/unexpected keys
+        #model.load_state_dict(state_dict, strict=False, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
