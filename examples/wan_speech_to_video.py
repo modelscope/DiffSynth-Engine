@@ -12,9 +12,11 @@ def wan_rs2v(pipe: WanSpeech2VideoPipeline, input_data_dir: str):
     audio_path = f"{input_data_dir}/sing.mp3"
     audio = librosa.load(audio_path, sr=16000)[0]
     audio = torch.from_numpy(audio)[None]  # (1, audio_len)
+    fps_of_generated_video = 12 # The fps of the generated video, default is 16
     frames = pipe(
         ref_image=Image.open(f"{input_data_dir}/woman.png").convert("RGB"),
         audio=audio,
+        fps=fps_of_generated_video,
         prompt="画面清晰，视频中，一个女人正在唱歌，表情动作十分投入",
         negative_prompt="画面模糊，最差质量，画面模糊，细节模糊不清，情绪激动剧烈，手快速抖动，字幕，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
         cfg_scale=4.5,
@@ -24,7 +26,7 @@ def wan_rs2v(pipe: WanSpeech2VideoPipeline, input_data_dir: str):
         num_clips=3,
         ref_as_first_frame=True,
     )
-    save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rs2v.mp4")
+    save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rs2v.mp4", fps=fps_of_generated_video)
 
 
 def wan_rsp2v(pipe: WanSpeech2VideoPipeline, input_data_dir: str):
@@ -32,6 +34,7 @@ def wan_rsp2v(pipe: WanSpeech2VideoPipeline, input_data_dir: str):
     audio = librosa.load(audio_path, sr=16000)[0]
     audio = torch.from_numpy(audio)[None]  # (1, audio_len)
     pose_video = load_video(f"{input_data_dir}/pose.mp4")
+    fps_of_generated_video = 12 # The fps of the generated video, default is 16
     frames = pipe(
         ref_image=Image.open(f"{input_data_dir}/pose.png").convert("RGB"),
         audio=audio,
@@ -46,15 +49,16 @@ def wan_rsp2v(pipe: WanSpeech2VideoPipeline, input_data_dir: str):
         num_clips=2,
         ref_as_first_frame=False,
     )
-    save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rsp2v.mp4")
+    save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rsp2v.mp4", fps=fps_of_generated_video)
 
 
 def wan_rs2v_multi_speaker(pipe: WanSpeech2VideoPipeline, input_data_dir: str):
     audio_path = f"{input_data_dir}/sing2.mp3"
-    audio = librosa.load(audio_path, sr=16000)[0]
+    audio = load_audio(audio_path, sr=16000)
     audio = torch.from_numpy(audio)[None]  # (1, audio_len)
-    void_audio = librosa.load(f"{input_data_dir}/void_audio.mp3", sr=16000)[0]
+    void_audio = load_audio(f"{input_data_dir}/void_audio.mp3", sr=16000)
     void_audio = torch.from_numpy(void_audio)[None]  # (1, void_audio_len)
+    fps_of_generated_video = 12 # The fps of the generated video, default is 16
     frames = pipe(
         ref_image=Image.open(f"{input_data_dir}/2girl.png").convert("RGB"),
         audio=audio,
@@ -70,7 +74,7 @@ def wan_rs2v_multi_speaker(pipe: WanSpeech2VideoPipeline, input_data_dir: str):
         num_clips=2,
         ref_as_first_frame=False,
     )
-    save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rs2v_multi_speaker.mp4")
+    save_video_with_audio(frames, audio_path=audio_path, target_video_path="wan_rs2v_multi_speaker.mp4", fps=fps_of_generated_video)
 
 
 if __name__ == "__main__":

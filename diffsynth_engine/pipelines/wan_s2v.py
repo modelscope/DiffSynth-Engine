@@ -409,7 +409,7 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
             drop_motion_frames=drop_motion_frames,
             audio_mask=audio_mask,
             void_audio_input=void_audio_input,
-            attn_kwargs=attn_kwargs,
+            #attn_kwargs=attn_kwargs, # I have raised issue for this, should be fixed in wan_s2v_dit.py
         )
         return noise_pred
 
@@ -418,13 +418,14 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
         self,
         audio: torch.Tensor,
         prompt: str,
+        fps: int | None = 16, # fps of the generated video
         negative_prompt: str = "",
         cfg_scale: float | None = None,
         num_inference_steps: int | None = None,
         seed: int | None = None,
         height: int | None = None,
         width: int | None = None,
-        num_frames_per_clip: int = 80,
+        num_frames_per_clip: int = 80, # number of frames per clip and fps together determine the duration of each clip
         ref_image: Image.Image | None = None,
         pose_video: List[Image.Image] | None = None,
         pose_video_fps: int | None = None,
