@@ -6,26 +6,33 @@ from diffsynth_engine.utils import logging
 logger = logging.get_logger(__name__)
 
 
+def check_module_available(module_path: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_path) is not None
+    except (ModuleNotFoundError, AttributeError, ValueError):
+        return False
+
+
 # 无损
-FLASH_ATTN_4_AVAILABLE = importlib.util.find_spec("flash_attn.cute.interface") is not None
+FLASH_ATTN_4_AVAILABLE = check_module_available("flash_attn.cute.interface")
 if FLASH_ATTN_4_AVAILABLE:
     logger.info("Flash attention 4 is available")
 else:
     logger.info("Flash attention 4 is not available")
 
-FLASH_ATTN_3_AVAILABLE = importlib.util.find_spec("flash_attn_interface") is not None
+FLASH_ATTN_3_AVAILABLE = check_module_available("flash_attn_interface")
 if FLASH_ATTN_3_AVAILABLE:
     logger.info("Flash attention 3 is available")
 else:
     logger.info("Flash attention 3 is not available")
 
-FLASH_ATTN_2_AVAILABLE = importlib.util.find_spec("flash_attn") is not None
+FLASH_ATTN_2_AVAILABLE = check_module_available("flash_attn")
 if FLASH_ATTN_2_AVAILABLE:
     logger.info("Flash attention 2 is available")
 else:
     logger.info("Flash attention 2 is not available")
 
-XFORMERS_AVAILABLE = importlib.util.find_spec("xformers") is not None
+XFORMERS_AVAILABLE = check_module_available("xformers")
 if XFORMERS_AVAILABLE:
     logger.info("XFormers is available")
 else:
@@ -37,32 +44,32 @@ if SDPA_AVAILABLE:
 else:
     logger.info("Torch SDPA is not available")
 
-AITER_AVAILABLE = importlib.util.find_spec("aiter") is not None
+AITER_AVAILABLE = check_module_available("aiter")
 if AITER_AVAILABLE:
     logger.info("Aiter is available")
 else:
     logger.info("Aiter is not available")
 
 # 有损
-SAGE_ATTN_AVAILABLE = importlib.util.find_spec("sageattention") is not None
+SAGE_ATTN_AVAILABLE = check_module_available("sageattention")
 if SAGE_ATTN_AVAILABLE:
     logger.info("Sage attention is available")
 else:
     logger.info("Sage attention is not available")
 
-SPARGE_ATTN_AVAILABLE = importlib.util.find_spec("spas_sage_attn") is not None
+SPARGE_ATTN_AVAILABLE = check_module_available("spas_sage_attn")
 if SPARGE_ATTN_AVAILABLE:
     logger.info("Sparge attention is available")
 else:
     logger.info("Sparge attention is not available")
 
-VIDEO_SPARSE_ATTN_AVAILABLE = importlib.util.find_spec("vsa") is not None
+VIDEO_SPARSE_ATTN_AVAILABLE = check_module_available("vsa")
 if VIDEO_SPARSE_ATTN_AVAILABLE:
     logger.info("Video sparse attention is available")
 else:
     logger.info("Video sparse attention is not available")
 
-NUNCHAKU_AVAILABLE = importlib.util.find_spec("nunchaku") is not None
+NUNCHAKU_AVAILABLE = check_module_available("nunchaku")
 NUNCHAKU_IMPORT_ERROR = None
 if NUNCHAKU_AVAILABLE:
     logger.info("Nunchaku is available")
