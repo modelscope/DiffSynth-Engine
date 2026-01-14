@@ -6,37 +6,27 @@ from diffsynth_engine.utils import logging
 logger = logging.get_logger(__name__)
 
 
-def check_module_available(module_path: str) -> bool:
+def check_module_available(module_path: str, module_name: str = None) -> bool:
     try:
-        return importlib.util.find_spec(module_path) is not None
+        available = importlib.util.find_spec(module_path) is not None
     except (ModuleNotFoundError, AttributeError, ValueError):
-        return False
+        available = False
+
+    if module_name:
+        if available:
+            logger.info(f"{module_name} is available")
+        else:
+            logger.info(f"{module_name} is not available")
+
+    return available
 
 
 # 无损
-FLASH_ATTN_4_AVAILABLE = check_module_available("flash_attn.cute.interface")
-if FLASH_ATTN_4_AVAILABLE:
-    logger.info("Flash attention 4 is available")
-else:
-    logger.info("Flash attention 4 is not available")
-
-FLASH_ATTN_3_AVAILABLE = check_module_available("flash_attn_interface")
-if FLASH_ATTN_3_AVAILABLE:
-    logger.info("Flash attention 3 is available")
-else:
-    logger.info("Flash attention 3 is not available")
-
-FLASH_ATTN_2_AVAILABLE = check_module_available("flash_attn")
-if FLASH_ATTN_2_AVAILABLE:
-    logger.info("Flash attention 2 is available")
-else:
-    logger.info("Flash attention 2 is not available")
-
-XFORMERS_AVAILABLE = check_module_available("xformers")
-if XFORMERS_AVAILABLE:
-    logger.info("XFormers is available")
-else:
-    logger.info("XFormers is not available")
+FLASH_ATTN_4_AVAILABLE = check_module_available("flash_attn.cute.interface", "Flash attention 4")
+FLASH_ATTN_3_AVAILABLE = check_module_available("flash_attn_interface", "Flash attention 3")
+FLASH_ATTN_2_AVAILABLE = check_module_available("flash_attn", "Flash attention 2")
+XFORMERS_AVAILABLE = check_module_available("xformers", "XFormers")
+AITER_AVAILABLE = check_module_available("aiter", "Aiter")
 
 SDPA_AVAILABLE = hasattr(torch.nn.functional, "scaled_dot_product_attention")
 if SDPA_AVAILABLE:
@@ -44,37 +34,15 @@ if SDPA_AVAILABLE:
 else:
     logger.info("Torch SDPA is not available")
 
-AITER_AVAILABLE = check_module_available("aiter")
-if AITER_AVAILABLE:
-    logger.info("Aiter is available")
-else:
-    logger.info("Aiter is not available")
 
 # 有损
-SAGE_ATTN_AVAILABLE = check_module_available("sageattention")
-if SAGE_ATTN_AVAILABLE:
-    logger.info("Sage attention is available")
-else:
-    logger.info("Sage attention is not available")
+SAGE_ATTN_AVAILABLE = check_module_available("sageattention", "Sage attention")
+SPARGE_ATTN_AVAILABLE = check_module_available("spas_sage_attn", "Sparge attention")
+VIDEO_SPARSE_ATTN_AVAILABLE = check_module_available("vsa", "Video sparse attention")
 
-SPARGE_ATTN_AVAILABLE = check_module_available("spas_sage_attn")
-if SPARGE_ATTN_AVAILABLE:
-    logger.info("Sparge attention is available")
-else:
-    logger.info("Sparge attention is not available")
-
-VIDEO_SPARSE_ATTN_AVAILABLE = check_module_available("vsa")
-if VIDEO_SPARSE_ATTN_AVAILABLE:
-    logger.info("Video sparse attention is available")
-else:
-    logger.info("Video sparse attention is not available")
-
-NUNCHAKU_AVAILABLE = check_module_available("nunchaku")
+NUNCHAKU_AVAILABLE = check_module_available("nunchaku", "Nunchaku")
 NUNCHAKU_IMPORT_ERROR = None
-if NUNCHAKU_AVAILABLE:
-    logger.info("Nunchaku is available")
-else:
-    logger.info("Nunchaku is not available")
+if not NUNCHAKU_AVAILABLE:
     import sys
     torch_version = getattr(torch, "__version__", "unknown")
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
