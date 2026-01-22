@@ -3,6 +3,7 @@ import torch
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
+from typing_extensions import Literal
 
 from diffsynth_engine.configs.controlnet import ControlType
 
@@ -349,7 +350,7 @@ class Flux2KleinPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConf
     encoder_dtype: torch.dtype = torch.bfloat16
     image_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
     image_encoder_dtype: torch.dtype = torch.bfloat16
-    model_size: str = "4B"
+    model_size: Literal["4B", "9B"] = "4B"
 
     @classmethod
     def basic_config(
