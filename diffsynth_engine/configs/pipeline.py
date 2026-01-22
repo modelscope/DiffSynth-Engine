@@ -340,6 +340,47 @@ class ZImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, 
 
 
 @dataclass
+class Flux2PipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, BaseConfig):
+    model_path: str | os.PathLike | List[str | os.PathLike]
+    model_dtype: torch.dtype = torch.bfloat16
+    vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    vae_dtype: torch.dtype = torch.bfloat16
+    encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    encoder_dtype: torch.dtype = torch.bfloat16
+    image_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    image_encoder_dtype: torch.dtype = torch.bfloat16
+    model_size: str = "4B"
+
+    @classmethod
+    def basic_config(
+        cls,
+        model_path: str | os.PathLike | List[str | os.PathLike],
+        encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None,
+        vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None,
+        image_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None,
+        device: str = "cuda",
+        parallelism: int = 1,
+        offload_mode: Optional[str] = None,
+        offload_to_disk: bool = False,
+    ) -> "Flux2PipelineConfig":
+        return cls(
+            model_path=model_path,
+            device=device,
+            encoder_path=encoder_path,
+            vae_path=vae_path,
+            image_encoder_path=image_encoder_path,
+            parallelism=parallelism,
+            use_cfg_parallel=True if parallelism > 1 else False,
+            use_fsdp=True if parallelism > 1 else False,
+            offload_mode=offload_mode,
+            offload_to_disk=offload_to_disk,
+        )
+
+    def __post_init__(self):
+        init_parallel_config(self)
+
+
+@dataclass
 class BaseStateDicts:
     pass
 
@@ -398,7 +439,14 @@ class ZImageStateDicts:
     image_encoder: Optional[Dict[str, torch.Tensor]] = None
 
 
-def init_parallel_config(config: FluxPipelineConfig | QwenImagePipelineConfig | WanPipelineConfig | ZImagePipelineConfig):
+@dataclass
+class Flux2StateDicts:
+    model: Dict[str, torch.Tensor]
+    vae: Dict[str, torch.Tensor]
+    encoder: Dict[str, torch.Tensor]
+
+
+def init_parallel_config(config: FluxPipelineConfig | QwenImagePipelineConfig | WanPipelineConfig | ZImagePipelineConfig | Flux2PipelineConfig):
     assert config.parallelism in (1, 2, 4, 8), "parallelism must be 1, 2, 4 or 8"
     config.batch_cfg = True if config.parallelism > 1 and config.use_cfg_parallel else config.batch_cfg
 
