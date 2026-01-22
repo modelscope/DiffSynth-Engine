@@ -1,6 +1,6 @@
 from .base import BasePipeline, LoRAStateDictConverter
 from .flux_image import FluxImagePipeline
-from .flux2_image import Flux2Pipeline
+from .flux2_image import Flux2KleinPipeline
 from .sdxl_image import SDXLImagePipeline
 from .sd_image import SDImagePipeline
 from .wan_video import WanVideoPipeline
@@ -15,7 +15,7 @@ __all__ = [
     "BasePipeline",
     "LoRAStateDictConverter",
     "FluxImagePipeline",
-    "Flux2Pipeline",
+    "Flux2KleinPipeline",
     "SDXLImagePipeline",
     "SDImagePipeline",
     "WanVideoPipeline",

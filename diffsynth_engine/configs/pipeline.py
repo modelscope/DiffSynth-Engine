@@ -340,7 +340,7 @@ class ZImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, 
 
 
 @dataclass
-class Flux2PipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, BaseConfig):
+class Flux2KleinPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, BaseConfig):
     model_path: str | os.PathLike | List[str | os.PathLike]
     model_dtype: torch.dtype = torch.bfloat16
     vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
@@ -362,7 +362,7 @@ class Flux2PipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, B
         parallelism: int = 1,
         offload_mode: Optional[str] = None,
         offload_to_disk: bool = False,
-    ) -> "Flux2PipelineConfig":
+    ) -> "Flux2KleinPipelineConfig":
         return cls(
             model_path=model_path,
             device=device,
@@ -446,7 +446,7 @@ class Flux2StateDicts:
     encoder: Dict[str, torch.Tensor]
 
 
-def init_parallel_config(config: FluxPipelineConfig | QwenImagePipelineConfig | WanPipelineConfig | ZImagePipelineConfig | Flux2PipelineConfig):
+def init_parallel_config(config: FluxPipelineConfig | QwenImagePipelineConfig | WanPipelineConfig | ZImagePipelineConfig | Flux2KleinPipelineConfig):
     assert config.parallelism in (1, 2, 4, 8), "parallelism must be 1, 2, 4 or 8"
     config.batch_cfg = True if config.parallelism > 1 and config.use_cfg_parallel else config.batch_cfg
 

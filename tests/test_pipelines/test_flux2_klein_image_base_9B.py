@@ -1,16 +1,16 @@
 import unittest
 import torch
 
-from diffsynth_engine import Flux2PipelineConfig
-from diffsynth_engine.pipelines import Flux2Pipeline
+from diffsynth_engine import Flux2KleinPipelineConfig
+from diffsynth_engine.pipelines import Flux2KleinPipeline
 from diffsynth_engine.utils.download import fetch_model
 from tests.common.test_case import ImageTestCase
 
 
-class TestFlux2Pipeline(ImageTestCase):
+class TestFlux2KleinPipeline(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        config = Flux2PipelineConfig(
+        config = Flux2KleinPipelineConfig(
             model_path=fetch_model("black-forest-labs/FLUX.2-klein-base-9B", path="transformer/*.safetensors"),
             encoder_path=fetch_model("black-forest-labs/FLUX.2-klein-9B", path="text_encoder/*.safetensors"),
             vae_path=fetch_model("black-forest-labs/FLUX.2-klein-9B", path="vae/*.safetensors"),
@@ -19,7 +19,7 @@ class TestFlux2Pipeline(ImageTestCase):
             vae_dtype=torch.bfloat16,
             model_size="9B",
         )
-        cls.pipe = Flux2Pipeline.from_pretrained(config)
+        cls.pipe = Flux2KleinPipeline.from_pretrained(config)
 
     @classmethod
     def tearDownClass(cls):

@@ -9,7 +9,7 @@ import numpy as np
 from einops import rearrange
 
 from diffsynth_engine.configs import (
-    Flux2PipelineConfig,
+    Flux2KleinPipelineConfig,
     Flux2StateDicts,
 )
 from diffsynth_engine.models.basic.lora import LoRAContext
@@ -121,12 +121,12 @@ def model_fn_flux2(
     return model_output
 
 
-class Flux2Pipeline(BasePipeline):
+class Flux2KleinPipeline(BasePipeline):
     lora_converter = Flux2LoRAConverter()
 
     def __init__(
         self,
-        config: Flux2PipelineConfig,
+        config: Flux2KleinPipelineConfig,
         tokenizer: AutoTokenizer,
         text_encoder: Qwen3Model,
         dit: Flux2DiT,
@@ -153,9 +153,9 @@ class Flux2Pipeline(BasePipeline):
         self.model_names = ["text_encoder", "dit", "vae"]
 
     @classmethod
-    def from_pretrained(cls, model_path_or_config: str | Flux2PipelineConfig) -> "Flux2Pipeline":
+    def from_pretrained(cls, model_path_or_config: str | Flux2KleinPipelineConfig) -> "Flux2KleinPipeline":
         if isinstance(model_path_or_config, str):
-            config = Flux2PipelineConfig(model_path=model_path_or_config)
+            config = Flux2KleinPipelineConfig(model_path=model_path_or_config)
         else:
             config = model_path_or_config
 
@@ -185,13 +185,13 @@ class Flux2Pipeline(BasePipeline):
         return cls.from_state_dict(state_dicts, config)
 
     @classmethod
-    def from_state_dict(cls, state_dicts: Flux2StateDicts, config: Flux2PipelineConfig) -> "Flux2Pipeline":
+    def from_state_dict(cls, state_dicts: Flux2StateDicts, config: Flux2KleinPipelineConfig) -> "Flux2KleinPipeline":
         assert config.parallelism <= 1, "Flux2 doesn't support parallelism > 1"
         pipe = cls._from_state_dict(state_dicts, config)
         return pipe
 
     @classmethod
-    def _from_state_dict(cls, state_dicts: Flux2StateDicts, config: Flux2PipelineConfig) -> "Flux2Pipeline":
+    def _from_state_dict(cls, state_dicts: Flux2StateDicts, config: Flux2KleinPipelineConfig) -> "Flux2KleinPipeline":
         init_device = "cpu" if config.offload_mode is not None else config.device
         if config.model_size == "4B":
             with open(Z_IMAGE_TEXT_ENCODER_CONFIG_FILE, "r", encoding="utf-8") as f:
