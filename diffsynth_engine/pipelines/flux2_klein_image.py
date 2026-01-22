@@ -103,7 +103,6 @@ def model_fn_flux2(
 ):
     image_seq_len = latents.shape[1]
     if edit_latents is not None:
-        image_seq_len = latents.shape[1]
         latents = torch.concat([latents, edit_latents], dim=1)
         image_ids = torch.concat([image_ids, edit_image_ids], dim=1)
     embedded_guidance = torch.tensor([embedded_guidance], device=latents.device)
@@ -166,12 +165,15 @@ class Flux2KleinPipeline(BasePipeline):
         )
 
         if config.vae_path is None:
-            config.vae_path = fetch_model(config.model_path, path="vae/diffusion_pytorch_model.safetensors")
+            config.vae_path = fetch_model("black-forest-labs/FLUX.2-klein-4B", path="vae/*.safetensors")
         logger.info(f"Loading VAE from {config.vae_path} ...")
         vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
 
         if config.encoder_path is None:
-            config.encoder_path = fetch_model(config.model_path, path="text_encoder")
+            if config.model_size == "4B":
+                config.encoder_path = fetch_model("black-forest-labs/FLUX.2-klein-4B", path="text_encoder/*.safetensors")
+            else:
+                config.encoder_path = fetch_model("black-forest-labs/FLUX.2-klein-9B", path="text_encoder/*.safetensors")
         logger.info(f"Loading Text Encoder from {config.encoder_path} ...")
         text_encoder_state_dict = cls.load_model_checkpoint(
             config.encoder_path, device="cpu", dtype=config.encoder_dtype
