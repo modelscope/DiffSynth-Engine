@@ -63,9 +63,8 @@ class Qwen3Model(PreTrainedModel):
             model = cls(config=config, device="meta", dtype=dtype)
         model.requires_grad_(False)
 
-        model = model.to_empty(device=device)
-        model.load_state_dict(state_dict, assign=True)
         model.rotary_emb = Qwen3RotaryEmbedding(config=config, device=device)
+        model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
