@@ -8,7 +8,6 @@ import math
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
-from diffsynth_engine.models.skip_init import skip_init_on_meta
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.parallel import (
@@ -585,7 +584,7 @@ class ZImageDiT(PreTrainedModel):
         dtype: torch.dtype,
         **kwargs,
     ):
-        with skip_init_on_meta(mode="full"):
+        with torch.device("meta"):
             model = cls(device="meta", dtype=dtype, **kwargs)
         model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)

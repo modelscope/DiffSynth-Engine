@@ -5,7 +5,6 @@ from typing import Dict, Tuple, Optional
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.utils.cache import Cache, DynamicCache
-from diffsynth_engine.models.skip_init import skip_init_on_meta
 from diffsynth_engine.utils import logging
 
 from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer, Qwen3RMSNorm, Qwen3RotaryEmbedding
@@ -60,7 +59,7 @@ class Qwen3Model(PreTrainedModel):
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
-        with skip_init_on_meta(mode="smart"):
+        with torch.device("meta"):
             model = cls(config=config, device="meta", dtype=dtype)
         model.requires_grad_(False)
 
