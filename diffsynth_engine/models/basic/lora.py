@@ -29,14 +29,7 @@ class LoRA(nn.Module):
     def forward(self, x):
         if isinstance(self.up, torch.Tensor) and isinstance(self.down, torch.Tensor):
             return self.scale * (self.alpha / self.rank) * (x @ self.down.T @ self.up.T)
-        try:
-            down_out = self.down(x)
-            up_out = self.up(down_out)
-            return self.scale * (self.alpha / self.rank) * up_out
-        except Exception as ex:
-            breakpoint()
-            raise ex
-        # return self.scale * (self.alpha / self.rank) * (self.up(self.down(x)))
+        return self.scale * (self.alpha / self.rank) * (self.up(self.down(x)))
 
     def apply_to(self, w: Union[nn.Linear, nn.Conv2d, nn.Parameter, torch.Tensor]):
         if isinstance(self.up, torch.Tensor) and isinstance(self.down, torch.Tensor):
@@ -167,8 +160,7 @@ class LoRALinear(nn.Linear):
     def forward(self, x):
         w_x = super().forward(x)
         for name, lora in self._lora_dict.items():
-            lora_out = lora(x)
-            w_x += lora_out
+            w_x += lora(x)
         return w_x
 
 
@@ -308,19 +300,8 @@ class LoRAConv2d(nn.Conv2d):
 
     def forward(self, x):
         w_x = super().forward(x)
-
-        if x.ndim == 2:
-            for name, lora in self._lora_dict.items():
-                w_x += lora(x)
-        else:
-            B, L2, _ = x.shape
-            assert L2 % 2 == 0, "sequence length must be even"
-            L = L2 // 2
-            x2 = x[: L:, :]
-            for name, lora in self._lora_dict.items():
-                w_x[:, L:] += lora(x2)
-        # for name, lora in self._lora_dict.items():
-        #     w_x += lora(x)
+        for name, lora in self._lora_dict.items():
+            w_x += lora(x)
         return w_x
 
 
