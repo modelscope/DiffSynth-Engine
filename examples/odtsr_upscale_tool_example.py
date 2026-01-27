@@ -1,5 +1,5 @@
 from PIL import Image
-from diffsynth_engine import QwenImagePipelineConfig, QwenImagePipeline
+from diffsynth_engine import QwenImagePipelineConfig, QwenImagePipeline, fetch_model
 from diffsynth_engine.tools.qwen_image_upscaler_tool import QwenImageUpscalerTool
 
 if __name__ == "__main__":

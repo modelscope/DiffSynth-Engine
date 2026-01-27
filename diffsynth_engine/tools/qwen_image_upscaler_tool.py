@@ -164,10 +164,9 @@ class QwenImageUpscalerTool:
                 self.new_vae.load_state_dict(vae_state_dict, strict=False)
                 logger.info(f"Loaded {len(vae_state_dict)} trained VAE encoder parameters")
             else:
-                logger.warning(f"No 'pipe.new_vae.' weights found in {weights_path}, using original VAE")
+                logger.warning(f"No 'pipe.new_vae.' weights found, using original VAE")
         except Exception as e:
-            logger.error(f"Failed to load VAE encoder weights from {weights_path}: {e}")
-            logger.warning("Falling back to original VAE encoder")
+            logger.error(f"Failed to load VAE encoder weights: {e}")
             raise e
 
     
@@ -177,7 +176,7 @@ class QwenImageUpscalerTool:
         sample = (1 - sigma) * sample + sigma * noise
         return sample
 
-    def preprocess_image(self, image: Image.Image, mode="RGB") -> torch.Tensor:
+    def preprocess_image(self, image: Image.Image) -> torch.Tensor:
         image = torch.Tensor(np.array(image, dtype=np.float32))
         image = image.to(dtype=self.dtype, device=self.device)
         image = image * (2 / 255) - 1
@@ -209,7 +208,6 @@ class QwenImageUpscalerTool:
     ) -> torch.Tensor:
         fidelity_timestep_id = int(self.start_timestep + fidelity * (1000 - self.start_timestep) + 0.5)
         if fidelity_timestep_id != 1000:
-            fidelity_timestep_id = torch.tensor(fidelity_timestep_id)
             fidelity_timestep = self.timesteps[fidelity_timestep_id].to(device=self.device)
             image_latents = self.add_noise(image_latents, noise, fidelity_timestep)
 
