@@ -19,7 +19,10 @@ class BaseScheduler:
     def update_config(self, config_dict):
         for config_name, new_value in config_dict.items():
             if hasattr(self, config_name):
-                setattr(self, config_name, new_value)
+                actual_value = new_value
+                if isinstance(actual_value, str) and actual_value.lower() == "none":
+                    actual_value = None
+                setattr(self, config_name, actual_value)
 
     def restore_config(self):
         for config_name, config_value in self._stored_config.items():

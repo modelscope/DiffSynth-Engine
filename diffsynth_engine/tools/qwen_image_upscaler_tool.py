@@ -95,6 +95,9 @@ class QwenImageUpscalerTool:
         self.device = self.pipe.device
         self.dtype = self.pipe.dtype
 
+        # to avoid "small grid" artifacts in generated images
+        self._convert_dit_part_linear_weight()
+
         if not odtsr_weight_path:
             odtsr_weight_path = fetch_model("muse/ODTSR", revision="master", path="weight.safetensors")
         odtsr_state_dict = load_file(odtsr_weight_path)
@@ -138,6 +141,43 @@ class QwenImageUpscalerTool:
         )
         pipe = QwenImagePipeline.from_pretrained(config)
         return cls(pipe, odtsr_weight_path)
+
+    def _convert_dit_part_linear_weight(self):
+        """
+        Perform dtype conversion on weights of specific Linear layers in the DIT model.
+
+        This is an important trick: for Linear layers NOT in the patterns list, convert their weights
+        to float8_e4m3fn first, then convert back to the original dtype (typically bfloat16). This operation
+        matches the weight processing method used during training to avoid "small grid" artifacts in generated images.
+
+        Layers in the patterns list (such as LoRA-related layers) are skipped and their original weights remain unchanged.
+        """
+        patterns = [
+            "img_in",
+            "img_mod.1",
+            "attn.to_q",
+            "attn.to_k",
+            "attn.to_v",
+            "to_out",
+            "img_mlp.net.0.proj",
+            "img_mlp.net.2",
+        ]
+
+        def _convert_weight(parent: nn.Module, name_prefix: str = ""):
+            for name, module in list(parent.named_children()):
+                full_name = f"{name_prefix}{name}"
+                if isinstance(module, torch.nn.Linear):
+                    if not any(p in full_name for p in patterns):
+                        origin_dtype = module.weight.data.dtype
+                        module.weight.data = module.weight.data.to(torch.float8_e4m3fn)
+                        module.weight.data = module.weight.data.to(origin_dtype)
+                        if module.bias is not None:
+                            module.bias.data = module.bias.data.to(torch.float8_e4m3fn)
+                            module.bias.data = module.bias.data.to(origin_dtype)
+                else:
+                    _convert_weight(module, name_prefix=full_name + ".")
+
+        _convert_weight(self.pipe.dit)
 
     def _convert_odtsr_lora(self, odtsr_state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         state_dict = {}
