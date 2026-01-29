@@ -179,6 +179,7 @@ class QwenImageTransformerBlockNunchaku(QwenImageTransformerBlock):
         rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attn_mask: Optional[torch.Tensor] = None,
         attn_kwargs: Optional[Dict[str, Any]] = None,
+        modulate_index: Optional[List[int]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.use_nunchaku_awq:
             img_mod_params = self.img_mod(temb)  # [B, 6*dim]
