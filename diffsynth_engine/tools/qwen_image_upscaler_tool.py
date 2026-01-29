@@ -32,7 +32,7 @@ def odtsr_forward():
     """
     original_lora_forward = LoRALinear.forward
     original_modulate = QwenImageTransformerBlock._modulate
-    original_repo_forward = QwenEmbedRope.forward
+    original_rope_forward = QwenEmbedRope.forward
 
     def lora_batch_cfg_forward(self, x):
         y = nn.Linear.forward(self, x)
@@ -58,8 +58,8 @@ def odtsr_forward():
 
         vid_freqs = []
         max_vid_index = 0
-        for idx, fhw in enumerate(video_fhw):
-            idx = 0
+        idx = 0
+        for fhw in video_fhw:
             frame, height, width = fhw
             rope_key = f"{idx}_{height}_{width}"
 
@@ -123,6 +123,7 @@ def odtsr_forward():
     finally:
         LoRALinear.forward = original_lora_forward
         QwenImageTransformerBlock._modulate = original_modulate
+        QwenEmbedRope.forward = original_rope_forward
 
 
 class QwenImageUpscalerTool:
