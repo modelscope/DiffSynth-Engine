@@ -1058,7 +1058,8 @@ class Flux2DiT(PreTrainedModel):
         dtype: torch.dtype = torch.float32,
         **kwargs,
     ) -> "Flux2DiT":
-        model = cls(device="meta", dtype=dtype, **kwargs)
+        with torch.device("meta"):
+            model = cls(device="meta", dtype=dtype, **kwargs)
         model = model.requires_grad_(False)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
