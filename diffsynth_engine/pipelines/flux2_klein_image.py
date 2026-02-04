@@ -202,7 +202,8 @@ class Flux2KleinPipeline(BasePipeline):
         else:
             with open(FLUX2_TEXT_ENCODER_8B_CONF_PATH, "r", encoding="utf-8") as f:
                 qwen3_config = Qwen3Config(**json.load(f))
-                state_dicts.encoder.pop("lm_head.weight")
+                if "lm_head.weight" in state_dicts.encoder:
+                    state_dicts.encoder.pop("lm_head.weight")
             dit_config = {"guidance_embeds": False, "joint_attention_dim": 12288, "num_attention_heads": 32, "num_layers": 8, "num_single_layers": 24}
         text_encoder = Qwen3Model.from_state_dict(
             state_dicts.encoder, config=qwen3_config, device=init_device, dtype=config.encoder_dtype
