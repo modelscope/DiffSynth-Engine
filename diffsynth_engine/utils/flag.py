@@ -8,8 +8,9 @@ logger = logging.get_logger(__name__)
 
 def check_module_available(module_path: str, module_name: str = None) -> bool:
     try:
-        available = importlib.util.find_spec(module_path) is not None
-    except (ModuleNotFoundError, AttributeError, ValueError):
+        importlib.import_module(module_path)
+        available = True
+    except Exception:
         available = False
 
     if module_name:
@@ -26,7 +27,7 @@ FLASH_ATTN_4_AVAILABLE = check_module_available("flash_attn.cute.interface", "Fl
 FLASH_ATTN_3_AVAILABLE = check_module_available("flash_attn_interface", "Flash attention 3")
 FLASH_ATTN_2_AVAILABLE = check_module_available("flash_attn", "Flash attention 2")
 XFORMERS_AVAILABLE = check_module_available("xformers", "XFormers")
-AITER_AVAILABLE = check_module_available("aiter", "Aiter")
+AITER_AVAILABLE = check_module_available("aiter.flash_attn_fp8_pertensor_func", "Aiter")
 
 SDPA_AVAILABLE = hasattr(torch.nn.functional, "scaled_dot_product_attention")
 if SDPA_AVAILABLE:
