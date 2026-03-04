@@ -163,6 +163,10 @@ class ZImageSingleStreamAttention(nn.Module):
         dtype = query.dtype
         query, key = query.to(dtype), key.to(dtype)
 
+        # Expand 2D bool mask [B, S] to 4D [B, 1, 1, S] for SDPA
+        if attention_mask is not None and attention_mask.ndim == 2:
+            attention_mask = attention_mask[:, None, None, :]
+
         # USPAttention: [B, S, H, D] -> [B, S, H, D]
         hidden_states = self.usp_attn(query, key, value, attn_mask=attention_mask)
 
@@ -267,14 +271,16 @@ class ZImageTransformerBlock(nn.Module):
                 scale_msa, scale_mlp = 1.0 + scale_msa, 1.0 + scale_mlp
 
             # Attention block
-            attn_out = self.attention(self.attention_norm1(x) * scale_msa, attention_mask=None, freqs_cis=freqs_cis)
+            attn_out = self.attention(
+                self.attention_norm1(x) * scale_msa, attention_mask=attn_mask, freqs_cis=freqs_cis
+            )
             x = x + gate_msa * self.attention_norm2(attn_out)
 
             # FFN block
             x = x + gate_mlp * self.ffn_norm2(self.feed_forward(self.ffn_norm1(x) * scale_mlp))
         else:
             # No modulation (used by context_refiner)
-            attn_out = self.attention(self.attention_norm1(x), attention_mask=None, freqs_cis=freqs_cis)
+            attn_out = self.attention(self.attention_norm1(x), attention_mask=attn_mask, freqs_cis=freqs_cis)
             x = x + self.attention_norm2(attn_out)
 
             x = x + self.ffn_norm2(self.feed_forward(self.ffn_norm1(x)))
@@ -360,28 +366,7 @@ class RopeEmbedder:
 
 
 class ZImageTransformer2DModel(DiffusionModel):
-    """
-    Z-Image Transformer model adapted for DiffSynth-Engine.
-
-    Changes from the original diffusers implementation:
-    - Inherits from DiffusionModel instead of ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
-    - Removed LoRA/PEFT adapter support (PeftAdapterMixin)
-    - Removed original model format loading (FromOriginalModelMixin)
-    - Replaced diffusers Attention + ZSingleStreamAttnProcessor with ZImageSingleStreamAttention + USPAttention
-    - Removed gradient_checkpointing logic (inference only)
-    - Removed dispatch_attention_fn / _attention_backend / _parallel_config (diffusers ContextParallel)
-    - Added sequence_parallel_shard/unshard for DiffSynth-Engine sequence parallelism
-    - Pad tokens (x_pad_token, cap_pad_token, siglip_pad_token) forced to initialize on CPU for meta device compat
-
-    Deleted attributes and methods from original:
-    - _supports_gradient_checkpointing: declared gradient checkpointing support for training
-    - _no_split_modules: told accelerate which modules should not be split across devices
-    - _repeated_blocks: told accelerate which modules are repeated (for device mapping optimization)
-    - _skip_layerwise_casting_patterns: specified modules excluded from layerwise casting (ModelMixin feature)
-    - gradient_checkpointing attribute and _gradient_checkpointing_func calls: training gradient checkpointing
-    - PeftAdapterMixin methods: set_adapters, add_adapter, disable_adapters, enable_adapters, delete_adapters
-    - FromOriginalModelMixin methods: from_single_file for loading from original model formats
-    """
+    """Z-Image Transformer model adapted for DiffSynth-Engine."""
 
     @register_to_config
     def __init__(
@@ -504,8 +489,6 @@ class ZImageTransformer2DModel(DiffusionModel):
         self.axes_lens = axes_lens
 
         self.rope_embedder = RopeEmbedder(theta=rope_theta, axes_dims=axes_dims, axes_lens=axes_lens)
-
-    # ===== Patchify / Unpatchify =====
 
     def unpatchify(
         self,
@@ -783,8 +766,6 @@ class ZImageTransformer2DModel(DiffusionModel):
             all_sig_noise_mask,
         )
 
-    # ===== Sequence preparation =====
-
     def _prepare_sequence(
         self,
         feats: List[torch.Tensor],
@@ -906,8 +887,6 @@ class ZImageTransformer2DModel(DiffusionModel):
             ]
 
         return unified, unified_freqs, attn_mask, noise_mask_tensor
-
-    # ===== Forward =====
 
     def forward(
         self,
