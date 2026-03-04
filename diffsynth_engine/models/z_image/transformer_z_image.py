@@ -53,6 +53,23 @@ def select_per_token(noisy_val, clean_val, noise_mask, seq_len):
     return noisy_val * mask + clean_val * (1.0 - mask)
 
 
+def _linear_with_batch_padding(module: nn.Module, input_tensor: torch.Tensor, min_batch_size: int = 2) -> torch.Tensor:
+    """
+    Run a Linear (or Sequential containing Linear) with batch padding to align CUDA kernel paths.
+
+    When bsz=1, PyTorch 2.10.0's addmm routes through cublas::gemm (_badd kernel)
+    instead of cublasLt (_bias kernel) because mat1_sizes[0]==1 fails the
+    isInputCompliesAddmmCudaLt check. By padding to bsz>=2, we ensure the same
+    cublasLt path regardless of batch size, eliminating BF16 accumulation differences.
+    """
+    if input_tensor.shape[0] < min_batch_size:
+        pad_count = min_batch_size - input_tensor.shape[0]
+        padded = torch.cat([input_tensor, input_tensor[-1:].expand(pad_count, *input_tensor.shape[1:])])
+        result = module(padded)
+        return result[: input_tensor.shape[0]]
+    return module(input_tensor)
+
+
 class TimestepEmbedder(nn.Module):
     """Embeds scalar timesteps into vector representations via sinusoidal frequency encoding + MLP."""
 
@@ -247,8 +264,8 @@ class ZImageTransformerBlock(nn.Module):
 
             if noise_mask is not None:
                 # Per-token modulation: different modulation for noisy/clean tokens (omni mode)
-                mod_noisy = self.adaLN_modulation(adaln_noisy)
-                mod_clean = self.adaLN_modulation(adaln_clean)
+                mod_noisy = _linear_with_batch_padding(self.adaLN_modulation, adaln_noisy)
+                mod_clean = _linear_with_batch_padding(self.adaLN_modulation, adaln_clean)
 
                 scale_msa_noisy, gate_msa_noisy, scale_mlp_noisy, gate_mlp_noisy = mod_noisy.chunk(4, dim=1)
                 scale_msa_clean, gate_msa_clean, scale_mlp_clean, gate_mlp_clean = mod_clean.chunk(4, dim=1)
@@ -265,7 +282,7 @@ class ZImageTransformerBlock(nn.Module):
                 gate_mlp = select_per_token(gate_mlp_noisy, gate_mlp_clean, noise_mask, seq_len)
             else:
                 # Global modulation: same modulation for all tokens
-                mod = self.adaLN_modulation(adaln_input)
+                mod = _linear_with_batch_padding(self.adaLN_modulation, adaln_input)
                 scale_msa, gate_msa, scale_mlp, gate_mlp = mod.unsqueeze(1).chunk(4, dim=2)
                 gate_msa, gate_mlp = gate_msa.tanh(), gate_mlp.tanh()
                 scale_msa, scale_mlp = 1.0 + scale_msa, 1.0 + scale_mlp
@@ -306,12 +323,12 @@ class FinalLayer(nn.Module):
 
         if noise_mask is not None:
             # Per-token modulation (omni mode)
-            scale_noisy = 1.0 + self.adaLN_modulation(c_noisy)
-            scale_clean = 1.0 + self.adaLN_modulation(c_clean)
+            scale_noisy = 1.0 + _linear_with_batch_padding(self.adaLN_modulation, c_noisy)
+            scale_clean = 1.0 + _linear_with_batch_padding(self.adaLN_modulation, c_clean)
             scale = select_per_token(scale_noisy, scale_clean, noise_mask, seq_len)
         else:
             assert c is not None, "Either c or (c_noisy, c_clean) must be provided"
-            scale = 1.0 + self.adaLN_modulation(c)
+            scale = 1.0 + _linear_with_batch_padding(self.adaLN_modulation, c)
             scale = scale.unsqueeze(1)
 
         x = self.norm_final(x) * scale
@@ -911,11 +928,11 @@ class ZImageTransformer2DModel(DiffusionModel):
         device = x[0][-1].device if omni_mode else x[0].device
 
         if omni_mode:
-            t_noisy = self.t_embedder(t * self.t_scale).type_as(x[0][-1])
-            t_clean = self.t_embedder(torch.ones_like(t) * self.t_scale).type_as(x[0][-1])
+            t_noisy = _linear_with_batch_padding(self.t_embedder, t * self.t_scale).type_as(x[0][-1])
+            t_clean = _linear_with_batch_padding(self.t_embedder, torch.ones_like(t) * self.t_scale).type_as(x[0][-1])
             adaln_input = None
         else:
-            adaln_input = self.t_embedder(t * self.t_scale).type_as(x[0])
+            adaln_input = _linear_with_batch_padding(self.t_embedder, t * self.t_scale).type_as(x[0])
             t_noisy = t_clean = None
 
         # Patchify
