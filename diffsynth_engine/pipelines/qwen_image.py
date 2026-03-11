@@ -809,7 +809,7 @@ class QwenImagePipeline(BasePipeline):
             self.load_models_to_device([])
             return image
         finally:
-            if hasattr(self.dit, "clear_image_token_caches"):
-                self.dit.clear_image_token_caches()
             if cache_override and previous_cache_enabled is not None:
                 self.dit.set_image_token_cache_enabled(previous_cache_enabled, clear_existing_cache=True)
+            elif hasattr(self.dit, "clear_image_token_caches"):
+                self.dit.clear_image_token_caches()
