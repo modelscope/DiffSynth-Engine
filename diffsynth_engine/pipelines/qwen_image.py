@@ -674,6 +674,7 @@ class QwenImagePipeline(BasePipeline):
         # eligen
         entity_prompts: Optional[List[str]] = None,
         entity_masks: Optional[List[Image.Image]] = None,
+        use_image_kv_cache: Optional[bool] = None,
     ):
         assert (height is None) == (width is None), "height and width should be set together"
         is_edit_plus = isinstance(input_image, list)
@@ -756,48 +757,59 @@ class QwenImagePipeline(BasePipeline):
 
         self.model_lifecycle_finish(["encoder"])
 
-        self.load_models_to_device(["dit"])
-        hide_progress = dist.is_initialized() and dist.get_rank() != 0
-        for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
-            timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
-            noise_pred = self.predict_noise_with_cfg(
-                latents=latents,
-                image_latents=image_latents,
-                timestep=timestep,
-                prompt_emb=prompt_emb,
-                negative_prompt_emb=negative_prompt_emb,
-                prompt_emb_mask=prompt_emb_mask,
-                negative_prompt_emb_mask=negative_prompt_emb_mask,
-                context_latents=context_latents,
-                entity_prompt_embs=entity_prompt_embs,
-                entity_prompt_emb_masks=entity_prompt_emb_masks,
-                negative_entity_prompt_embs=negative_entity_prompt_embs,
-                negative_entity_prompt_emb_masks=negative_entity_prompt_emb_masks,
-                entity_masks=entity_masks,
-                cfg_scale=cfg_scale,
-                batch_cfg=self.config.batch_cfg,
+        previous_cache_enabled = getattr(self.dit, "use_image_token_cache", None)
+        cache_override = use_image_kv_cache is not None and hasattr(self.dit, "set_image_token_cache_enabled")
+        if cache_override:
+            self.dit.set_image_token_cache_enabled(use_image_kv_cache, clear_existing_cache=True)
+
+        try:
+            self.load_models_to_device(["dit"])
+            hide_progress = dist.is_initialized() and dist.get_rank() != 0
+            for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
+                timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
+                noise_pred = self.predict_noise_with_cfg(
+                    latents=latents,
+                    image_latents=image_latents,
+                    timestep=timestep,
+                    prompt_emb=prompt_emb,
+                    negative_prompt_emb=negative_prompt_emb,
+                    prompt_emb_mask=prompt_emb_mask,
+                    negative_prompt_emb_mask=negative_prompt_emb_mask,
+                    context_latents=context_latents,
+                    entity_prompt_embs=entity_prompt_embs,
+                    entity_prompt_emb_masks=entity_prompt_emb_masks,
+                    negative_entity_prompt_embs=negative_entity_prompt_embs,
+                    negative_entity_prompt_emb_masks=negative_entity_prompt_emb_masks,
+                    entity_masks=entity_masks,
+                    cfg_scale=cfg_scale,
+                    batch_cfg=self.config.batch_cfg,
+                )
+                # Denoise
+                latents = self.sampler.step(latents, noise_pred, i)
+                # UI
+                if progress_callback is not None:
+                    progress_callback(i, len(timesteps), "DENOISING")
+            self.model_lifecycle_finish(["dit"])
+            # Decode image
+            self.load_models_to_device(["vae"])
+            latents = rearrange(latents, "B C H W -> B C 1 H W")
+            vae_output = rearrange(
+                self.vae.decode(
+                    latents.to(self.vae.model.encoder.conv1.weight.dtype),
+                    device=self.vae.model.encoder.conv1.weight.device,
+                    tiled=self.vae_tiled,
+                    tile_size=self.vae_tile_size,
+                    tile_stride=self.vae_tile_stride,
+                )[0],
+                "C B H W -> B C H W",
             )
-            # Denoise
-            latents = self.sampler.step(latents, noise_pred, i)
-            # UI
-            if progress_callback is not None:
-                progress_callback(i, len(timesteps), "DENOISING")
-        self.model_lifecycle_finish(["dit"])
-        # Decode image
-        self.load_models_to_device(["vae"])
-        latents = rearrange(latents, "B C H W -> B C 1 H W")
-        vae_output = rearrange(
-            self.vae.decode(
-                latents.to(self.vae.model.encoder.conv1.weight.dtype),
-                device=self.vae.model.encoder.conv1.weight.device,
-                tiled=self.vae_tiled,
-                tile_size=self.vae_tile_size,
-                tile_stride=self.vae_tile_stride,
-            )[0],
-            "C B H W -> B C H W",
-        )
-        image = self.vae_output_to_image(vae_output)
-        # Offload all models
-        self.model_lifecycle_finish(["vae"])
-        self.load_models_to_device([])
-        return image
+            image = self.vae_output_to_image(vae_output)
+            # Offload all models
+            self.model_lifecycle_finish(["vae"])
+            self.load_models_to_device([])
+            return image
+        finally:
+            if hasattr(self.dit, "clear_image_token_caches"):
+                self.dit.clear_image_token_caches()
+            if cache_override and previous_cache_enabled is not None:
+                self.dit.set_image_token_cache_enabled(previous_cache_enabled, clear_existing_cache=True)
