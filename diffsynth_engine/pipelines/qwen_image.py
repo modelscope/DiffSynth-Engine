@@ -665,6 +665,7 @@ class QwenImagePipeline(BasePipeline):
         # single image for edit, list for edit plus(QwenImageEdit2509)
         input_image: List[Image.Image] | Image.Image | None = None,
         cfg_scale: float = 4.0,  # true cfg
+        cfg_list: List[float] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
         num_inference_steps: int = 50,
@@ -726,6 +727,20 @@ class QwenImagePipeline(BasePipeline):
             image_latents = None
 
         self.load_models_to_device(["encoder"])
+
+        if cfg_list is not None:
+            if len(cfg_list) == 0 or max(cfg_list) <= 1:
+                print( f"[QwenImagePipeline] cfg_list passed but has max values less than 1 or empty, ignoring it." )
+                cfg_list = None
+            else:
+                if len(cfg_list) != num_inference_steps:
+                    print( f"[QwenImagePipeline] cfg_list length mismatch: got {len(cfg_list)}, expected {num_inference_steps}. Will expand or trim cfg_list automatically for you." )
+                    if len(cfg_list) < num_inference_steps:
+                        cfg_list = cfg_list + [cfg_list[-1]] * (num_inference_steps - len(cfg_list))
+                    else:
+                        cfg_list = cfg_list[:num_inference_steps]
+                cfg_scale = max(cfg_list)
+
         if image_latents is not None:
             prompt_emb, prompt_emb_mask = self.encode_prompt_with_image(
                 prompt, vae_images, condition_images, 1, 4096, is_edit_plus
@@ -767,6 +782,9 @@ class QwenImagePipeline(BasePipeline):
             hide_progress = dist.is_initialized() and dist.get_rank() != 0
             for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
                 timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
+                if cfg_list is not None:
+                    cfg_scale = cfg_list[i]
+
                 noise_pred = self.predict_noise_with_cfg(
                     latents=latents,
                     image_latents=image_latents,
