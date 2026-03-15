@@ -9,12 +9,6 @@ from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm, GELU, RMSNorm
-from diffsynth_engine.models.qwen_image.qwen_image_cuda_ext import (
-    modulate_forward as modulate_forward_cuda,
-    modulate_indexed_forward as modulate_indexed_forward_cuda,
-    rotary_emb_forward as rotary_emb_forward_cuda,
-)
-
 from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.parallel import (
@@ -163,22 +157,6 @@ class QwenFeedForward(nn.Module):
 
 
 def apply_rotary_emb_qwen(x: torch.Tensor, freqs_cis: Union[torch.Tensor, Tuple[torch.Tensor]]):
-    if (
-        isinstance(freqs_cis, torch.Tensor)
-        and x.is_cuda
-        and freqs_cis.is_cuda
-        and x.is_contiguous()
-        and freqs_cis.is_contiguous()
-        and x.dim() == 4
-        and freqs_cis.dim() == 2
-        and x.shape[1] == freqs_cis.shape[0]
-        and x.shape[-1] % 2 == 0
-        and freqs_cis.dtype == torch.complex64
-    ):
-        x_out = rotary_emb_forward_cuda(x, freqs_cis)
-        if x_out is not None:
-            return x_out
-
     x_rotated = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))  # (b, s, h, d) -> (b, s, h, d/2, 2)
     x_out = torch.view_as_real(x_rotated * freqs_cis.unsqueeze(1)).flatten(3)  # (b, s, h, d/2, 2) -> (b, s, h, d)
     return x_out.type_as(x)
@@ -488,36 +466,6 @@ class QwenImageTransformerBlock(nn.Module):
         return img_k_static, img_v_static
 
     def _modulate(self, x, mod_params, index=None):
-        if (
-            x.is_cuda
-            and mod_params.is_cuda
-            and x.is_contiguous()
-            and mod_params.is_contiguous()
-            and x.dim() == 3
-            and mod_params.dim() == 2
-            and mod_params.shape[1] == x.shape[2] * 3
-            and x.dtype in (torch.float16, torch.bfloat16, torch.float32)
-            and mod_params.dtype == x.dtype
-        ):
-            if index is None and mod_params.shape[0] == x.shape[0]:
-                out = modulate_forward_cuda(x, mod_params)
-                if out is not None:
-                    return out
-
-            if (
-                index is not None
-                and index.is_cuda
-                and index.is_contiguous()
-                and index.dim() == 3
-                and index.shape[1] == x.shape[1]
-                and index.shape[2] == 1
-                and mod_params.shape[0] == x.shape[0] * 2
-                and index.dtype in (torch.int32, torch.int64)
-            ):
-                out = modulate_indexed_forward_cuda(x, mod_params, index)
-                if out is not None:
-                    return out
-
         shift, scale, gate = mod_params.chunk(3, dim=-1)
         if index is not None:
             actual_batch = shift.size(0) // 2
