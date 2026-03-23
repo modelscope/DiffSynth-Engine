@@ -1,0 +1,80 @@
+[project]
+name = "diffsynth_engine"
+dynamic = ["version"]
+authors = [
+    { name = "Wuli-Art x ModelScope" },
+]
+readme = "README.md"
+license-files = ["LICENSE"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "torch >= 2.10",
+    "torchvision",
+    "transformers == 4.57.6",
+    "diffusers == 0.36.0",
+    "accelerate",
+    "einops",
+    "modelscope",
+    "flufl.lock",
+    "imageio[ffmpeg]",
+    "librosa",
+    "moviepy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build",
+    "ruff",
+    "pytest",
+    "pre-commit",
+    "scikit-image",
+]
+
+[build-system]
+requires = ["setuptools>=75", "setuptools_scm>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["diffsynth_engine*"]
+exclude = [".github", "examples", "tests"]
+
+[tool.setuptools.package-data]
+
+[tool.setuptools_scm]
+local_scheme = "no-local-version"
+
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    "__pycache__",
+    ".git",
+    ".idea",
+    ".vscode",
+    ".venv",
+    "venv",
+    "dist",
+    "*.egg-info",
+    ".pytest_cache",
+    ".ruff_cache",
+]
+line-length = 120
+indent-width = 4
+
+target-version = "py310"
+
+[tool.ruff.lint]
+# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
+# Unlike Flake8, Ruff doesn't enable pycodestyle warnings (`W`) or
+# McCabe complexity (`C901`) by default.
+select = ["E4", "E7", "E9", "F", "I"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
