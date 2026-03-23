@@ -9,7 +9,7 @@ from PIL import Image
 
 from diffsynth_engine.utils.load_utils import load_file
 from diffsynth_engine.utils.video import VideoReader, load_video, save_video
-from tests.common.utils import compute_normalized_ssim
+from tests.common.utils import compute_normalized_ssim, compute_video_ms_ssim
 
 TEST_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # test flags
@@ -105,6 +105,25 @@ class VideoTestCase(TestCase):
         try:
             expect_video = self.get_expect_video(expect_video_path)
             self.assertVideoEqual(input_video, expect_video, threshold=threshold)
+        except Exception as e:
+            name = expect_video_path.split("/")[-1]
+            self.save_video(input_video, name, fps=fps)
+            raise e
+
+    def assertVideoMsSsimEqual(self, input_video: List[Image.Image], expect_video: List[Image.Image], threshold=0.95):
+        ms_ssim_score = compute_video_ms_ssim(input_video, expect_video)
+        self.assertGreaterEqual(ms_ssim_score, threshold)
+
+    def assertVideoMsSsimEqualAndSaveFailed(
+        self, input_video: List[Image.Image], expect_video_path: str, threshold=0.95, fps: int = 15
+    ):
+        """
+        比较input_video和testdata/expect/{name}的MS-SSIM相似度，如果失败则保存input_video到当前工作目录
+        """
+        try:
+            expect_video = self.get_expect_video(expect_video_path)
+            expect_frames = [expect_video[i] for i in range(len(expect_video))]
+            self.assertVideoMsSsimEqual(input_video, expect_frames, threshold=threshold)
         except Exception as e:
             name = expect_video_path.split("/")[-1]
             self.save_video(input_video, name, fps=fps)

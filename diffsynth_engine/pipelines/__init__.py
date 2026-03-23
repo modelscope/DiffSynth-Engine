@@ -1,5 +1,6 @@
-from .wan import WanPipeline
+from .wan import WanImageToVideoPipeline, WanTextToVideoPipeline
 
 __all__ = [
-    "WanPipeline",
+    "WanTextToVideoPipeline",
+    "WanImageToVideoPipeline",
 ]

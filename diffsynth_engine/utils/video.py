@@ -35,11 +35,15 @@ def save_video(frames, save_path, fps=15):
     elif save_path.endswith(".mp4"):
         codec = "libx264"
 
-    frames = [np.array(img) for img in frames]
+    converted_frames = []
+    for img in frames:
+        arr = np.array(img)
+        if arr.dtype != np.uint8:
+            arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+        converted_frames.append(arr)
 
-    # 使用 imageio 写入 .webm 文件
     with iio.imopen(save_path, "w", plugin="FFMPEG") as writer:
-        writer.write(frames, fps=fps, codec=codec)
+        writer.write(converted_frames, fps=fps, codec=codec)
 
 
 def read_n_frames(

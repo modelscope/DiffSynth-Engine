@@ -224,11 +224,13 @@ class WanTimeTextImageEmbedding(nn.Module):
         if timestep_seq_len is not None:
             timestep = timestep.unflatten(0, (-1, timestep_seq_len))
 
-        time_embedder_dtype = next(iter(self.time_embedder.parameters())).dtype
-        if timestep.dtype != time_embedder_dtype and time_embedder_dtype != torch.int8:
-            timestep = timestep.to(time_embedder_dtype)
-        temb = self.time_embedder(timestep).type_as(encoder_hidden_states)
-        timestep_proj = self.time_proj(self.act_fn(temb))
+        # Compute time embedding in fp32 to avoid bfloat16 precision loss
+        with torch.amp.autocast(device_type=timestep.device.type, dtype=torch.float32):
+            timestep = timestep.float()
+            temb = self.time_embedder(timestep)
+            timestep_proj = self.time_proj(self.act_fn(temb))
+        timestep_proj = timestep_proj.type_as(encoder_hidden_states)
+        temb = temb.type_as(encoder_hidden_states)
 
         encoder_hidden_states = self.text_embedder(encoder_hidden_states)
         if encoder_hidden_states_image is not None:
@@ -391,47 +393,11 @@ class WanTransformerBlock(nn.Module):
 class WanTransformer3DModel(DiffusionModel):
     """
     A Transformer model for video-like data used in the Wan model.
-    Adapted from diffusers for DiffSynth-Engine with the following changes:
-    - Inherits DiffusionModel instead of ModelMixin + multiple Mixins
-    - Uses USPAttention instead of WanAttnProcessor
-    - Removes LoRA and ContextParallel logic
-    - Adds sequence parallel shard/unshard support
-    - Removes deprecated classes and methods
-
-    Args:
-        patch_size (`Tuple[int]`, defaults to `(1, 2, 2)`):
-            3D patch dimensions for video embedding (t_patch, h_patch, w_patch).
-        num_attention_heads (`int`, defaults to `40`):
-            The number of attention heads.
-        attention_head_dim (`int`, defaults to `128`):
-            The number of channels in each head.
-        in_channels (`int`, defaults to `16`):
-            The number of channels in the input.
-        out_channels (`int`, defaults to `16`):
-            The number of channels in the output.
-        text_dim (`int`, defaults to `4096`):
-            Input dimension for text embeddings.
-        freq_dim (`int`, defaults to `256`):
-            Dimension for sinusoidal time embeddings.
-        ffn_dim (`int`, defaults to `13824`):
-            Intermediate dimension in feed-forward network.
-        num_layers (`int`, defaults to `40`):
-            The number of layers of transformer blocks to use.
-        cross_attn_norm (`bool`, defaults to `True`):
-            Enable cross-attention normalization.
-        qk_norm (`str`, *optional*, defaults to `"rms_norm_across_heads"`):
-            Query/key normalization type.
-        eps (`float`, defaults to `1e-6`):
-            Epsilon value for normalization layers.
-        image_dim (`int`, *optional*):
-            Image embedding dimension for I2V model.
-        added_kv_proj_dim (`int`, *optional*):
-            Added key/value projection dimension for I2V model.
-        rope_max_seq_len (`int`, defaults to `1024`):
-            Maximum sequence length for rotary position embeddings.
-        pos_embed_seq_len (`int`, *optional*):
-            Positional embedding sequence length for image embeddings.
     """
+
+    # Keep precision-sensitive submodules in fp32.
+    _keep_in_fp32_modules = ["time_embedder", "scale_shift_table", "norm1", "norm2", "norm3"]
+    _keys_to_ignore_on_load_unexpected = ["norm_added_q"]
 
     @register_to_config
     def __init__(
