@@ -447,7 +447,7 @@ class ZImagePipeline(Pipeline):
         """
         if not apply_cfg:
             # No CFG: single forward pass
-            latent_model_input = latents.to(self)
+            latent_model_input = latents.to(self.pipeline_config.model_dtype)
             latent_model_input = latent_model_input.unsqueeze(2)
             latent_model_input_list = list(latent_model_input.unbind(dim=0))
 
