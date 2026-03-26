@@ -4,6 +4,9 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 
 from diffsynth_engine.layers.attention import AttentionType
+from diffsynth_engine.utils import logging
+
+logger = logging.get_logger(__name__)
 
 
 @dataclass
@@ -42,6 +45,7 @@ class PipelineConfig:
     sp_ulysses_degree: Optional[int] = None
     sp_ring_degree: Optional[int] = None
     tp_degree: Optional[int] = None
+    use_vae_parallel: bool = False
     use_fsdp: bool = False
 
     @classmethod
@@ -86,3 +90,9 @@ def init_parallel_config(config: PipelineConfig):
         f"sp_ulysses_degree ({config.sp_ulysses_degree}) * "
         f"sp_ring_degree ({config.sp_ring_degree})"
     )
+
+    if config.use_vae_parallel:
+        assert config.parallelism > 1, "use_vae_parallel requires parallelism > 1"
+        if not config.vae_tiled:
+            config.vae_tiled = True
+            logger.warning("setting vae_tiled to True since use_vae_parallel is enabled")

@@ -12,3 +12,4 @@ dist/
 .ruff_cache/
 CLAUDE.md
 .claude/
+.kiro/

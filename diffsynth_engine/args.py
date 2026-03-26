@@ -150,6 +150,11 @@ def parse_cli_args() -> Dict[str, Any]:
         help="Tensor parallel degree",
     )
     parallel_group.add_argument(
+        "--use-vae-parallel",
+        action="store_true",
+        help="Use VAE parallel (tile-based parallel encode/decode)",
+    )
+    parallel_group.add_argument(
         "--use-fsdp",
         action="store_true",
         help="Use FSDP (Fully Sharded Data Parallel)",
@@ -183,6 +188,7 @@ def parse_cli_args() -> Dict[str, Any]:
     args_dict["sp_ulysses_degree"] = args.sp_ulysses_degree
     args_dict["sp_ring_degree"] = args.sp_ring_degree
     args_dict["tp_degree"] = args.tp_degree
+    args_dict["use_vae_parallel"] = args.use_vae_parallel
     args_dict["use_fsdp"] = args.use_fsdp
 
     return args_dict

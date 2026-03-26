@@ -42,12 +42,14 @@ class Worker:
         sp_ring_degree = pipeline_config.sp_ring_degree
         sp_degree = sp_ulysses_degree * sp_ring_degree
         tp_degree = pipeline_config.tp_degree
+        vae_parallel_size = world_size if pipeline_config.use_vae_parallel else 0
         initialize_model_parallel(
             classifier_free_guidance_degree=cfg_degree,
             sequence_parallel_degree=sp_degree,
             ulysses_degree=sp_ulysses_degree,
             ring_degree=sp_ring_degree,
             tensor_parallel_degree=tp_degree,
+            vae_parallel_size=vae_parallel_size,
         )
 
         pipeline_class_name = self.pipeline_config.pipeline_class_name
