@@ -25,7 +25,7 @@ def check_module_available(module_path: str, module_name: str = None) -> bool:
 # 无损
 FLASH_ATTN_4_AVAILABLE = check_module_available("flash_attn.cute.interface", "Flash attention 4")
 FLASH_ATTN_3_AVAILABLE = check_module_available("flash_attn_interface", "Flash attention 3")
-FLASH_ATTN_2_AVAILABLE = check_module_available("flash_attn", "Flash attention 2")
+FLASH_ATTN_2_AVAILABLE = check_module_available("flash_attn.flash_attn_func", "Flash attention 2")
 XFORMERS_AVAILABLE = check_module_available("xformers", "XFormers")
 AITER_AVAILABLE = check_module_available("aiter.flash_attn_fp8_pertensor_func", "Aiter")
 
