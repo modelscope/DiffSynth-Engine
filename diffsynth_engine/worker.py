@@ -1,8 +1,6 @@
 import multiprocessing as mp
 import os
 
-import torch.distributed as dist
-
 from diffsynth_engine.configs import PipelineConfig
 from diffsynth_engine.distributed.parallel_state import (
     destroy_distributed_environment,
@@ -44,12 +42,14 @@ class Worker:
         sp_ring_degree = pipeline_config.sp_ring_degree
         sp_degree = sp_ulysses_degree * sp_ring_degree
         tp_degree = pipeline_config.tp_degree
+        vae_parallel_size = world_size if pipeline_config.use_vae_parallel else 0
         initialize_model_parallel(
             classifier_free_guidance_degree=cfg_degree,
             sequence_parallel_degree=sp_degree,
             ulysses_degree=sp_ulysses_degree,
             ring_degree=sp_ring_degree,
             tensor_parallel_degree=tp_degree,
+            vae_parallel_size=vae_parallel_size,
         )
 
         pipeline_class_name = self.pipeline_config.pipeline_class_name
@@ -87,35 +87,47 @@ def run_worker_loop(
         world_group = get_world_group()
 
         while True:
-            if rank == 0:
-                data = conn.recv()
-                world_group.broadcast_tensor_dict(data, src=0)
-            else:
-                data = world_group.broadcast_tensor_dict(src=0)
+            try:
+                if rank == 0:
+                    data = conn.recv()
+                    world_group.broadcast_tensor_dict(data, src=0)
+                else:
+                    data = world_group.broadcast_tensor_dict(src=0)
 
-            method = data.get("method")
-            kwargs = data.get("kwargs", {})
+                method = data.get("method")
+                kwargs = data.get("kwargs", {})
 
-            if method == "shutdown":
+                if method == "shutdown":
+                    break
+
+                output = getattr(worker, method)(**kwargs)
+                if rank == 0:
+                    conn.send(
+                        {
+                            "status": "success",
+                            "output": output,
+                        }
+                    )
+                world_group.barrier()
+            except EOFError as e:
+                logger.error(f"Worker process {rank} connection closed: {e}", exc_info=True)
+                if rank == 0:
+                    conn.send(
+                        {
+                            "status": "error",
+                            "error": str(e),
+                        }
+                    )
                 break
-
-            output = getattr(worker, method)(**kwargs)
-            if rank == 0:
-                conn.send(
-                    {
-                        "status": "success",
-                        "output": output,
-                    }
-                )
-            dist.barrier()
-    except EOFError as e:
-        logger.error(f"Worker process {rank} connection closed: {e}", exc_info=True)
-        conn.send(
-            {
-                "status": "error",
-                "error": str(e),
-            }
-        )
+            except Exception as e:
+                logger.error(f"Worker process {rank} error: {e}", exc_info=True)
+                if rank == 0:
+                    conn.send(
+                        {
+                            "status": "error",
+                            "error": str(e),
+                        }
+                    )
     except Exception as e:
         logger.error(f"Worker process {rank} error: {e}", exc_info=True)
         conn.send(
@@ -126,9 +138,6 @@ def run_worker_loop(
         )
     finally:
         logger.info(f"Worker process {rank} is exiting")
-        try:
-            conn.close()
-            destroy_model_parallel()
-            destroy_distributed_environment()
-        except Exception:
-            pass
+        conn.close()
+        destroy_model_parallel()
+        destroy_distributed_environment()

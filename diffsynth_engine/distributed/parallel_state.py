@@ -497,15 +497,18 @@ def get_dit_group():
 
 
 def init_vae_group(
-    dit_parallel_size: int,
     vae_parallel_size: int,
     backend: str,
 ):
-    # Initialize VAE group first
+    # Initialize VAE group
     global _VAE
     assert _VAE is None, "VAE parallel group is already initialized"
-    vae_ranks = list(range(dit_parallel_size, dit_parallel_size + vae_parallel_size))
-    _VAE = torch.distributed.new_group(ranks=vae_ranks, backend=backend)
+    vae_ranks = list(range(vae_parallel_size))
+    _VAE = GroupCoordinator(
+        group_ranks=[vae_ranks],
+        local_rank=get_world_group().local_rank,
+        torch_distributed_backend=backend,
+    )
 
 
 def initialize_model_parallel(
@@ -657,7 +660,7 @@ def initialize_model_parallel(
     )
 
     if vae_parallel_size > 0:
-        init_vae_group(dit_parallel_size, vae_parallel_size, backend)
+        init_vae_group(vae_parallel_size, backend)
     init_dit_group(dit_parallel_size, backend)
 
 

@@ -108,7 +108,10 @@ class DiffSynthEngine:
         if self.workers is not None:
             logger.info("Shutting down workers...")
 
-            self.conns[0].send({"method": "shutdown"})
+            try:
+                self.conns[0].send({"method": "shutdown"})
+            except (BrokenPipeError, OSError):
+                pass
 
             for process in self.workers:
                 process.join(timeout=10)
