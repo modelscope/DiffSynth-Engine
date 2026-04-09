@@ -112,39 +112,6 @@ def retrieve_timesteps(
 
 
 class ZImagePipeline(Pipeline):
-    r"""
-    The Z-Image pipeline for text-to-image generation, adapted for DiffSynth-Engine.
-
-    Changes from the original diffusers implementation:
-    - Inherits from Pipeline (DiffSynth-Engine) instead of DiffusionPipeline
-    - Removed ZImageLoraLoaderMixin (LoRA loading support)
-    - Removed FromSingleFileMixin (single-file model loading)
-    - Removed register_modules() — components are assigned directly
-    - Removed model_cpu_offload_seq — CPU offload sequence declaration (DiffusionPipeline feature)
-    - Removed _execution_device property — replaced with self.device
-    - Removed maybe_free_model_hooks() — model offload hooks (DiffusionPipeline feature)
-    - Removed replace_example_docstring decorator
-    - Reimplemented from_pretrained as classmethod with model_path_or_config pattern
-    - Added set_forward_context for transformer initialization and inference
-    - Added _build_attn_metadata for attention metadata construction
-    - Added _predict_noise_with_cfg for CFG-parallel denoising support
-    - Added attn_backend initialization for DiffSynth-Engine attention system
-
-    Args:
-        pipeline_config (`ZImagePipelineConfig`):
-            Configuration for the pipeline.
-        scheduler (`FlowMatchEulerDiscreteScheduler`):
-            A scheduler to be used in combination with `transformer` to denoise the encoded image latents.
-        vae (`AutoencoderKL`):
-            Variational Auto-Encoder (VAE) Model to encode and decode images to and from latent representations.
-        text_encoder (`PreTrainedModel`):
-            Text encoder model for encoding prompts into embeddings.
-        tokenizer (`AutoTokenizer`):
-            Tokenizer for the text encoder.
-        transformer (`ZImageTransformer2DModel`):
-            Conditional Transformer architecture to denoise the encoded image latents.
-    """
-
     _callback_tensor_inputs = ["latents", "prompt_embeds"]
 
     def __init__(
@@ -306,7 +273,6 @@ class ZImagePipeline(Pipeline):
         max_sequence_length: int = 512,
     ):
         prompt = [prompt] if isinstance(prompt, str) else prompt
-
         prompt_embeds = self._encode_prompt(
             prompt=prompt,
             device=device,
@@ -375,6 +341,7 @@ class ZImagePipeline(Pipeline):
         ).hidden_states[-2]
 
         embeddings_list = []
+
         for i in range(len(prompt_embeds)):
             embeddings_list.append(prompt_embeds[i][prompt_masks[i]])
 
@@ -563,48 +530,77 @@ class ZImagePipeline(Pipeline):
 
         Args:
             prompt (`str` or `List[str]`, *optional*):
-                The prompt or prompts to guide the image generation.
+                The prompt or prompts to guide the image generation. If not defined, one has to pass `prompt_embeds`.
+                instead.
             height (`int`, *optional*, defaults to 1024):
                 The height in pixels of the generated image.
             width (`int`, *optional*, defaults to 1024):
                 The width in pixels of the generated image.
             num_inference_steps (`int`, *optional*, defaults to 50):
-                The number of denoising steps.
+                The number of denoising steps. More denoising steps usually lead to a higher quality image at the
+                expense of slower inference.
             sigmas (`List[float]`, *optional*):
-                Custom sigmas to use for the denoising process.
+                Custom sigmas to use for the denoising process with schedulers which support a `sigmas` argument in
+                their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is passed
+                will be used.
             guidance_scale (`float`, *optional*, defaults to 5.0):
-                Guidance scale for classifier-free guidance.
+                Guidance scale as defined in [Classifier-Free Diffusion Guidance](https://arxiv.org/abs/2207.12598).
+                `guidance_scale` is defined as `w` of equation 2. of [Imagen
+                Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
+                1`. Higher guidance scale encourages to generate images that are closely linked to the text `prompt`,
+                usually at the expense of lower image quality.
             cfg_normalization (`bool`, *optional*, defaults to False):
-                Whether to apply CFG renormalization.
+                Whether to apply configuration normalization.
             cfg_truncation (`float`, *optional*, defaults to 1.0):
-                Time-aware truncation for CFG. When normalized time exceeds this value, CFG is disabled.
+                The truncation value for configuration.
             negative_prompt (`str` or `List[str]`, *optional*):
-                The negative prompt or prompts.
+                The prompt or prompts not to guide the image generation. If not defined, one has to pass
+                `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
+                less than `1`).
             num_images_per_prompt (`int`, *optional*, defaults to 1):
                 The number of images to generate per prompt.
             generator (`torch.Generator` or `List[torch.Generator]`, *optional*):
-                Random generator(s) for deterministic generation.
+                One or a list of [torch generator(s)](https://pytorch.org/docs/stable/generated/torch.Generator.html)
+                to make generation deterministic.
             latents (`torch.FloatTensor`, *optional*):
-                Pre-generated noisy latents.
+                Pre-generated noisy latents, sampled from a Gaussian distribution, to be used as inputs for image
+                generation. Can be used to tweak the same generation with different prompts. If not provided, a latents
+                tensor will be generated by sampling using the supplied random `generator`.
             prompt_embeds (`List[torch.FloatTensor]`, *optional*):
-                Pre-generated text embeddings.
+                Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
+                provided, text embeddings will be generated from `prompt` input argument.
             negative_prompt_embeds (`List[torch.FloatTensor]`, *optional*):
-                Pre-generated negative text embeddings.
+                Pre-generated negative text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
+                weighting. If not provided, negative_prompt_embeds will be generated from `negative_prompt` input
+                argument.
             output_type (`str`, *optional*, defaults to `"pil"`):
-                The output format of the generated image.
+                The output format of the generate image. Choose between
+                [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
             return_dict (`bool`, *optional*, defaults to `True`):
-                Whether to return a `ZImagePipelineOutput` instead of a plain tuple.
+                Whether or not to return a [`~pipelines.stable_diffusion.ZImagePipelineOutput`] instead of a plain
+                tuple.
             joint_attention_kwargs (`dict`, *optional*):
-                Kwargs passed to the attention processor.
+                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
+                `self.processor` in
+                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
             callback_on_step_end (`Callable`, *optional*):
-                A function called at the end of each denoising step.
+                A function that calls at the end of each denoising steps during the inference. The function is called
+                with the following arguments: `callback_on_step_end(self: DiffusionPipeline, step: int, timestep: int,
+                callback_kwargs: Dict)`. `callback_kwargs` will include a list of all tensors as specified by
+                `callback_on_step_end_tensor_inputs`.
             callback_on_step_end_tensor_inputs (`List`, *optional*):
-                Tensor inputs for the callback function.
+                The list of tensor inputs for the `callback_on_step_end` function. The tensors specified in the list
+                will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
+                `._callback_tensor_inputs` attribute of your pipeline class.
             max_sequence_length (`int`, *optional*, defaults to 512):
-                Maximum sequence length for the prompt.
+                Maximum sequence length to use with the `prompt`.
+
+        Examples:
 
         Returns:
-            `ZImagePipelineOutput` or `tuple`: Generated images.
+            [`~pipelines.z_image.ZImagePipelineOutput`] or `tuple`: [`~pipelines.z_image.ZImagePipelineOutput`] if
+            `return_dict` is True, otherwise a `tuple`. When returning a tuple, the first element is a list with the
+            generated images.
         """
         height = height or 1024
         width = width or 1024
@@ -626,7 +622,6 @@ class ZImagePipeline(Pipeline):
         self._guidance_scale = guidance_scale
         self._joint_attention_kwargs = joint_attention_kwargs
         self._interrupt = False
-
         # Define call parameters
         if prompt is not None and isinstance(prompt, str):
             batch_size = 1
@@ -635,7 +630,7 @@ class ZImagePipeline(Pipeline):
         else:
             batch_size = len(prompt_embeds)
 
-        # Encode prompts
+        # If prompt_embeds is provided and prompt is None, skip encoding
         if prompt_embeds is not None and prompt is None:
             if self.do_classifier_free_guidance and negative_prompt_embeds is None:
                 raise ValueError(
@@ -705,19 +700,19 @@ class ZImagePipeline(Pipeline):
                 if self.interrupt:
                     continue
 
-                # broadcast to batch dimension
+                # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latents.shape[0])
                 timestep = (1000 - timestep) / 1000
-                # Normalized time for time-aware CFG truncation (0 at start, 1 at end)
+                # Normalized time for time-aware config (0 at start, 1 at end)
                 t_norm = timestep[0].item()
 
-                # Handle CFG truncation
+                # Handle cfg truncation
                 current_guidance_scale = self.guidance_scale
                 if self.do_classifier_free_guidance and cfg_truncation is not None and float(cfg_truncation) <= 1:
                     if t_norm > cfg_truncation:
                         current_guidance_scale = 0.0
 
-                # Determine whether to apply CFG this step
+                # Run CFG only if configured AND scale is non-zero
                 apply_cfg = self.do_classifier_free_guidance and current_guidance_scale > 0
 
                 attn_metadata = self._build_attn_metadata(self.pipeline_config.attn_params)
@@ -758,6 +753,7 @@ class ZImagePipeline(Pipeline):
 
         if output_type == "latent":
             image = latents
+
         else:
             latents = latents.to(self.vae.dtype)
             latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor

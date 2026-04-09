@@ -47,12 +47,6 @@ def apply_rotary_emb(x_in: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tenso
         return x_out.type_as(x_in)
 
 
-def select_per_token(noisy_val, clean_val, noise_mask, seq_len):
-    """Select per-token values based on noise mask for omni mode modulation."""
-    mask = noise_mask[:, :seq_len].unsqueeze(-1).float()
-    return noisy_val * mask + clean_val * (1.0 - mask)
-
-
 def _linear_with_batch_padding(module: nn.Module, input_tensor: torch.Tensor, min_batch_size: int = 2) -> torch.Tensor:
     """
     Run a Linear (or Sequential containing Linear) with batch padding to align CUDA kernel paths.
@@ -190,9 +184,23 @@ class ZImageSingleStreamAttention(nn.Module):
         # [B, S, H, D] -> [B, S, H*D]
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.to(dtype)
-
         output = self.to_out[0](hidden_states)
         return output
+
+
+def select_per_token(
+    value_noisy: torch.Tensor,
+    value_clean: torch.Tensor,
+    noise_mask: torch.Tensor,
+    seq_len: int,
+) -> torch.Tensor:
+    """Select per-token values based on noise mask for omni mode modulation.
+
+    Note: diffsynth-engine uses mask*val + (1-mask)*val arithmetic instead of
+    diffusers' torch.where + unsqueeze/expand approach, but produces equivalent results.
+    """
+    mask = noise_mask[:, :seq_len].unsqueeze(-1).float()
+    return value_noisy * mask + value_clean * (1.0 - mask)
 
 
 class FeedForward(nn.Module):
@@ -204,16 +212,14 @@ class FeedForward(nn.Module):
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
 
+    def _forward_silu_gating(self, x1, x3):
+        return F.silu(x1) * x3
+
     def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        return self.w2(self._forward_silu_gating(self.w1(x), self.w3(x)))
 
 
 class ZImageTransformerBlock(nn.Module):
-    """
-    Single-stream transformer block with optional adaLN modulation.
-    Supports both global modulation (standard) and per-token modulation (omni mode).
-    """
-
     def __init__(
         self,
         layer_id: int,
@@ -263,7 +269,7 @@ class ZImageTransformerBlock(nn.Module):
             seq_len = x.shape[1]
 
             if noise_mask is not None:
-                # Per-token modulation: different modulation for noisy/clean tokens (omni mode)
+                # Per-token modulation: different modulation for noisy/clean tokens
                 mod_noisy = _linear_with_batch_padding(self.adaLN_modulation, adaln_noisy)
                 mod_clean = _linear_with_batch_padding(self.adaLN_modulation, adaln_clean)
 
@@ -281,7 +287,7 @@ class ZImageTransformerBlock(nn.Module):
                 gate_msa = select_per_token(gate_msa_noisy, gate_msa_clean, noise_mask, seq_len)
                 gate_mlp = select_per_token(gate_mlp_noisy, gate_mlp_clean, noise_mask, seq_len)
             else:
-                # Global modulation: same modulation for all tokens
+                # Global modulation: same modulation for all tokens (avoid double select)
                 mod = _linear_with_batch_padding(self.adaLN_modulation, adaln_input)
                 scale_msa, gate_msa, scale_mlp, gate_mlp = mod.unsqueeze(1).chunk(4, dim=2)
                 gate_msa, gate_mlp = gate_msa.tanh(), gate_mlp.tanh()
@@ -296,18 +302,17 @@ class ZImageTransformerBlock(nn.Module):
             # FFN block
             x = x + gate_mlp * self.ffn_norm2(self.feed_forward(self.ffn_norm1(x) * scale_mlp))
         else:
-            # No modulation (used by context_refiner)
+            # Attention block
             attn_out = self.attention(self.attention_norm1(x), attention_mask=attn_mask, freqs_cis=freqs_cis)
             x = x + self.attention_norm2(attn_out)
 
+            # FFN block
             x = x + self.ffn_norm2(self.feed_forward(self.ffn_norm1(x)))
 
         return x
 
 
 class FinalLayer(nn.Module):
-    """Final output layer with adaLN modulation."""
-
     def __init__(self, hidden_size, out_channels):
         super().__init__()
         self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
@@ -322,11 +327,12 @@ class FinalLayer(nn.Module):
         seq_len = x.shape[1]
 
         if noise_mask is not None:
-            # Per-token modulation (omni mode)
+            # Per-token modulation
             scale_noisy = 1.0 + _linear_with_batch_padding(self.adaLN_modulation, c_noisy)
             scale_clean = 1.0 + _linear_with_batch_padding(self.adaLN_modulation, c_clean)
             scale = select_per_token(scale_noisy, scale_clean, noise_mask, seq_len)
         else:
+            # Original global modulation
             assert c is not None, "Either c or (c_noisy, c_clean) must be provided"
             scale = 1.0 + _linear_with_batch_padding(self.adaLN_modulation, c)
             scale = scale.unsqueeze(1)
@@ -337,8 +343,6 @@ class FinalLayer(nn.Module):
 
 
 class RopeEmbedder:
-    """3D Rotary Position Embedding using complex number representation."""
-
     def __init__(
         self,
         theta: float = 256.0,
@@ -355,12 +359,13 @@ class RopeEmbedder:
     def precompute_freqs_cis(dim: List[int], end: List[int], theta: float = 256.0):
         with torch.device("cpu"):
             freqs_cis = []
-            for d, e in zip(dim, end):
+            for i, (d, e) in enumerate(zip(dim, end)):
                 freqs = 1.0 / (theta ** (torch.arange(0, d, 2, dtype=torch.float64, device="cpu") / d))
                 timestep = torch.arange(e, device=freqs.device, dtype=torch.float64)
                 freqs = torch.outer(timestep, freqs).float()
-                freqs_cis_i = torch.polar(torch.ones_like(freqs), freqs).to(torch.complex64)
+                freqs_cis_i = torch.polar(torch.ones_like(freqs), freqs).to(torch.complex64)  # complex64
                 freqs_cis.append(freqs_cis_i)
+
             return freqs_cis
 
     def __call__(self, ids: torch.Tensor):
@@ -372,6 +377,7 @@ class RopeEmbedder:
             self.freqs_cis = self.precompute_freqs_cis(self.axes_dims, self.axes_lens, theta=self.theta)
             self.freqs_cis = [freqs_cis.to(device) for freqs_cis in self.freqs_cis]
         else:
+            # Ensure freqs_cis are on the same device as ids
             if self.freqs_cis[0].device != device:
                 self.freqs_cis = [freqs_cis.to(device) for freqs_cis in self.freqs_cis]
 
@@ -383,8 +389,6 @@ class RopeEmbedder:
 
 
 class ZImageTransformer2DModel(DiffusionModel):
-    """Z-Image Transformer model adapted for DiffSynth-Engine."""
-
     @register_to_config
     def __init__(
         self,
@@ -399,11 +403,11 @@ class ZImageTransformer2DModel(DiffusionModel):
         norm_eps=1e-5,
         qk_norm=True,
         cap_feat_dim=2560,
-        siglip_feat_dim=None,
+        siglip_feat_dim=None,  # Optional: set to enable SigLIP support for Omni
         rope_theta=256.0,
         t_scale=1000.0,
-        axes_dims=(32, 48, 48),
-        axes_lens=(1024, 512, 512),
+        axes_dims=[32, 48, 48],
+        axes_lens=[1024, 512, 512],
     ) -> None:
         super().__init__()
         self.in_channels = in_channels
@@ -420,7 +424,7 @@ class ZImageTransformer2DModel(DiffusionModel):
 
         all_x_embedder = {}
         all_final_layer = {}
-        for patch_size, f_patch_size in zip(all_patch_size, all_f_patch_size):
+        for patch_idx, (patch_size, f_patch_size) in enumerate(zip(all_patch_size, all_f_patch_size)):
             x_embedder = nn.Linear(f_patch_size * patch_size * patch_size * in_channels, dim, bias=True)
             all_x_embedder[f"{patch_size}-{f_patch_size}"] = x_embedder
 
@@ -429,7 +433,6 @@ class ZImageTransformer2DModel(DiffusionModel):
 
         self.all_x_embedder = nn.ModuleDict(all_x_embedder)
         self.all_final_layer = nn.ModuleDict(all_final_layer)
-
         self.noise_refiner = nn.ModuleList(
             [
                 ZImageTransformerBlock(
@@ -458,7 +461,6 @@ class ZImageTransformer2DModel(DiffusionModel):
                 for layer_id in range(n_refiner_layers)
             ]
         )
-
         self.t_embedder = TimestepEmbedder(min(dim, ADALN_EMBED_DIM), mid_size=1024)
         self.cap_embedder = nn.Sequential(RMSNorm(cap_feat_dim, eps=norm_eps), nn.Linear(cap_feat_dim, dim, bias=True))
 
@@ -499,7 +501,6 @@ class ZImageTransformer2DModel(DiffusionModel):
                 for layer_id in range(n_layers)
             ]
         )
-
         head_dim = dim // n_heads
         assert head_dim == sum(axes_dims)
         self.axes_dims = axes_dims
@@ -529,30 +530,33 @@ class ZImageTransformer2DModel(DiffusionModel):
                 x_item = None
                 for j in range(len(size[i])):
                     if size[i][j] is None:
+                        ori_len = 0
                         pad_len = SEQ_MULTI_OF
-                        cu_len += pad_len
+                        cu_len += pad_len + ori_len
                     else:
-                        img_F, img_H, img_W = size[i][j]
-                        ori_len = (img_F // pF) * (img_H // pH) * (img_W // pW)
+                        F, H, W = size[i][j]
+                        ori_len = (F // pF) * (H // pH) * (W // pW)
                         pad_len = (-ori_len) % SEQ_MULTI_OF
                         x_item = (
                             unified_x[cu_len : cu_len + ori_len]
-                            .view(img_F // pF, img_H // pH, img_W // pW, pF, pH, pW, self.out_channels)
+                            .view(F // pF, H // pH, W // pW, pF, pH, pW, self.out_channels)
                             .permute(6, 0, 3, 1, 4, 2, 5)
-                            .reshape(self.out_channels, img_F, img_H, img_W)
+                            .reshape(self.out_channels, F, H, W)
                         )
                         cu_len += ori_len + pad_len
-                result.append(x_item)
+                result.append(x_item)  # Return only the last (target) image
             return result
         else:
+            # Original mode: simple unpatchify
             for i in range(bsz):
-                img_F, img_H, img_W = size[i]
-                ori_len = (img_F // pF) * (img_H // pH) * (img_W // pW)
+                F, H, W = size[i]
+                ori_len = (F // pF) * (H // pH) * (W // pW)
+                # "f h w pf ph pw c -> c (f pf) (h ph) (w pw)"
                 x[i] = (
                     x[i][:ori_len]
-                    .view(img_F // pF, img_H // pH, img_W // pW, pF, pH, pW, self.out_channels)
+                    .view(F // pF, H // pH, W // pW, pF, pH, pW, self.out_channels)
                     .permute(6, 0, 3, 1, 4, 2, 5)
-                    .reshape(self.out_channels, img_F, img_H, img_W)
+                    .reshape(self.out_channels, F, H, W)
                 )
             return x
 
@@ -567,11 +571,11 @@ class ZImageTransformer2DModel(DiffusionModel):
     def _patchify_image(self, image: torch.Tensor, patch_size: int, f_patch_size: int):
         """Patchify a single image tensor: (C, F, H, W) -> (num_patches, patch_dim)."""
         pH, pW, pF = patch_size, patch_size, f_patch_size
-        C, img_F, img_H, img_W = image.size()
-        F_tokens, H_tokens, W_tokens = img_F // pF, img_H // pH, img_W // pW
+        C, F, H, W = image.size()
+        F_tokens, H_tokens, W_tokens = F // pF, H // pH, W // pW
         image = image.view(C, F_tokens, pF, H_tokens, pH, W_tokens, pW)
         image = image.permute(1, 3, 5, 2, 4, 6, 0).reshape(F_tokens * H_tokens * W_tokens, pF * pH * pW * C)
-        return image, (img_F, img_H, img_W), (F_tokens, H_tokens, W_tokens)
+        return image, (F, H, W), (F_tokens, H_tokens, W_tokens)
 
     def _pad_with_ids(
         self,
@@ -586,6 +590,7 @@ class ZImageTransformer2DModel(DiffusionModel):
         pad_len = (-ori_len) % SEQ_MULTI_OF
         total_len = ori_len + pad_len
 
+        # Pos IDs
         ori_pos_ids = self.create_coordinate_grid(size=pos_grid_size, start=pos_start, device=device).flatten(0, 2)
         if pad_len > 0:
             pad_pos_ids = (
@@ -606,7 +611,7 @@ class ZImageTransformer2DModel(DiffusionModel):
             padded_feat = feat
             pad_mask = torch.zeros(ori_len, dtype=torch.bool, device=device)
 
-        noise_mask = [noise_mask_val] * total_len if noise_mask_val is not None else None
+        noise_mask = [noise_mask_val] * total_len if noise_mask_val is not None else None  # token level
         return padded_feat, pos_ids, pad_mask, total_len, noise_mask
 
     def patchify_and_embed(
@@ -687,7 +692,7 @@ class ZImageTransformer2DModel(DiffusionModel):
                 cap_noise.extend(cap_nm)
                 cap_cu_len += len(cap_item)
                 cap_end_pos.append(cap_cu_len)
-                cap_cu_len += 2
+                cap_cu_len += 2  # for image vae and siglip tokens
 
             all_cap_out.append(torch.cat(cap_feats_list, dim=0))
             all_cap_pos_ids.append(torch.cat(cap_pos_list, dim=0))
@@ -739,6 +744,7 @@ class ZImageTransformer2DModel(DiffusionModel):
                         sig_out, sig_pos, sig_mask, sig_len, sig_nm = self._pad_with_ids(
                             sig_flat, (1, sig_H, sig_W), (cap_end_pos[j] + 1, 0, 0), device, noise_val
                         )
+                        # Scale position IDs to match x resolution
                         if x_size[j] is not None:
                             sig_pos = sig_pos.float()
                             sig_pos[..., 1] = sig_pos[..., 1] / max(sig_H - 1, 1) * (x_size[j][1] - 1)
@@ -764,6 +770,7 @@ class ZImageTransformer2DModel(DiffusionModel):
                 all_sig_len.append(sig_lens)
                 all_sig_noise_mask.append(sig_noise)
 
+        # Compute x position offsets
         all_x_pos_offsets = [(sum(all_cap_len[i]), sum(all_cap_len[i]) + sum(all_x_len[i])) for i in range(bsz)]
 
         return (
@@ -788,7 +795,7 @@ class ZImageTransformer2DModel(DiffusionModel):
         feats: List[torch.Tensor],
         pos_ids: List[torch.Tensor],
         inner_pad_mask: List[torch.Tensor],
-        pad_token: nn.Parameter,
+        pad_token: torch.nn.Parameter,
         noise_mask: Optional[List[List[int]]] = None,
         device: torch.device = None,
     ):
@@ -797,7 +804,7 @@ class ZImageTransformer2DModel(DiffusionModel):
         max_seqlen = max(item_seqlens)
         bsz = len(feats)
 
-        # Apply pad token
+        # Pad token
         feats_cat = torch.cat(feats, dim=0)
         feats_cat[torch.cat(inner_pad_mask)] = pad_token
         feats = list(feats_cat.split(item_seqlens, dim=0))
@@ -809,7 +816,7 @@ class ZImageTransformer2DModel(DiffusionModel):
         feats = pad_sequence(feats, batch_first=True, padding_value=0.0)
         freqs_cis = pad_sequence(freqs_cis, batch_first=True, padding_value=0.0)[:, : feats.shape[1]]
 
-        # Attention mask (not used by USPAttention, kept for interface compatibility)
+        # Attention mask
         attn_mask = torch.zeros((bsz, max_seqlen), dtype=torch.bool, device=device)
         for i, seq_len in enumerate(item_seqlens):
             attn_mask[i, :seq_len] = 1
@@ -842,8 +849,7 @@ class ZImageTransformer2DModel(DiffusionModel):
         omni_mode: bool,
         device: torch.device,
     ):
-        """
-        Build unified sequence: x, cap, and optionally siglip.
+        """Build unified sequence: x, cap, and optionally siglip.
         Basic mode order: [x, cap]; Omni mode order: [cap, x, siglip]
         """
         bsz = len(x_seqlens)
@@ -855,6 +861,7 @@ class ZImageTransformer2DModel(DiffusionModel):
             x_len, cap_len = x_seqlens[i], cap_seqlens[i]
 
             if omni_mode:
+                # Omni: [cap, x, siglip]
                 if siglip is not None and siglip_seqlens is not None:
                     sig_len = siglip_seqlens[i]
                     unified.append(torch.cat([cap[i][:cap_len], x[i][:x_len], siglip[i][:sig_len]]))
@@ -873,6 +880,7 @@ class ZImageTransformer2DModel(DiffusionModel):
                         torch.tensor(cap_noise_mask[i] + x_noise_mask[i], dtype=torch.long, device=device)
                     )
             else:
+                # Basic: [x, cap]
                 unified.append(torch.cat([x[i][:x_len], cap[i][:cap_len]]))
                 unified_freqs.append(torch.cat([x_freqs[i][:x_len], cap_freqs[i][:cap_len]]))
 
@@ -891,7 +899,7 @@ class ZImageTransformer2DModel(DiffusionModel):
         unified = pad_sequence(unified, batch_first=True, padding_value=0.0)
         unified_freqs = pad_sequence(unified_freqs, batch_first=True, padding_value=0.0)
 
-        # Attention mask (kept for interface compatibility, not used by USPAttention)
+        # Attention mask
         attn_mask = torch.zeros((bsz, max_seqlen), dtype=torch.bool, device=device)
         for i, seq_len in enumerate(unified_seqlens):
             attn_mask[i, :seq_len] = 1
@@ -918,8 +926,6 @@ class ZImageTransformer2DModel(DiffusionModel):
         f_patch_size: int = 1,
     ):
         """
-        Forward pass of the Z-Image Transformer.
-
         Flow: patchify -> t_embed -> x_embed -> x_refine -> cap_embed -> cap_refine
               -> [siglip_embed -> siglip_refine] -> build_unified -> main_layers -> final_layer -> unpatchify
         """
@@ -928,10 +934,12 @@ class ZImageTransformer2DModel(DiffusionModel):
         device = x[0][-1].device if omni_mode else x[0].device
 
         if omni_mode:
+            # Dual embeddings: noisy (t) and clean (t=1)
             t_noisy = _linear_with_batch_padding(self.t_embedder, t * self.t_scale).type_as(x[0][-1])
             t_clean = _linear_with_batch_padding(self.t_embedder, torch.ones_like(t) * self.t_scale).type_as(x[0][-1])
             adaln_input = None
         else:
+            # Single embedding for all tokens
             adaln_input = _linear_with_batch_padding(self.t_embedder, t * self.t_scale).type_as(x[0])
             t_noisy = t_clean = None
 
@@ -967,7 +975,7 @@ class ZImageTransformer2DModel(DiffusionModel):
 
         # X embed & refine
         x_seqlens = [len(xi) for xi in x]
-        x = self.all_x_embedder[f"{patch_size}-{f_patch_size}"](torch.cat(x, dim=0))
+        x = self.all_x_embedder[f"{patch_size}-{f_patch_size}"](torch.cat(x, dim=0))  # embed
         x, x_freqs, x_mask, _, x_noise_tensor = self._prepare_sequence(
             list(x.split(x_seqlens, dim=0)), x_pos_ids, x_pad_mask, self.x_pad_token, x_noise_mask, device
         )
@@ -977,7 +985,7 @@ class ZImageTransformer2DModel(DiffusionModel):
 
         # Cap embed & refine
         cap_seqlens = [len(ci) for ci in cap_feats]
-        cap_feats = self.cap_embedder(torch.cat(cap_feats, dim=0))
+        cap_feats = self.cap_embedder(torch.cat(cap_feats, dim=0))  # embed
         cap_feats, cap_freqs, cap_mask, _, _ = self._prepare_sequence(
             list(cap_feats.split(cap_seqlens, dim=0)), cap_pos_ids, cap_pad_mask, self.cap_pad_token, None, device
         )
@@ -985,11 +993,11 @@ class ZImageTransformer2DModel(DiffusionModel):
         for layer in self.context_refiner:
             cap_feats = layer(cap_feats, cap_mask, cap_freqs)
 
-        # Siglip embed & refine (omni mode only)
+        # Siglip embed & refine
         siglip_seqlens = siglip_freqs = None
         if omni_mode and siglip_feats[0] is not None and self.siglip_embedder is not None:
             siglip_seqlens = [len(si) for si in siglip_feats]
-            siglip_feats = self.siglip_embedder(torch.cat(siglip_feats, dim=0))
+            siglip_feats = self.siglip_embedder(torch.cat(siglip_feats, dim=0))  # embed
             siglip_feats, siglip_freqs, siglip_mask, _, _ = self._prepare_sequence(
                 list(siglip_feats.split(siglip_seqlens, dim=0)),
                 siglip_pos_ids,
@@ -1002,7 +1010,7 @@ class ZImageTransformer2DModel(DiffusionModel):
             for layer in self.siglip_refiner:
                 siglip_feats = layer(siglip_feats, siglip_mask, siglip_freqs)
 
-        # Build unified sequence
+        # Unified sequence
         unified, unified_freqs, unified_mask, unified_noise_tensor = self._build_unified_sequence(
             x,
             x_freqs,
