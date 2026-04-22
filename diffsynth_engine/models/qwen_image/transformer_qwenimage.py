@@ -25,7 +25,8 @@ from diffusers.configuration_utils import register_to_config
 from diffsynth_engine.layers.mlp import FastGELUMLP
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
-from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
+from diffusers.models.normalization import AdaLayerNormContinuous
+from diffsynth_engine.layers.norm import RMSNorm
 
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
