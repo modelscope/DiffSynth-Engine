@@ -22,7 +22,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from diffusers.configuration_utils import register_to_config
-from diffusers.models.attention import FeedForward
+from diffsynth_engine.layers.mlp import FastGELUMLP
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
@@ -553,7 +553,7 @@ class QwenImageTransformerBlock(nn.Module):
             eps=eps,
         )
         self.img_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
-        self.img_mlp = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
+        self.img_mlp = FastGELUMLP(dim=dim, dim_out=dim)
 
         # Text processing modules
         self.txt_mod = nn.Sequential(
@@ -563,7 +563,7 @@ class QwenImageTransformerBlock(nn.Module):
         self.txt_norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
         # Text doesn't need separate attention - it's handled by img_attn joint computation
         self.txt_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
-        self.txt_mlp = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
+        self.txt_mlp = FastGELUMLP(dim=dim, dim_out=dim)
 
         self.zero_cond_t = zero_cond_t
 
