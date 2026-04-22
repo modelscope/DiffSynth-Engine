@@ -22,6 +22,7 @@ class AttentionType(enum.Enum):
     SAGE2 = enum.auto()
     SAGE3 = enum.auto()
     SPARGE = enum.auto()
+    MINDIE = enum.auto()
 
     def __str__(self) -> str:
         return self.name.lower()

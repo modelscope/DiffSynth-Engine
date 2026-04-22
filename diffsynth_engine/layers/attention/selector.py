@@ -1,7 +1,7 @@
 from functools import cache
 
 from diffsynth_engine.layers.attention.backends.abstract import AttentionBackend, AttentionType
-from diffsynth_engine.utils.import_utils import LazyImport
+from diffsynth_engine.utils.import_utils import LazyImport, is_npu_available
 
 AiterBackend = LazyImport("diffsynth_engine.layers.attention.backends.aiter", "AiterBackend")
 AiterFP8Backend = LazyImport("diffsynth_engine.layers.attention.backends.aiter", "AiterFP8Backend")
@@ -15,6 +15,7 @@ SageAttention2Backend = LazyImport("diffsynth_engine.layers.attention.backends.s
 SageAttention3Backend = LazyImport("diffsynth_engine.layers.attention.backends.sage_attn_3", "SageAttention3Backend")
 SDPABackend = LazyImport("diffsynth_engine.layers.attention.backends.sdpa", "SDPABackend")
 SpargeAttentionBackend = LazyImport("diffsynth_engine.layers.attention.backends.sparge_attn", "SpargeAttentionBackend")
+MindieAttentionBackend = LazyImport("diffsynth_engine.layers.attention.backends.mindie_attn", "MindieAttentionBackend")
 
 _attention_backends = {
     AttentionType.AITER: AiterBackend,
@@ -27,6 +28,7 @@ _attention_backends = {
     AttentionType.SAGE3: SageAttention3Backend,
     AttentionType.SDPA: SDPABackend,
     AttentionType.SPARGE: SpargeAttentionBackend,
+    AttentionType.MINDIE: MindieAttentionBackend,
 }
 
 
@@ -35,6 +37,11 @@ def get_attn_backend(head_size: int, attn_type: AttentionType | None = None) -> 
     # use SDPA as default
     if attn_type is None:
         attn_type = AttentionType.SDPA
+
+    # NPU auto-switch: use MINDIE when NPU is available
+    if is_npu_available():
+        attn_type = AttentionType.MINDIE
+
     selected_backend = _attention_backends[attn_type]
     selected_backend.check_availability()
     if not selected_backend.supports_head_size(head_size):
