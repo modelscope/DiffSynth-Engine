@@ -33,6 +33,7 @@ from diffsynth_engine.forward_context import get_forward_context
 from diffsynth_engine.layers.attention import USPAttention
 from diffsynth_engine.models.base import DiffusionModel
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.import_utils import is_npu_available
 
 logger = logging.get_logger(__name__)
 
@@ -59,25 +60,45 @@ def apply_rotary_emb_qwen(
     """
     if use_real:
         cos, sin = freqs_cis  # [S, D]
-        cos = cos[None, None]
-        sin = sin[None, None]
+        # Broadcast to [1, S, 1, D] to match x: [B, S, H, D]
+        cos = cos[None, :, None, :]
+        sin = sin[None, :, None, :]
         cos, sin = cos.to(x.device), sin.to(x.device)
 
+        # rotated_mode mapping
         if use_real_unbind_dim == -1:
-            # Used for flux, cogvideox, hunyuan-dit
-            x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
-            x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
+            rotated_mode = "rotated_half"
         elif use_real_unbind_dim == -2:
-            # Used for Stable Audio, OmniGen, CogView4 and Cosmos
-            x_real, x_imag = x.reshape(*x.shape[:-1], 2, -1).unbind(-2)  # [B, S, H, D//2]
-            x_rotated = torch.cat([-x_imag, x_real], dim=-1)
+            rotated_mode = "rotated_interleaved"
         else:
-            raise ValueError(f"`use_real_unbind_dim={use_real_unbind_dim}` but should be -1 or -2.")
+            raise ValueError(f"use_real_unbind_dim must be -1 or -2, got {use_real_unbind_dim}")
 
-        out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
+        if is_npu_available():
+            from mindiesd.layers.rope import rotary_position_embedding
 
-        return out
+            x_out = rotary_position_embedding(
+                x=x,
+                cos=cos,
+                sin=sin,
+                rotated_mode=rotated_mode,
+                head_first=False,
+                fused=True,
+            )
+        else:
+            # Fallback to original implementation
+            if use_real_unbind_dim == -1:
+                x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)
+                x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
+            else:
+                x_real, x_imag = x.reshape(*x.shape[:-1], 2, -1).unbind(-2)
+                x_rotated = torch.cat([-x_imag, x_real], dim=-1)
+            x_out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
+
+        return x_out
     else:
+        # Complex path: freqs_cis is [S, D//2] complex
+        # x is [B, S, H, D] where D = 2 * freq_dim
+        # Use original complex multiplication approach
         x_rotated = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
         freqs_cis = freqs_cis.unsqueeze(1)
         x_out = torch.view_as_real(x_rotated * freqs_cis).flatten(3)
