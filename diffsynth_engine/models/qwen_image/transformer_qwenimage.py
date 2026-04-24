@@ -26,7 +26,7 @@ from diffsynth_engine.layers.mlp import FastGELUMLP
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.normalization import AdaLayerNormContinuous
-from diffsynth_engine.layers.norm import RMSNorm
+from diffsynth_engine.layers.norm import RMSNorm, AdaLayerNorm
 
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
@@ -566,7 +566,7 @@ class QwenImageTransformerBlock(nn.Module):
             nn.SiLU(),
             nn.Linear(dim, 6 * dim, bias=True),  # For scale, shift, gate for norm1 and norm2
         )
-        self.img_norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
+        self.img_norm1 = AdaLayerNorm(nn.LayerNorm(dim, elementwise_affine=False, eps=eps))
         self.attn = QwenDoubleStreamAttention(
             dim=dim,
             num_attention_heads=num_attention_heads,
@@ -574,7 +574,7 @@ class QwenImageTransformerBlock(nn.Module):
             qk_norm=qk_norm,
             eps=eps,
         )
-        self.img_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
+        self.img_norm2 = AdaLayerNorm(nn.LayerNorm(dim, elementwise_affine=False, eps=eps))
         self.img_mlp = FastGELUMLP(dim=dim, dim_out=dim)
 
         # Text processing modules
@@ -582,9 +582,9 @@ class QwenImageTransformerBlock(nn.Module):
             nn.SiLU(),
             nn.Linear(dim, 6 * dim, bias=True),  # For scale, shift, gate for norm1 and norm2
         )
-        self.txt_norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
+        self.txt_norm1 = AdaLayerNorm(nn.LayerNorm(dim, elementwise_affine=False, eps=eps))
         # Text doesn't need separate attention - it's handled by img_attn joint computation
-        self.txt_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
+        self.txt_norm2 = AdaLayerNorm(nn.LayerNorm(dim, elementwise_affine=False, eps=eps))
         self.txt_mlp = FastGELUMLP(dim=dim, dim_out=dim)
 
         self.zero_cond_t = zero_cond_t
@@ -646,13 +646,17 @@ class QwenImageTransformerBlock(nn.Module):
         img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
         txt_mod1, txt_mod2 = txt_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
 
-        # Process image stream - norm1 + modulation
-        img_normed = self.img_norm1(hidden_states)
-        img_modulated, img_gate1 = self._modulate(img_normed, img_mod1, modulate_index)
+        # Split shift/scale/gate for AdaLayerNorm
+        img_shift1, img_scale1, img_gate1 = img_mod1.chunk(3, dim=-1)
+        img_shift2, img_scale2, img_gate2 = img_mod2.chunk(3, dim=-1)
+        txt_shift1, txt_scale1, txt_gate1 = txt_mod1.chunk(3, dim=-1)
+        txt_shift2, txt_scale2, txt_gate2 = txt_mod2.chunk(3, dim=-1)
 
-        # Process text stream - norm1 + modulation
-        txt_normed = self.txt_norm1(encoder_hidden_states)
-        txt_modulated, txt_gate1 = self._modulate(txt_normed, txt_mod1)
+        # Process image stream - norm1 + modulation (AdaLayerNorm)
+        img_modulated = self.img_norm1(hidden_states, img_scale1, img_shift1)
+
+        # Process text stream - norm1 + modulation (AdaLayerNorm)
+        txt_modulated = self.txt_norm1(encoder_hidden_states, txt_scale1, txt_shift1)
 
         # Use QwenDoubleStreamAttention for joint attention computation
         # This directly implements the DoubleStreamLayerMegatron logic:
@@ -674,15 +678,13 @@ class QwenImageTransformerBlock(nn.Module):
         hidden_states = hidden_states + img_gate1 * img_attn_output
         encoder_hidden_states = encoder_hidden_states + txt_gate1 * txt_attn_output
 
-        # Process image stream - norm2 + MLP
-        img_normed2 = self.img_norm2(hidden_states)
-        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2, modulate_index)
+        # Process image stream - norm2 + MLP (AdaLayerNorm)
+        img_modulated2 = self.img_norm2(hidden_states, img_scale2, img_shift2)
         img_mlp_output = self.img_mlp(img_modulated2)
         hidden_states = hidden_states + img_gate2 * img_mlp_output
 
-        # Process text stream - norm2 + MLP
-        txt_normed2 = self.txt_norm2(encoder_hidden_states)
-        txt_modulated2, txt_gate2 = self._modulate(txt_normed2, txt_mod2)
+        # Process text stream - norm2 + MLP (AdaLayerNorm)
+        txt_modulated2 = self.txt_norm2(encoder_hidden_states, txt_scale2, txt_shift2)
         txt_mlp_output = self.txt_mlp(txt_modulated2)
         encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
 
