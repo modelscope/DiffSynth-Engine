@@ -21,15 +21,18 @@ class RMSNorm(nn.Module):
         super().__init__()
         self.hidden_size = hidden_size
         self.eps = eps
-        diffusers_norm = DiffusersRMSNorm(hidden_size, eps)
-        # Use same weight as diffusers RMSNorm to match checkpoint keys
-        self.register_parameter("weight", diffusers_norm.weight)
+        # Cache the fallback instance so forward() reuses the same weight
+        # tensor. register_parameter is reference assignment (no copy), so
+        # self.weight and self._fallback.weight share the same storage.
+        # When a checkpoint writes to "weight", both paths see the update.
+        self._fallback = DiffusersRMSNorm(hidden_size, eps)
+        self.register_parameter("weight", self._fallback.weight)
 
     def forward(self, hidden_states):
         if is_npu_available() and torch_npu is not None:
             return torch_npu.npu_rms_norm(hidden_states, self.weight, epsilon=self.eps)[0]
         else:
-            return DiffusersRMSNorm(self.hidden_size, self.eps)(hidden_states)
+            return self._fallback(hidden_states)
 
 
 class AdaLayerNorm(nn.Module):

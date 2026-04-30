@@ -590,7 +590,15 @@ class QwenImageTransformerBlock(nn.Module):
         self.zero_cond_t = zero_cond_t
 
     def _modulate(self, x, mod_params, index=None):
-        """Apply modulation to input tensor"""
+        """Apply modulation to input tensor.
+
+        NOTE: Currently unused in the normal forward path, which uses
+        AdaLayerNorm (NPU-optimized) instead. This method is preserved for
+        the zero_cond_t=True path, where modulate_index drives per-token
+        conditional selection of scale/shift/gate. AdaLayerNorm does not
+        support this per-token logic, so when zero_cond_t=True is enabled,
+        forward() should switch back to _modulate for modulate_index != None.
+        """
         # x: b l d, shift: b d, scale: b d, gate: b d
         shift, scale, gate = mod_params.chunk(3, dim=-1)
 
