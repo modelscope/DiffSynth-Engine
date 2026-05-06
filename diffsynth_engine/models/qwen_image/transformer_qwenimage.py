@@ -643,11 +643,14 @@ class QwenImageTransformerBlock(nn.Module):
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         modulate_index: Optional[List[int]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Get modulation parameters for both streams
-        img_mod_params = self.img_mod(temb)  # [B, 6*dim]
-
+        # When zero_cond_t is enabled, temb has 2*B batch (cond + uncond CFG).
+        # Chunk it first so both img and txt mod_params use the same B-sized temb.
+        # NOTE: per-token conditional modulation (modulate_index) is unsupported
+        # with AdaLayerNorm; _modulate is preserved for future CFG support.
         if self.zero_cond_t:
             temb = torch.chunk(temb, 2, dim=0)[0]
+
+        img_mod_params = self.img_mod(temb)  # [B, 6*dim]
         txt_mod_params = self.txt_mod(temb)  # [B, 6*dim]
 
         # Split modulation parameters for norm1 and norm2
