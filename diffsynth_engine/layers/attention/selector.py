@@ -34,13 +34,9 @@ _attention_backends = {
 
 @cache
 def get_attn_backend(head_size: int, attn_type: AttentionType | None = None) -> type["AttentionBackend"]:
-    # use SDPA as default
     if attn_type is None:
-        attn_type = AttentionType.SDPA
-
-    # NPU auto-switch: use MINDIE when NPU is available
-    if is_npu_available():
-        attn_type = AttentionType.MINDIE
+        # Auto-detect: NPU → MINDIE, otherwise → SDPA
+        attn_type = AttentionType.MINDIE if is_npu_available() else AttentionType.SDPA
 
     selected_backend = _attention_backends[attn_type]
     selected_backend.check_availability()

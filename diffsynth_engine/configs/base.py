@@ -36,7 +36,7 @@ class PipelineConfig:
     vae_tile_stride: int | Tuple[int, int] = (192, 192)
 
     # attention
-    attn_type: AttentionType = AttentionType.SDPA
+    attn_type: AttentionType | None = None  # None = auto-detect
     attn_params: Optional[AttentionParams] = None
 
     # parallelism
