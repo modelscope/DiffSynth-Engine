@@ -683,18 +683,19 @@ class QwenImageTransformerBlock(nn.Module):
         )
 
         # Apply attention gates and add residual (like in Megatron)
-        hidden_states = hidden_states + img_gate1 * img_attn_output
-        encoder_hidden_states = encoder_hidden_states + txt_gate1 * txt_attn_output
+        # .unsqueeze(1): gates are [B, dim] from chunk, need [B, 1, dim] to broadcast with [B, S, dim]
+        hidden_states = hidden_states + img_gate1.unsqueeze(1) * img_attn_output
+        encoder_hidden_states = encoder_hidden_states + txt_gate1.unsqueeze(1) * txt_attn_output
 
         # Process image stream - norm2 + MLP (AdaLayerNorm)
         img_modulated2 = self.img_norm2(hidden_states, img_scale2, img_shift2)
         img_mlp_output = self.img_mlp(img_modulated2)
-        hidden_states = hidden_states + img_gate2 * img_mlp_output
+        hidden_states = hidden_states + img_gate2.unsqueeze(1) * img_mlp_output
 
         # Process text stream - norm2 + MLP (AdaLayerNorm)
         txt_modulated2 = self.txt_norm2(encoder_hidden_states, txt_scale2, txt_shift2)
         txt_mlp_output = self.txt_mlp(txt_modulated2)
-        encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
+        encoder_hidden_states = encoder_hidden_states + txt_gate2.unsqueeze(1) * txt_mlp_output
 
         # Clip to prevent overflow for fp16
         if encoder_hidden_states.dtype == torch.float16:
