@@ -25,8 +25,12 @@ class RMSNorm(nn.Module):
         # tensor. register_parameter is reference assignment (no copy), so
         # self.weight and self._fallback.weight share the same storage.
         # When a checkpoint writes to "weight", both paths see the update.
-        self._fallback = DiffusersRMSNorm(hidden_size, eps)
-        self.register_parameter("weight", self._fallback.weight)
+        fallback = DiffusersRMSNorm(hidden_size, eps)
+        self.register_parameter("weight", fallback.weight)
+        # Use object.__setattr__ to avoid registering _fallback as an
+        # nn.Module submodule, which would add spurious keys to state_dict()
+        # and break strict checkpoint loading.
+        object.__setattr__(self, "_fallback", fallback)
 
     def forward(self, hidden_states):
         if is_npu_available() and torch_npu is not None:
