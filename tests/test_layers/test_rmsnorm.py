@@ -92,6 +92,21 @@ class TestRMSNorm(unittest.TestCase):
         self.assertEqual(out.shape, x.shape)
         self.assertFalse(torch.isnan(out).any())
 
+    def test_state_dict_no_fallback_keys(self):
+        """state_dict must NOT contain _fallback.* keys for strict checkpoint loading."""
+        norm = RMSNorm(self.hidden_size, self.eps)
+        sd = norm.state_dict()
+        self.assertIn("weight", sd)
+        fallback_keys = [k for k in sd if "_fallback" in k]
+        self.assertEqual(fallback_keys, [], f"unexpected keys: {fallback_keys}")
+
+    def test_strict_load_state_dict(self):
+        """strict=True loading from DiffusersRMSNorm state_dict must succeed."""
+        ref = DiffusersRMSNorm(self.hidden_size, self.eps)
+        norm = RMSNorm(self.hidden_size, self.eps)
+        norm.load_state_dict(ref.state_dict(), strict=True)
+        self.assertTrue(torch.equal(norm.weight, ref.weight))
+
     def test_different_hidden_sizes(self):
         for hidden_size in [32, 128, 256]:
             norm = RMSNorm(hidden_size, self.eps)
