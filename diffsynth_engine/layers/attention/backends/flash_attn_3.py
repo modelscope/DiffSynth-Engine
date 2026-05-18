@@ -66,6 +66,7 @@ class FlashAttention3Impl(AttentionImpl):
         max_seqlen_k: int | None = None,
         window_size: Tuple[int, int] | None = None,
         attn_metadata: AttentionMetadata | None = None,
+        **kwargs,
     ) -> torch.Tensor:
         if cu_seqlens_q is not None:
             output = flash_attn_varlen_func(
@@ -114,6 +115,7 @@ class FlashAttention3FP8Impl(FlashAttention3Impl):
         max_seqlen_k: int | None = None,
         window_size: Tuple[int, int] | None = None,
         attn_metadata: AttentionMetadata | None = None,
+        **kwargs,
     ) -> torch.Tensor:
         # TODO: scaling
         original_dtype = query.dtype

@@ -107,5 +107,6 @@ class AttentionImpl(ABC, Generic[T]):
         key: torch.Tensor,
         value: torch.Tensor,
         attn_metadata: T | None = None,
+        **kwargs,
     ) -> torch.Tensor:
         raise NotImplementedError

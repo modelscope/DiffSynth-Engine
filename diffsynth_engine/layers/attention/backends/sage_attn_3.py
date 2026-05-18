@@ -60,6 +60,7 @@ class SageAttention3Impl(AttentionImpl):
         value: torch.Tensor,
         attn_mask: torch.Tensor | None = None,
         attn_metadata: AttentionMetadata | None = None,
+        **kwargs,
     ) -> torch.Tensor:
         query = rearrange(query, "b s n d -> b n s d")
         key = rearrange(key, "b s n d -> b n s d")

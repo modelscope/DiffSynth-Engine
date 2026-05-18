@@ -60,6 +60,7 @@ class AiterImpl(AttentionImpl):
         key: torch.Tensor,
         value: torch.Tensor,
         attn_metadata: AttentionMetadata | None = None,
+        **kwargs,
     ) -> torch.Tensor:
         output = aiter_flash_attn(
             query,
@@ -88,6 +89,7 @@ class AiterFP8Impl(AiterImpl):
         key: torch.Tensor,
         value: torch.Tensor,
         attn_metadata: AttentionMetadata | None = None,
+        **kwargs,
     ) -> torch.Tensor:
         # TODO: scaling
         original_dtype = query.dtype
