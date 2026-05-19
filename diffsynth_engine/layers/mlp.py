@@ -1,5 +1,3 @@
-import os
-
 import torch.nn as nn
 import torch.nn.functional as F
 from diffsynth_engine.utils.import_utils import is_npu_available
@@ -64,7 +62,7 @@ class FastGELUMLP(nn.Module):
         # net[0] = _GELUProj with internal proj (dim → inner_dim)
         hidden_states = self.net[0].proj(hidden_states)
 
-        if is_npu_available() and torch_npu is not None and not os.environ.get("DISABLE_NPU_FAST_GELU"):
+        if is_npu_available() and torch_npu is not None:
             hidden_states = torch_npu.npu_fast_gelu(hidden_states)
         else:
             hidden_states = F.gelu(hidden_states, approximate="tanh")
