@@ -28,14 +28,14 @@ def run_test(hidden_size, batch_size, seq_len, dtype):
     # Use same weight for both paths
     weight = torch.randn(hidden_size, dtype=dtype, device="npu")
 
-    # NPU fused path
-    norm = RMSNorm(hidden_size, eps)
+    # NPU fused path — move to NPU so weight is on same device as input
+    norm = RMSNorm(hidden_size, eps).to("npu")
     with torch.no_grad():
         norm.weight.copy_(weight)
     npu_out = norm(x)
 
     # v1 reference path
-    ref = DiffusersRMSNorm(hidden_size, eps)
+    ref = DiffusersRMSNorm(hidden_size, eps).to("npu")
     with torch.no_grad():
         ref.weight.copy_(weight)
     ref_out = ref(x)
