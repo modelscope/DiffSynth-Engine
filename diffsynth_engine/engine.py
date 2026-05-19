@@ -7,6 +7,7 @@ from diffsynth_engine.pipelines.utils import (
     get_pipeline_class_name,
 )
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.torch_profiler import TorchProfiler
 from diffsynth_engine.worker import run_worker_loop
 
 logger = logging.get_logger(__name__)
@@ -86,18 +87,32 @@ class DiffSynthEngine:
 
     def generate(self, **kwargs):
         if self.workers is not None:
-            return self._generate(**kwargs)
+            return self._run_worker("__call__", kwargs, output_rank=0)
         else:
             return self.pipeline(**kwargs)
 
-    def _generate(self, **kwargs):
+    def _run_worker(self, method: str, kwargs: dict | None = None, output_rank: int | None = 0):
         # TODO: health check and timeout
-        self.conns[0].send({"method": "__call__", "kwargs": kwargs})
+        self.conns[0].send(
+            {
+                "method": method,
+                "kwargs": kwargs or {},
+                "output_rank": output_rank,
+            }
+        )
 
-        result = self.conns[0].recv()
+        if output_rank is None:
+            outputs = []
+            for rank, conn in enumerate(self.conns):
+                result = conn.recv()
+                if result["status"] != "success":
+                    raise RuntimeError(f"{method} failed on rank {rank}: {result.get('error', 'Unknown error')}")
+                outputs.append(result["output"])
+            return outputs
 
+        result = self.conns[output_rank].recv()
         if result["status"] != "success":
-            raise RuntimeError(f"Generation failed: {result.get('error', 'Unknown error')}")
+            raise RuntimeError(f"{method} failed on rank {output_rank}: {result.get('error', 'Unknown error')}")
 
         return result["output"]
 
@@ -124,3 +139,34 @@ class DiffSynthEngine:
 
             self.workers = None
             self.conns = None
+
+    def start_profile(self, path: str = ".", profile_rank0_only: bool = True):
+        if self.workers is not None:
+            self._run_worker(
+                "start_profile",
+                {
+                    "path": path,
+                    "profile_rank0_only": profile_rank0_only,
+                },
+                output_rank=0,
+            )
+        else:
+            TorchProfiler.start(path, profile_rank0_only=profile_rank0_only)
+
+    def stop_profile(self):
+        if self.workers is not None:
+            results = self._run_worker("stop_profile", {}, output_rank=None)
+        else:
+            results = [TorchProfiler.stop()]
+
+        output_files = {"traces": []}
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+
+            trace = result.get("trace")
+            if trace:
+                output_files["traces"].append(trace)
+
+        logger.info("Profile traces: %s", output_files["traces"])
+        return output_files
