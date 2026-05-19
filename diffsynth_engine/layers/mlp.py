@@ -62,10 +62,11 @@ class FastGELUMLP(nn.Module):
         # net[0] = _GELUProj with internal proj (dim → inner_dim)
         hidden_states = self.net[0].proj(hidden_states)
 
-        if is_npu_available() and torch_npu is not None:
-            hidden_states = torch_npu.npu_fast_gelu(hidden_states)
-        else:
-            hidden_states = F.gelu(hidden_states, approximate="tanh")
+        # TODO: temporarily force F.gelu to measure SSIM impact of npu_fast_gelu
+        # if is_npu_available() and torch_npu is not None:
+        #     hidden_states = torch_npu.npu_fast_gelu(hidden_states)
+        # else:
+        hidden_states = F.gelu(hidden_states, approximate="tanh")
 
         # net[2] = output Linear (inner_dim → dim_out)
         hidden_states = self.net[2](hidden_states)
