@@ -592,12 +592,10 @@ class QwenImageTransformerBlock(nn.Module):
     def _modulate(self, x, mod_params, index=None):
         """Apply modulation to input tensor.
 
-        NOTE: Currently unused in the normal forward path, which uses
-        AdaLayerNorm (NPU-optimized) instead. This method is preserved for
-        the zero_cond_t=True path, where modulate_index drives per-token
-        conditional selection of scale/shift/gate. AdaLayerNorm does not
-        support this per-token logic, so when zero_cond_t=True is enabled,
-        forward() should switch back to _modulate for modulate_index != None.
+        When zero_cond_t=True (CFG), img_mod_params has [2*B, dim] shape.
+        modulate_index drives per-token selection between cond (0) and uncond (1)
+        scale/shift/gate halves. This is the v1 CFG behavior preserved for
+        image stream modulation.
         """
         # x: b l d, shift: b d, scale: b d, gate: b d
         shift, scale, gate = mod_params.chunk(3, dim=-1)
@@ -644,30 +642,38 @@ class QwenImageTransformerBlock(nn.Module):
         modulate_index: Optional[List[int]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # When zero_cond_t is enabled, temb has 2*B batch (cond + uncond CFG).
-        # Chunk it first so both img and txt mod_params use the same B-sized temb.
-        # NOTE: per-token conditional modulation (modulate_index) is unsupported
-        # with AdaLayerNorm; _modulate is preserved for future CFG support.
+        # img_mod must use the FULL [2*B] temb for per-token CFG via modulate_index.
+        # txt_mod only needs the cond half [B] (same behavior as v1).
         if self.zero_cond_t:
+            # img_mod: full temb before chunk → [2*B, 6*dim]
+            img_mod_params = self.img_mod(temb)
+            # txt_mod: chunk to cond-only → [B, 6*dim]
             temb = torch.chunk(temb, 2, dim=0)[0]
+            txt_mod_params = self.txt_mod(temb)
 
-        img_mod_params = self.img_mod(temb)  # [B, 6*dim]
-        txt_mod_params = self.txt_mod(temb)  # [B, 6*dim]
+            img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # [2*B, 3*dim]
+            txt_mod1, txt_mod2 = txt_mod_params.chunk(2, dim=-1)  # [B, 3*dim]
 
-        # Split modulation parameters for norm1 and norm2
-        img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
-        txt_mod1, txt_mod2 = txt_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
+            # img stream: use _modulate with modulate_index for per-token CFG
+            # AdaLayerNorm wraps nn.LayerNorm; access .layernorm to get raw LN output
+            img_normed = self.img_norm1.layernorm(hidden_states)
+            img_modulated, img_gate1 = self._modulate(img_normed, img_mod1, modulate_index)
 
-        # Split shift/scale/gate for AdaLayerNorm
-        img_shift1, img_scale1, img_gate1 = img_mod1.chunk(3, dim=-1)
-        img_shift2, img_scale2, img_gate2 = img_mod2.chunk(3, dim=-1)
-        txt_shift1, txt_scale1, txt_gate1 = txt_mod1.chunk(3, dim=-1)
-        txt_shift2, txt_scale2, txt_gate2 = txt_mod2.chunk(3, dim=-1)
+            # txt stream: use AdaLayerNorm (cond-only, consistent with v1)
+            txt_shift1, txt_scale1, txt_gate1 = txt_mod1.chunk(3, dim=-1)
+            txt_modulated = self.txt_norm1(encoder_hidden_states, txt_scale1, txt_shift1)
+        else:
+            img_mod_params = self.img_mod(temb)  # [B, 6*dim]
+            txt_mod_params = self.txt_mod(temb)  # [B, 6*dim]
 
-        # Process image stream - norm1 + modulation (AdaLayerNorm)
-        img_modulated = self.img_norm1(hidden_states, img_scale1, img_shift1)
+            img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # [B, 3*dim]
+            txt_mod1, txt_mod2 = txt_mod_params.chunk(2, dim=-1)  # [B, 3*dim]
 
-        # Process text stream - norm1 + modulation (AdaLayerNorm)
-        txt_modulated = self.txt_norm1(encoder_hidden_states, txt_scale1, txt_shift1)
+            img_shift1, img_scale1, img_gate1 = img_mod1.chunk(3, dim=-1)
+            txt_shift1, txt_scale1, txt_gate1 = txt_mod1.chunk(3, dim=-1)
+
+            img_modulated = self.img_norm1(hidden_states, img_scale1, img_shift1)
+            txt_modulated = self.txt_norm1(encoder_hidden_states, txt_scale1, txt_shift1)
 
         # Use QwenDoubleStreamAttention for joint attention computation
         # This directly implements the DoubleStreamLayerMegatron logic:
@@ -686,18 +692,34 @@ class QwenImageTransformerBlock(nn.Module):
         )
 
         # Apply attention gates and add residual (like in Megatron)
-        # .unsqueeze(1): gates are [B, dim] from chunk, need [B, 1, dim] to broadcast with [B, S, dim]
-        hidden_states = hidden_states + img_gate1.unsqueeze(1) * img_attn_output
+        # _modulate returns gate at [B, 1, D] or [B, S, D] (both broadcastable as-is)
+        # chunk returns gate at [B, D] → need unsqueeze(1) → [B, 1, D]
+        if self.zero_cond_t:
+            hidden_states = hidden_states + img_gate1 * img_attn_output
+        else:
+            hidden_states = hidden_states + img_gate1.unsqueeze(1) * img_attn_output
         encoder_hidden_states = encoder_hidden_states + txt_gate1.unsqueeze(1) * txt_attn_output
 
-        # Process image stream - norm2 + MLP (AdaLayerNorm)
-        img_modulated2 = self.img_norm2(hidden_states, img_scale2, img_shift2)
+        # Process image stream - norm2 + MLP
+        if self.zero_cond_t:
+            img_normed2 = self.img_norm2.layernorm(hidden_states)
+            img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2, modulate_index)
+            txt_shift2, txt_scale2, txt_gate2 = txt_mod2.chunk(3, dim=-1)
+        else:
+            img_shift2, img_scale2, img_gate2 = img_mod2.chunk(3, dim=-1)
+            txt_shift2, txt_scale2, txt_gate2 = txt_mod2.chunk(3, dim=-1)
+            img_modulated2 = self.img_norm2(hidden_states, img_scale2, img_shift2)
+
         img_mlp_output = self.img_mlp(img_modulated2)
-        hidden_states = hidden_states + img_gate2.unsqueeze(1) * img_mlp_output
 
         # Process text stream - norm2 + MLP (AdaLayerNorm)
         txt_modulated2 = self.txt_norm2(encoder_hidden_states, txt_scale2, txt_shift2)
         txt_mlp_output = self.txt_mlp(txt_modulated2)
+
+        if self.zero_cond_t:
+            hidden_states = hidden_states + img_gate2 * img_mlp_output
+        else:
+            hidden_states = hidden_states + img_gate2.unsqueeze(1) * img_mlp_output
         encoder_hidden_states = encoder_hidden_states + txt_gate2.unsqueeze(1) * txt_mlp_output
 
         # Clip to prevent overflow for fp16
