@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 from diffusers.models.normalization import RMSNorm as DiffusersRMSNorm
@@ -33,7 +34,7 @@ class RMSNorm(nn.Module):
         object.__setattr__(self, "_fallback", fallback)
 
     def forward(self, hidden_states):
-        if is_npu_available() and torch_npu is not None:
+        if is_npu_available() and torch_npu is not None and not os.environ.get("DISABLE_NPU_RMSNORM"):
             return torch_npu.npu_rms_norm(hidden_states, self.weight, epsilon=self.eps)[0]
         else:
             return self._fallback(hidden_states)
@@ -62,7 +63,7 @@ class AdaLayerNorm(nn.Module):
         Returns:
             layernorm(x) * (1 + scale) + shift
         """
-        if is_npu_available() and layernorm_scale_shift is not None:
+        if is_npu_available() and layernorm_scale_shift is not None and not os.environ.get("DISABLE_NPU_ADALAYERNORM"):
             # NPU path: use MindIE-SD fused operator
             return layernorm_scale_shift(
                 layernorm=self.layernorm,
