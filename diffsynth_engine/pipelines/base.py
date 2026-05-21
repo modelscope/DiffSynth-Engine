@@ -9,6 +9,34 @@ class Pipeline:
     def __init__(self, pipeline_config: PipelineConfig):
         self.pipeline_config = pipeline_config
         self.device = pipeline_config.device
+        self._ensure_npu_device()
+
+    def _ensure_npu_device(self):
+        """Set NPU device context so that MindIE-SD custom ops can execute correctly.
+
+        MindIE-SD fused operators (adaln_v2, rotary_position_embedding, attention_forward,
+        etc.) rely on the current-device context (torch.npu.current_device()) to launch
+        kernels, unlike torch_npu built-in ops which derive the target device from the
+        input tensor's .device attribute.  If set_device is not called, the current device
+        defaults to 0 regardless of where the tensors reside, causing a vector-core
+        exception (507035) on any device other than 0.
+
+        The check "npu" in device_str keeps this path entirely inert for CUDA / ROCm /
+        CPU backends — no torch_npu import, no side effects.
+        """
+        device_str = str(self.device)
+        if "npu" not in device_str:
+            return
+        try:
+            import torch_npu
+
+            parts = device_str.split(":")
+            device_id = int(parts[1]) if len(parts) > 1 else 0
+            torch_npu.npu.set_device(device_id)
+        except (ImportError, ValueError):
+            # torch_npu not installed or device string unparseable — silently skip.
+            # Inference will fall back to standard ops (AdaLayerNorm fallback path).
+            pass
 
     @classmethod
     def from_pretrained(cls, model_path_or_config: str | PipelineConfig):
