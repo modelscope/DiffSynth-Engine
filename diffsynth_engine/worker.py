@@ -60,14 +60,12 @@ class Worker:
     def __call__(self, **kwargs):
         return self.pipeline(**kwargs)
 
-    @classmethod
-    def start_profile(cls, **kwargs):
+    def start_profile(self, **kwargs):
         path = kwargs.get("path", ".")
         profile_rank0_only = kwargs.get("profile_rank0_only", True)
         return TorchProfiler.start(path, profile_rank0_only=profile_rank0_only)
 
-    @classmethod
-    def stop_profile(cls, **kwargs):
+    def stop_profile(self, **kwargs):
         result = TorchProfiler.stop()
         get_world_group().barrier()
         return result

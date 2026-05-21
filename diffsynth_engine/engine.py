@@ -155,18 +155,18 @@ class DiffSynthEngine:
 
     def stop_profile(self):
         if self.workers is not None:
-            results = self._run_worker("stop_profile", {}, output_rank=None)
+            outputs = self._run_worker("stop_profile", {}, output_rank=None)
         else:
-            results = [TorchProfiler.stop()]
+            outputs = [TorchProfiler.stop()]
 
-        output_files = {"traces": []}
-        for result in results:
-            if not isinstance(result, dict):
+        results = {"traces": []}
+        for output in outputs:
+            if not isinstance(output, dict):
                 continue
 
-            trace = result.get("trace")
+            trace = output.get("trace")
             if trace:
-                output_files["traces"].append(trace)
+                results["traces"].append(trace)
 
-        logger.info("Profile traces: %s", output_files["traces"])
-        return output_files
+        logger.info("Profile traces: %s", results["traces"])
+        return results
