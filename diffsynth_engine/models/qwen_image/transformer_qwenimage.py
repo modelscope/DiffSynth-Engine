@@ -37,23 +37,26 @@ from diffsynth_engine.utils.import_utils import is_npu_available
 
 logger = logging.get_logger(__name__)
 
-# ==================== Single-Block Profiling ====================
+# ==================== First-4-Blocks Profiling ====================
 # These module-level variables act as a "hook point":
-# the script injects a profiler via register_single_block_profiler(),
-# and the block loop below automatically starts/stops it around block 0.
-# All profiling parameters live in the script — the model code is kept clean.
+# the script injects a profiler via register_multi_block_profiler(),
+# and the block loop below automatically starts/steps/stops around the
+# first 4 blocks (index 0-3). All profiling parameters live in the script
+# — the model code is kept clean.
 
-_single_block_profiled = False
-_single_block_profiler = None
+_PROFILE_BLOCK_COUNT = 4
+_blocks_profiled = 0
+_profile_limit_reached = False
+_multi_block_profiler = None
 
 
-def register_single_block_profiler(profiler):
-    """Register a (not yet started) profiler for single-block profiling.
+def register_multi_block_profiler(profiler):
+    """Register a (not yet started) profiler for first-4-blocks profiling.
 
     Call this from your script BEFORE running inference. The profiler will
-    automatically start before the first transformer block and stop after it,
-    capturing only one block's worth of operator data (instead of repeating
-    the same data N blocks × S steps times).
+    automatically start before transformer block 0, step after each of the
+    first 4 blocks (0-3), and stop after block 3, capturing operator data
+    from 4 distinct blocks.
 
     Args:
         profiler: A torch_npu.profiler.profile() context manager object
@@ -62,41 +65,59 @@ def register_single_block_profiler(profiler):
     Example in script:
         profiler = torch_npu.profiler.profile(
             activities=[...],
-            schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=1),
+            schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=4),
             on_trace_ready=torch_npu.profiler.tensorboard_trace_handler("./profiling"),
             ...
         )
         from diffsynth_engine.models.qwen_image.transformer_qwenimage import (
-            register_single_block_profiler,
+            register_multi_block_profiler,
         )
-        register_single_block_profiler(profiler)
+        register_multi_block_profiler(profiler)
         pipe(prompt=...)  # profiling happens automatically inside
     """
-    global _single_block_profiler
-    _single_block_profiler = profiler
-    logger.info("[SingleBlockProfiling] Profiler registered — will capture the first block only")
+    global _multi_block_profiler
+    _multi_block_profiler = profiler
+    logger.info("[MultiBlockProfiling] Profiler registered — will capture the first 4 blocks")
 
 
-def _start_single_block_profiling():
-    global _single_block_profiled
-    if _single_block_profiled:
+def reset_multi_block_profiler():
+    """Reset profiling state so a new profiler can be registered and used.
+
+    Call this after warmup or when you want to re-run profiling within the
+    same process.
+    """
+    global _blocks_profiled, _profile_limit_reached, _multi_block_profiler
+    _blocks_profiled = 0
+    _profile_limit_reached = False
+    _multi_block_profiler = None
+    logger.info("[MultiBlockProfiling] State reset")
+
+
+def _start_block_profiling():
+    global _profile_limit_reached
+    if _profile_limit_reached:
         return
-    profiler = _single_block_profiler
+    profiler = _multi_block_profiler
     if profiler is not None:
         profiler.__enter__()
-        logger.info("[SingleBlockProfiling] Started")
+        logger.info("[MultiBlockProfiling] Started")
 
 
-def _stop_single_block_profiling():
-    global _single_block_profiled, _single_block_profiler
-    if _single_block_profiled:
+def _step_block_profiling():
+    global _blocks_profiled, _profile_limit_reached, _multi_block_profiler
+    if _profile_limit_reached:
         return
-    profiler = _single_block_profiler
-    if profiler is not None:
+    profiler = _multi_block_profiler
+    if profiler is None:
+        return
+    _blocks_profiled += 1
+    if _blocks_profiled >= _PROFILE_BLOCK_COUNT:
         profiler.step()
         profiler.__exit__(None, None, None)
-        _single_block_profiled = True
-        logger.info("[SingleBlockProfiling] Stopped — single-block profiling complete")
+        _profile_limit_reached = True
+        logger.info("[MultiBlockProfiling] Stopped — first-4-blocks profiling complete")
+    else:
+        profiler.step()
 
 
 def apply_rotary_emb_qwen(
@@ -951,7 +972,7 @@ class QwenImageTransformer2DModel(DiffusionModel):
         image_rotary_emb = (img_freqs, txt_freqs)
         for index_block, block in enumerate(self.transformer_blocks):
             if index_block == 0:
-                _start_single_block_profiling()
+                _start_block_profiling()
 
             encoder_hidden_states, hidden_states = block(
                 hidden_states=hidden_states,
@@ -963,8 +984,8 @@ class QwenImageTransformer2DModel(DiffusionModel):
                 modulate_index=modulate_index,
             )
 
-            if index_block == 0:
-                _stop_single_block_profiling()
+            if index_block < _PROFILE_BLOCK_COUNT:
+                _step_block_profiling()
 
             # controlnet residual
             if controlnet_block_samples is not None:
