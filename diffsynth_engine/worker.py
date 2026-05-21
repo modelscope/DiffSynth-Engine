@@ -11,6 +11,7 @@ from diffsynth_engine.distributed.parallel_state import (
 )
 from diffsynth_engine.pipelines.utils import get_pipeline_class
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.torch_profiler import TorchProfiler
 
 logger = logging.get_logger(__name__)
 
@@ -59,6 +60,16 @@ class Worker:
     def __call__(self, **kwargs):
         return self.pipeline(**kwargs)
 
+    def start_profile(self, **kwargs):
+        path = kwargs.get("path", ".")
+        profile_rank0_only = kwargs.get("profile_rank0_only", True)
+        return TorchProfiler.start(path, profile_rank0_only=profile_rank0_only)
+
+    def stop_profile(self, **kwargs):
+        result = TorchProfiler.stop()
+        get_world_group().barrier()
+        return result
+
 
 def run_worker_loop(
     local_rank: int,
@@ -87,6 +98,7 @@ def run_worker_loop(
         world_group = get_world_group()
 
         while True:
+            should_reply = rank == 0
             try:
                 if rank == 0:
                     data = conn.recv()
@@ -100,8 +112,11 @@ def run_worker_loop(
                 if method == "shutdown":
                     break
 
+                output_rank = data.get("output_rank", 0)
+                should_reply = output_rank is None or output_rank == rank
+
                 output = getattr(worker, method)(**kwargs)
-                if rank == 0:
+                if should_reply:
                     conn.send(
                         {
                             "status": "success",
@@ -111,7 +126,7 @@ def run_worker_loop(
                 world_group.barrier()
             except EOFError as e:
                 logger.error(f"Worker process {rank} connection closed: {e}", exc_info=True)
-                if rank == 0:
+                if should_reply:
                     conn.send(
                         {
                             "status": "error",
@@ -121,7 +136,7 @@ def run_worker_loop(
                 break
             except Exception as e:
                 logger.error(f"Worker process {rank} error: {e}", exc_info=True)
-                if rank == 0:
+                if should_reply:
                     conn.send(
                         {
                             "status": "error",
