@@ -20,13 +20,12 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
-from accelerate import init_empty_weights
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.models import AutoencoderKLQwenImage
 from diffusers.pipelines.qwenimage.pipeline_output import QwenImagePipelineOutput
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils.torch_utils import randn_tensor
-from transformers import Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 
 from diffsynth_engine.configs import QwenImagePipelineConfig
 from diffsynth_engine.distributed.parallel_state import get_cfg_group, model_parallel_is_initialized
@@ -35,7 +34,6 @@ from diffsynth_engine.layers.attention import get_attn_backend
 from diffsynth_engine.models.qwen_image import QwenImageTransformer2DModel
 from diffsynth_engine.pipelines.base import Pipeline
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.load_utils import fix_state_dict_key, load_model_weights
 
 logger = logging.get_logger(__name__)
 
@@ -184,7 +182,7 @@ class QwenImagePipeline(Pipeline):
             raise FileNotFoundError(f"Model path not found: {pipeline_config.model_path}")
 
         # Load transformer
-        transformer = cls.init_transformer(pipeline_config)
+        transformer = cls.init_transformer(QwenImageTransformer2DModel, pipeline_config)
 
         # Load scheduler
         scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
@@ -193,10 +191,14 @@ class QwenImagePipeline(Pipeline):
         )
 
         # Load VAE
-        vae = cls.init_vae(pipeline_config)
+        vae = cls.init_vae(AutoencoderKLQwenImage, pipeline_config)
 
         # Load text encoder
-        text_encoder = cls.init_text_encoder(pipeline_config)
+        text_encoder = cls.init_text_encoder(
+            Qwen2_5_VLForConditionalGeneration,
+            pipeline_config,
+            key_mapping=getattr(Qwen2_5_VLForConditionalGeneration, "_checkpoint_conversion_mapping", None),
+        )
 
         # Load tokenizer
         tokenizer = Qwen2Tokenizer.from_pretrained(
@@ -213,77 +215,6 @@ class QwenImagePipeline(Pipeline):
             tokenizer=tokenizer,
             transformer=transformer,
         )
-
-    @staticmethod
-    def init_transformer(pipeline_config: QwenImagePipelineConfig, empty_weights: bool = False):
-        logger.info("Initializing transformer...")
-        with set_forward_context(attn_type=pipeline_config.attn_type):
-            if empty_weights:
-                with init_empty_weights():
-                    config_dict = QwenImageTransformer2DModel.load_config(
-                        pipeline_config.model_path,
-                        subfolder="transformer",
-                        local_files_only=True,
-                    )
-                    model = QwenImageTransformer2DModel.from_config(config_dict)
-            else:
-                model = QwenImageTransformer2DModel.from_pretrained(
-                    pipeline_config.model_path,
-                    subfolder="transformer",
-                    device=pipeline_config.device,
-                    dtype=pipeline_config.model_dtype,
-                )
-        return model
-
-    @staticmethod
-    def init_text_encoder(pipeline_config: QwenImagePipelineConfig, empty_weights: bool = False):
-        logger.info("Initializing text encoder...")
-        with init_empty_weights():
-            config = Qwen2_5_VLConfig.from_pretrained(
-                pipeline_config.model_path,
-                subfolder="text_encoder",
-                local_files_only=True,
-            )
-            model = Qwen2_5_VLForConditionalGeneration(config)
-
-        if empty_weights:
-            return model
-
-        state_dict = load_model_weights(
-            pipeline_config.model_path,
-            subfolder="text_encoder",
-            device=pipeline_config.device,
-            dtype=pipeline_config.text_encoder_dtype,
-        )
-        if key_mapping := getattr(model, "_checkpoint_conversion_mapping", None):
-            state_dict = fix_state_dict_key(state_dict, key_mapping)
-        model.load_state_dict(state_dict, strict=True, assign=True)
-        model.to(device=pipeline_config.device)
-        return model
-
-    @staticmethod
-    def init_vae(pipeline_config: QwenImagePipelineConfig, empty_weights: bool = False):
-        logger.info("Initializing VAE...")
-        with init_empty_weights():
-            config_dict = AutoencoderKLQwenImage.load_config(
-                pipeline_config.model_path,
-                subfolder="vae",
-                local_files_only=True,
-            )
-            model = AutoencoderKLQwenImage.from_config(config_dict)
-
-        if empty_weights:
-            return model
-
-        state_dict = load_model_weights(
-            pipeline_config.model_path,
-            subfolder="vae",
-            device=pipeline_config.device,
-            dtype=pipeline_config.vae_dtype,
-        )
-        model.load_state_dict(state_dict, strict=True, assign=True)
-        model.to(device=pipeline_config.device)
-        return model
 
     def _extract_masked_hidden(self, hidden_states: torch.Tensor, mask: torch.Tensor):
         bool_mask = mask.bool()
