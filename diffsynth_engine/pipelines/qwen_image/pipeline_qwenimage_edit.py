@@ -22,7 +22,6 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import numpy as np
 import torch
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
-from diffusers.models import AutoencoderKLQwenImage
 from diffusers.pipelines.qwenimage.pipeline_output import QwenImagePipelineOutput
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils.torch_utils import randn_tensor
@@ -35,7 +34,7 @@ from diffsynth_engine.distributed.parallel_state import (
 )
 from diffsynth_engine.forward_context import set_forward_context
 from diffsynth_engine.layers.attention import get_attn_backend
-from diffsynth_engine.models.qwen_image import QwenImageTransformer2DModel
+from diffsynth_engine.models.qwen_image import QwenImageTransformer2DModel, AutoencoderKLQwenImage
 from diffsynth_engine.pipelines.base import Pipeline
 from diffsynth_engine.utils import logging
 

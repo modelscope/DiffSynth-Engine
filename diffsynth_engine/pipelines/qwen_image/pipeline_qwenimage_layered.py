@@ -34,8 +34,7 @@ from diffsynth_engine.distributed.parallel_state import (
 )
 from diffsynth_engine.forward_context import set_forward_context
 from diffsynth_engine.layers.attention import get_attn_backend
-from diffsynth_engine.models.qwen_image import QwenImageTransformer2DModel
-from diffsynth_engine.models.qwen_image.autoencoder_kl_qwenimage import AutoencoderKLQwenImage
+from diffsynth_engine.models.qwen_image import QwenImageTransformer2DModel, AutoencoderKLQwenImage
 from diffsynth_engine.pipelines.base import Pipeline
 from diffsynth_engine.utils import logging
 
