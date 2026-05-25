@@ -57,7 +57,19 @@ class Worker:
         self.pipeline = pipeline_class.from_pretrained(self.pipeline_config)
 
     def __call__(self, **kwargs):
-        return self.pipeline(**kwargs)
+        profiling_tag = kwargs.pop("_profiling_tag", None)
+        profiling_config = kwargs.pop("_profiling_config", None)
+
+        from diffsynth_engine.platform.npu.profiling import (
+            setup_block_profiling,
+            teardown_block_profiling,
+        )
+
+        setup_block_profiling(profiling_tag, profiling_config, self.rank)
+        try:
+            return self.pipeline(**kwargs)
+        finally:
+            teardown_block_profiling()
 
 
 def run_worker_loop(

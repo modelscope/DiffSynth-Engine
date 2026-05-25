@@ -88,6 +88,8 @@ class DiffSynthEngine:
         if self.workers is not None:
             return self._generate(**kwargs)
         else:
+            kwargs.pop("_profiling_tag", None)
+            kwargs.pop("_profiling_config", None)
             return self.pipeline(**kwargs)
 
     def _generate(self, **kwargs):
