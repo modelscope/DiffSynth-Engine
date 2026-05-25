@@ -17,6 +17,7 @@ class TestQwenImageLayeredPipeline(ImageTestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.engine.shutdown()
         del cls.engine
         torch.cuda.empty_cache()
 

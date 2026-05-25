@@ -17,6 +17,7 @@ class TestQwenImagePipeline(ImageTestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.engine.shutdown()
         del cls.engine
         torch.cuda.empty_cache()
 
@@ -51,6 +52,7 @@ class TestQwenImagePipelineParallel(ImageTestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.engine.shutdown()
         del cls.engine
         torch.cuda.empty_cache()
 
@@ -86,6 +88,7 @@ class TestQwenImagePipelineFSDP(ImageTestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.engine.shutdown()
         del cls.engine
         torch.cuda.empty_cache()
 
