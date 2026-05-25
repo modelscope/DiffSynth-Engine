@@ -297,7 +297,7 @@ the image\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n<|im_start|>as
         dtype: Optional[torch.dtype] = None,
     ):
         device = device or self.device
-        dtype = dtype or self.text_encoder.dtype
+        dtype = dtype or self.pipeline_config.text_encoder_dtype
 
         prompt = [prompt] if isinstance(prompt, str) else prompt
 
@@ -471,7 +471,7 @@ the image\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n<|im_start|>as
         return latents
 
     def _encode_vae_image(self, image: torch.Tensor, generator: torch.Generator):
-        image = image.to(self.vae.dtype)
+        image = image.to(self.pipeline_config.vae_dtype)
         if isinstance(generator, list):
             image_latents = [
                 retrieve_latents(self.vae.encode(image[i : i + 1]), generator=generator[i], sample_mode="argmax")
@@ -841,7 +841,7 @@ the image\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n<|im_start|>as
             prompt_image = image
             image = self.image_processor.preprocess(image, calculated_height, calculated_width)
             image = image.unsqueeze(2)
-            image = image.to(dtype=self.text_encoder.dtype)
+            image = image.to(dtype=self.pipeline_config.text_encoder_dtype)
 
         if prompt is None or prompt == "" or prompt == " ":
             prompt = self.get_image_caption(prompt_image, use_en_prompt=use_en_prompt, device=device)
@@ -988,7 +988,7 @@ the image\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n<|im_start|>as
             image = latents
         else:
             latents = self._unpack_latents(latents, height, width, layers, self.vae_scale_factor)
-            latents = latents.to(self.vae.dtype)
+            latents = latents.to(self.pipeline_config.vae_dtype)
             latents_mean = (
                 torch.tensor(self.vae.config.latents_mean)
                 .view(1, self.vae.config.z_dim, 1, 1, 1)

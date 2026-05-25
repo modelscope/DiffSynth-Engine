@@ -231,7 +231,7 @@ class QwenImagePipeline(Pipeline):
         dtype: Optional[torch.dtype] = None,
     ):
         device = device or self.device
-        dtype = dtype or self.text_encoder.dtype
+        dtype = dtype or self.pipeline_config.text_encoder_dtype
 
         prompt = [prompt] if isinstance(prompt, str) else prompt
 
@@ -769,7 +769,7 @@ class QwenImagePipeline(Pipeline):
             image = latents
         else:
             latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
-            latents = latents.to(self.vae.dtype)
+            latents = latents.to(self.pipeline_config.vae_dtype)
             latents_mean = (
                 torch.tensor(self.vae.config.latents_mean)
                 .view(1, self.vae.config.z_dim, 1, 1, 1)
