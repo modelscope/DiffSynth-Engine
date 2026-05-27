@@ -14,7 +14,7 @@ DiffSynth-Engine is a high-performance engine geared towards building efficient 
 
 - **Extensive Model Support:** Compatible with popular formats (e.g., CivitAI) of base models and LoRA models , catering to diverse use cases.
 
-- **Versatile Resource Management:** Comprehensive support for various model quantization (e.g., FP8, INT8) 
+- **Versatile Resource Management:** Comprehensive support for various model quantization methods (e.g., FP8, INT8)
 and offloading strategies, enabling loading of larger diffusion models (e.g., Flux.1 Dev) on limited hardware budget of GPU memory.
 
 - **Optimized Performance:** Carefully-crafted inference pipeline to achieve fast generation across various hardware environments.
