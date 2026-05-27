@@ -293,9 +293,9 @@ class DiTBlockS2V(nn.Module):
             ],
             dim=1,
         )
-        self_attn_x = self.self_attn(input_x, freqs, attn_kwargs)
+        self_attn_x = self.self_attn(input_x, freqs, attn_kwargs=attn_kwargs)
         x += torch.cat([self_attn_x[:, :x_seq_len] * gate_msa, self_attn_x[:, x_seq_len:] * gate_msa_0], dim=1)
-        x += self.cross_attn(self.norm3(x), context, attn_kwargs)
+        x += self.cross_attn(self.norm3(x), context, attn_kwargs=attn_kwargs)
         norm2_x = self.norm2(x)
         input_x = torch.cat(
             [
