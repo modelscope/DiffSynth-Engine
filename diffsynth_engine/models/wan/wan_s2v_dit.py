@@ -1,5 +1,5 @@
 import json
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -277,7 +277,7 @@ class DiTBlockS2V(nn.Module):
         self.ffn = dit_block.ffn
         self.modulation = dit_block.modulation
 
-    def forward(self, x, x_seq_len, context, t_mod, t_mod_0, freqs):
+    def forward(self, x, x_seq_len, context, t_mod, t_mod_0, freqs, attn_kwargs=None):
         # msa: multi-head self-attention  mlp: multi-layer perceptron
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = [
             t for t in (self.modulation + t_mod).chunk(6, dim=1)
@@ -293,9 +293,9 @@ class DiTBlockS2V(nn.Module):
             ],
             dim=1,
         )
-        self_attn_x = self.self_attn(input_x, freqs)
+        self_attn_x = self.self_attn(input_x, freqs, attn_kwargs)
         x += torch.cat([self_attn_x[:, :x_seq_len] * gate_msa, self_attn_x[:, x_seq_len:] * gate_msa_0], dim=1)
-        x += self.cross_attn(self.norm3(x), context)
+        x += self.cross_attn(self.norm3(x), context, attn_kwargs)
         norm2_x = self.norm2(x)
         input_x = torch.cat(
             [
@@ -411,6 +411,7 @@ class WanS2VDiT(WanDiT):
         drop_motion_frames: bool = False,  # !(ref_as_first_frame || clip_idx)
         audio_mask: Optional[torch.Tensor] = None,  # b c tx h w
         void_audio_input: Optional[torch.Tensor] = None,
+        attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         use_cfg = x.shape[0] > 1
@@ -479,7 +480,13 @@ class WanS2VDiT(WanDiT):
                 freqs = torch.concat([freqs_img, freqs_ref_motion], dim=1)
                 for idx, block in enumerate(self.blocks):
                     x = block(
-                        x=x, x_seq_len=x_seq_len_local, context=context, t_mod=t_mod, t_mod_0=t_mod_0, freqs=freqs
+                        x=x,
+                        x_seq_len=x_seq_len_local,
+                        context=context,
+                        t_mod=t_mod,
+                        t_mod_0=t_mod_0,
+                        freqs=freqs,
+                        attn_kwargs=attn_kwargs,
                     )
                     if idx in self.audio_injector.injected_block_id.keys():
                         x = self.inject_audio(
