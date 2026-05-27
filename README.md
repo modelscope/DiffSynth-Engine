@@ -6,7 +6,7 @@
 [![GitHub pull-requests](https://img.shields.io/github/issues-pr/modelscope/DiffSynth-Engine.svg)](https://GitHub.com/modelscope/DiffSynth-Engine/pull/)
 [![GitHub latest commit](https://badgen.net/github/last-commit/modelscope/DiffSynth-Engine)](https://GitHub.com/modelscope/DiffSynth-Engine/commit/)
 
-DiffSynth-Engine is a high-performance engine geared towards buidling efficient inference pipelines for diffusion models.
+DiffSynth-Engine is a high-performance engine geared towards building efficient inference pipelines for diffusion models.
 
 **Key Features:**
 
@@ -14,7 +14,7 @@ DiffSynth-Engine is a high-performance engine geared towards buidling efficient 
 
 - **Extensive Model Support:** Compatible with popular formats (e.g., CivitAI) of base models and LoRA models , catering to diverse use cases.
 
-- **Versatile Resource Management:** Comprehensive support for varous model quantization (e.g., FP8, INT8) 
+- **Versatile Resource Management:** Comprehensive support for various model quantization (e.g., FP8, INT8) 
 and offloading strategies, enabling loading of larger diffusion models (e.g., Flux.1 Dev) on limited hardware budget of GPU memory.
 
 - **Optimized Performance:** Carefully-crafted inference pipeline to achieve fast generation across various hardware environments.
