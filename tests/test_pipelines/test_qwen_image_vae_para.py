@@ -25,7 +25,9 @@ class TestQwenImageVaeParallel(ImageTestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.engine.shutdown()
         del cls.engine
+        torch.cuda.empty_cache()
 
     def test_txt2img(self):
         prompt = "A painting of a cat in a zen garden"
