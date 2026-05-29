@@ -7,7 +7,7 @@ from diffusers.configuration_utils import ConfigMixin
 
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.constants import CONFIG_NAME
-from diffsynth_engine.utils.load_utils import load_model_weights
+from diffsynth_engine.utils.load_utils import load_weights_into_module
 
 logger = logging.get_logger(__name__)
 
@@ -30,9 +30,7 @@ class DiffusionModel(nn.Module, ConfigMixin):
         with init_empty_weights():
             model = cls.from_config(config_dict)
 
-        # load model weights
-        state_dict = load_model_weights(model_path, subfolder, device, dtype)
-        model.load_state_dict(state_dict, strict=True, assign=True)
+        load_weights_into_module(model, model_path, subfolder, device, dtype)
         model.to(device=device)
         return model
 
@@ -55,8 +53,6 @@ class AutoregressiveModel(nn.Module):
         with init_empty_weights():
             model = cls(config)
 
-        # load model weights
-        state_dict = load_model_weights(model_path, subfolder, device, dtype)
-        model.load_state_dict(state_dict, strict=True, assign=True)
+        load_weights_into_module(model, model_path, subfolder, device, dtype)
         model.to(device=device)
         return model

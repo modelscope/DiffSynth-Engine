@@ -36,7 +36,7 @@ from diffsynth_engine.layers.attention import get_attn_backend
 from diffsynth_engine.models.qwen_image import QwenImageTransformer2DModel
 from diffsynth_engine.pipelines.base import Pipeline
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.load_utils import fix_state_dict_key, load_model_weights
+from diffsynth_engine.utils.load_utils import load_weights_into_module
 
 logger = logging.get_logger(__name__)
 
@@ -295,15 +295,14 @@ class QwenImageEditPlusPipeline(Pipeline):
         if empty_weights:
             return model
 
-        state_dict = load_model_weights(
+        load_weights_into_module(
+            model,
             pipeline_config.model_path,
             subfolder="text_encoder",
             device=pipeline_config.device,
             dtype=pipeline_config.text_encoder_dtype,
+            key_mapping=getattr(model, "_checkpoint_conversion_mapping", None),
         )
-        if key_mapping := getattr(model, "_checkpoint_conversion_mapping", None):
-            state_dict = fix_state_dict_key(state_dict, key_mapping)
-        model.load_state_dict(state_dict, strict=True, assign=True)
         model.to(device=pipeline_config.device)
         return model
 
@@ -321,13 +320,13 @@ class QwenImageEditPlusPipeline(Pipeline):
         if empty_weights:
             return model
 
-        state_dict = load_model_weights(
+        load_weights_into_module(
+            model,
             pipeline_config.model_path,
             subfolder="vae",
             device=pipeline_config.device,
             dtype=pipeline_config.vae_dtype,
         )
-        model.load_state_dict(state_dict, strict=True, assign=True)
         model.to(device=pipeline_config.device)
         return model
 
