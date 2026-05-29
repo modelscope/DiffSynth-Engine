@@ -10,6 +10,13 @@ import logging
 logger = logging.get_logger(__name__)
 
 
+def _enum_by_index(enum_cls, names: list[str], index: int, default: str):
+    """Lazy enum lookup — only touch the requested member (torch_npu versions differ)."""
+    if 0 <= index < len(names) and hasattr(enum_cls, names[index]):
+        return getattr(enum_cls, names[index])
+    return getattr(enum_cls, default)
+
+
 def _resolve_profiler_enums(cfg: dict) -> dict:
     """Map int profiler config values to torch_npu enum types."""
     import torch_npu
@@ -18,20 +25,21 @@ def _resolve_profiler_enums(cfg: dict) -> dict:
 
     level = cfg["profiler_level"]
     if isinstance(level, int):
-        resolved["profiler_level"] = (
-            torch_npu.profiler.ProfilerLevel.Level0,
-            torch_npu.profiler.ProfilerLevel.Level1,
-            torch_npu.profiler.ProfilerLevel.Level2,
-        )[level]
+        resolved["profiler_level"] = _enum_by_index(
+            torch_npu.profiler.ProfilerLevel,
+            ["Level0", "Level1", "Level2"],
+            level,
+            "Level1",
+        )
 
     metrics = cfg["aic_metrics"]
     if isinstance(metrics, int):
-        resolved["aic_metrics"] = (
-            torch_npu.profiler.AiCMetrics.PipeUtilization,
-            torch_npu.profiler.AiCMetrics.AiCoreUtilization,
-            torch_npu.profiler.AiCMetrics.L2Cache,
-            torch_npu.profiler.AiCMetrics.Memory,
-        )[metrics]
+        resolved["aic_metrics"] = _enum_by_index(
+            torch_npu.profiler.AiCMetrics,
+            ["PipeUtilization", "AiCoreUtilization", "L2Cache", "Memory"],
+            metrics,
+            "PipeUtilization",
+        )
 
     activities = cfg["activities"]
     if activities and isinstance(activities[0], int):
