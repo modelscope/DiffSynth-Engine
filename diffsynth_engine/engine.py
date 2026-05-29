@@ -139,6 +139,10 @@ class DiffSynthEngine:
 
             self.workers = None
             self.conns = None
+            
+        if self.pipeline is not None:
+            del self.pipeline
+            self.pipeline = None
 
     def start_profile(self, path: str = ".", profile_rank0_only: bool = True):
         if self.workers is not None:

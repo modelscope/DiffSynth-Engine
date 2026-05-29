@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 
 from diffsynth_engine.distributed.comm import SeqAllToAll4D
@@ -11,6 +10,7 @@ from diffsynth_engine.distributed.parallel_state import (
     get_ring_parallel_world_size,
     get_sp_group,
     get_ulysses_parallel_world_size,
+    is_sp_group_initialized,
 )
 from diffsynth_engine.forward_context import ForwardContext, get_forward_context
 from diffsynth_engine.layers.attention.backends.abstract import AttentionType
@@ -139,8 +139,8 @@ class USPAttention(nn.Module):
         attn_kwargs = {"attn_metadata": attn_metadata}
         attn_kwargs.update(kwargs)
 
-        ulysses_parallel_world_size = get_ulysses_parallel_world_size() if dist.is_initialized() else 1
-        ring_parallel_world_size = get_ring_parallel_world_size() if dist.is_initialized() else 1
+        ulysses_parallel_world_size = get_ulysses_parallel_world_size() if is_sp_group_initialized() else 1
+        ring_parallel_world_size = get_ring_parallel_world_size() if is_sp_group_initialized() else 1
 
         if ulysses_parallel_world_size > 1:
             q = SeqAllToAll4D.apply(get_sp_group().ulysses_group, q, self.scatter_idx, self.gather_idx)

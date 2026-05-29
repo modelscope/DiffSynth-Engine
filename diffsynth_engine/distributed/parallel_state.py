@@ -214,12 +214,29 @@ class RankGenerator:
         return ranks
 
 
+# WORLD
+def is_world_group_initialized() -> bool:
+    return _WORLD is not None
+
+
 def get_world_group() -> GroupCoordinator:
     assert _WORLD is not None, "world group is not initialized"
     return _WORLD
 
 
+def get_global_world_size():
+    return get_world_group().world_size
+
+
+def get_global_rank():
+    return get_world_group().rank_in_group
+
+
 # TP
+def is_tp_group_initialized() -> bool:
+    return _TP is not None
+
+
 def get_tp_group() -> GroupCoordinator:
     assert _TP is not None, "tensor model parallel group is not initialized"
     return _TP
@@ -236,6 +253,10 @@ def get_tensor_model_parallel_rank():
 
 
 # SP
+def is_sp_group_initialized() -> bool:
+    return _SP is not None
+
+
 def get_sp_group() -> SequenceParallelGroupCoordinator:
     assert _SP is not None, "pipeline model parallel group is not initialized"
     return _SP
@@ -268,6 +289,10 @@ def get_ring_parallel_rank():
 
 
 # PP
+def is_pp_group_initialized() -> bool:
+    return _PP is not None
+
+
 def get_pp_group() -> PipelineGroupCoordinator:
     assert _PP is not None, "pipeline model parallel group is not initialized"
     return _PP
@@ -294,6 +319,10 @@ def is_pipeline_last_stage():
 
 
 # CFG
+def is_cfg_group_initialized() -> bool:
+    return _CFG is not None
+
+
 def get_cfg_group() -> GroupCoordinator:
     assert _CFG is not None, "classifier_free_guidance parallel group is not initialized"
     return _CFG
@@ -310,6 +339,10 @@ def get_classifier_free_guidance_rank():
 
 
 # DP
+def is_dp_group_initialized() -> bool:
+    return _DP is not None
+
+
 def get_dp_group() -> GroupCoordinator:
     assert _DP is not None, "pipeline model parallel group is not initialized"
     return _DP
@@ -346,6 +379,10 @@ def get_dit_world_size():
 
 
 # VAE
+def is_vae_group_initialized() -> bool:
+    return _VAE is not None
+
+
 def get_vae_parallel_group() -> GroupCoordinator:
     assert _VAE is not None, "VAE parallel group is not initialized"
     return _VAE
@@ -489,6 +526,10 @@ def init_dit_group(
 ):
     global _DIT
     _DIT = torch.distributed.new_group(ranks=list(range(dit_parallel_size)), backend=backend)
+
+
+def is_dit_group_initialized() -> bool:
+    return _DIT is not None
 
 
 def get_dit_group():

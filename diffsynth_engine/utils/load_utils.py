@@ -5,8 +5,8 @@ import time
 from typing import Any, Dict, Optional
 
 import torch
-import torch.distributed as dist
 
+from diffsynth_engine.distributed.parallel_state import get_global_rank, get_world_group, is_world_group_initialized
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.constants import (
     DIFFUSION_SAFETENSORS_INDEX_NAME,
@@ -28,7 +28,7 @@ except ImportError:
 
 
 def load_safetensors(path: str, device: str = "cpu") -> Dict[str, Any]:
-    is_rank_zero = not dist.is_initialized() or dist.get_rank() == 0
+    is_rank_zero = not is_world_group_initialized() or get_global_rank() == 0
     start_time = time.perf_counter()
     if FAST_SAFETENSORS_AVAILABLE:
         if is_rank_zero:
@@ -36,7 +36,8 @@ def load_safetensors(path: str, device: str = "cpu") -> Dict[str, Any]:
         num_threads = int(os.environ.get("FAST_SAFETENSORS_NUM_THREADS", 16))
         direct_io = os.environ.get("FAST_SAFETENSORS_DIRECT_IO", "False").upper() == "TRUE"
         state_dict = load_file(path, num_threads=num_threads, direct_io=direct_io)
-        state_dict = {k: v.to(device=device) for k, v in state_dict.items()}
+        for k, v in state_dict.items():
+            state_dict[k] = v.to(device=device, non_blocking=True)
     else:
         if is_rank_zero:
             logger.info(f"Safetensors loading model from {path}...")
@@ -52,44 +53,58 @@ def load_model_weights(
     subfolder: Optional[str] = None,
     device: Optional[str] = None,
     dtype: Optional[torch.dtype] = None,
+    broadcast_from_rank0: bool = True,
 ) -> Dict[str, Any]:
-    if subfolder is not None:
-        model_path = os.path.join(model_path, subfolder)
+    world_group = get_world_group() if is_world_group_initialized() else None
+    is_rank_zero = world_group is None or get_global_rank() == 0
 
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model path not found: {model_path}")
+    # rank 0 reads all shards
+    state_dict = {}
+    if is_rank_zero:
+        if subfolder is not None:
+            model_path = os.path.join(model_path, subfolder)
 
-    _diffusion_index_file = os.path.join(model_path, DIFFUSION_SAFETENSORS_INDEX_NAME)
-    _diffusion_weights_file = os.path.join(model_path, DIFFUSION_SAFETENSORS_WEIGHTS_NAME)
-    _index_file = os.path.join(model_path, SAFETENSORS_INDEX_NAME)
-    _weights_file = os.path.join(model_path, SAFETENSORS_WEIGHTS_NAME)
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model path not found: {model_path}")
 
-    index_file, weights_file = None, None
+        _diffusion_index_file = os.path.join(model_path, DIFFUSION_SAFETENSORS_INDEX_NAME)
+        _diffusion_weights_file = os.path.join(model_path, DIFFUSION_SAFETENSORS_WEIGHTS_NAME)
+        _index_file = os.path.join(model_path, SAFETENSORS_INDEX_NAME)
+        _weights_file = os.path.join(model_path, SAFETENSORS_WEIGHTS_NAME)
 
-    if os.path.exists(_diffusion_index_file):
-        index_file = _diffusion_index_file
-    elif os.path.exists(_diffusion_weights_file):
-        weights_file = _diffusion_weights_file
-    elif os.path.exists(_index_file):
-        index_file = _index_file
-    elif os.path.exists(_weights_file):
-        weights_file = _weights_file
-    else:
-        raise FileNotFoundError(f"Safetensors index or weights file not found in {model_path}")
+        index_file, weights_file = None, None
 
-    if index_file is not None:
-        with open(index_file, "r", encoding="utf-8") as f:
-            index_dict = json.load(f)
-        weight_map = index_dict["weight_map"]
-        shard_files = sorted(set(weight_map.values()))
-        state_dict = {}
-        for shard_file in shard_files:
-            shard_file = os.path.join(model_path, shard_file)
-            state_dict.update(load_safetensors(shard_file))
-    else:
-        state_dict = load_safetensors(weights_file)
+        if os.path.exists(_diffusion_index_file):
+            index_file = _diffusion_index_file
+        elif os.path.exists(_diffusion_weights_file):
+            weights_file = _diffusion_weights_file
+        elif os.path.exists(_index_file):
+            index_file = _index_file
+        elif os.path.exists(_weights_file):
+            weights_file = _weights_file
+        else:
+            raise FileNotFoundError(f"Safetensors index or weights file not found in {model_path}")
 
-    state_dict = {k: v.to(device=device, dtype=dtype, non_blocking=True) for k, v in state_dict.items()}
+        if index_file is not None:
+            with open(index_file, "r", encoding="utf-8") as f:
+                index_dict = json.load(f)
+            weight_map = index_dict["weight_map"]
+            shard_files = sorted(set(weight_map.values()))
+            for shard_file in shard_files:
+                path = os.path.join(model_path, shard_file)
+                shard_dict = load_safetensors(path)
+                for k, v in shard_dict.items():
+                    shard_dict[k] = v.to(device=device, dtype=dtype, non_blocking=True)
+                state_dict.update(shard_dict)
+        else:
+            state_dict = load_safetensors(weights_file)
+            for k, v in state_dict.items():
+                state_dict[k] = v.to(device=device, dtype=dtype, non_blocking=True)
+
+    # rank 0 broadcasts full state dict to all other ranks
+    if broadcast_from_rank0 and world_group is not None:
+        state_dict = world_group.broadcast_tensor_dict(state_dict, src=0)
+
     return state_dict
 
 

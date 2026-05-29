@@ -15,6 +15,13 @@ logger = logging.get_logger(__name__)
 class DiffusionModel(nn.Module, ConfigMixin):
     config_name = CONFIG_NAME
 
+    @property
+    def dtype(self) -> torch.dtype:
+        param = next(self.parameters(), None)
+        if param is None:
+            raise RuntimeError(f"{type(self).__name__} has no parameters, cannot determine dtype")
+        return param.dtype
+
     @classmethod
     def from_pretrained(
         cls,

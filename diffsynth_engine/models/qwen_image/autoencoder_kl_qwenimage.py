@@ -21,7 +21,6 @@
 # - Paper: https://huggingface.co/papers/2503.20314
 
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.configuration_utils import register_to_config
@@ -1167,8 +1166,8 @@ class AutoencoderKLQwenImage(DiffusionModel):
 
         self.clear_cache()
 
-        dist.all_reduce(values, group=group)
-        dist.all_reduce(weight, group=group)
+        group.all_reduce(values)
+        group.all_reduce(weight)
 
         enc = values / weight
         return enc
@@ -1247,8 +1246,8 @@ class AutoencoderKLQwenImage(DiffusionModel):
 
         self.clear_cache()
 
-        dist.all_reduce(values, group=group)
-        dist.all_reduce(weight, group=group)
+        group.all_reduce(values)
+        group.all_reduce(weight)
 
         dec = values / weight
         dec = torch.clamp(dec, min=-1.0, max=1.0)
