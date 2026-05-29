@@ -1,3 +1,5 @@
+from typing import Any
+
 import torch.multiprocessing as mp
 from torch.cuda import set_device
 
@@ -85,36 +87,158 @@ class DiffSynthEngine:
         pipeline_class = get_pipeline_class(self.pipeline_config.pipeline_class_name)
         self.pipeline = pipeline_class.from_pretrained(self.pipeline_config)
 
-    def generate(self, **kwargs):
+    def _dispatch(self, method: str, output_rank: int | None = None, **kwargs):
         if self.workers is not None:
-            return self._run_worker("__call__", kwargs, output_rank=0)
-        else:
-            return self.pipeline(**kwargs)
+            self.conns[0].send(
+                {
+                    "method": method,
+                    "output_rank": output_rank,
+                    "kwargs": kwargs or {},
+                }
+            )
 
-    def _run_worker(self, method: str, kwargs: dict | None = None, output_rank: int | None = 0):
-        # TODO: health check and timeout
-        self.conns[0].send(
-            {
-                "method": method,
-                "kwargs": kwargs or {},
-                "output_rank": output_rank,
-            }
+            if output_rank is None:
+                outputs = []
+                for rank, conn in enumerate(self.conns):
+                    result = conn.recv()
+                    if result["status"] != "success":
+                        raise RuntimeError(f"{method} failed on rank {rank}: {result.get('error', 'Unknown error')}")
+                    outputs.append(result["output"])
+                return outputs
+
+            result = self.conns[output_rank].recv()
+            if result["status"] != "success":
+                raise RuntimeError(f"{method} failed on rank {output_rank}: {result.get('error', 'Unknown error')}")
+
+            return result["output"]
+        else:
+            if not hasattr(self.pipeline, method):
+                raise AttributeError(f"Pipeline '{type(self.pipeline).__name__}' does not have method '{method}'.")
+            return getattr(self.pipeline, method)(**kwargs)
+
+    def generate(self, **kwargs):
+        return self._dispatch("__call__", output_rank=0, **kwargs)
+
+    # LoRA APIs
+
+    def load_loras(self, lora_args: dict[str, Any] | list[dict[str, Any]]) -> list[str]:
+        """Load LoRA weights and patch to the target module's LoRA layers.
+
+        Args:
+            lora_args: One LoRA argument dict or a list of LoRA argument dicts.
+                lora_id: Unique LoRA model id.
+                path: Safetensors file path to load.
+                target_module: Pipeline module name to patch. If omitted or
+                    None, the pipeline default target module is used.
+                scale: Initial LoRA scale. If omitted, 1.0 is used.
+
+        Returns:
+            LoRA ids that were successfully loaded.
+        """
+        return self._dispatch("load_loras", lora_args=lora_args)
+
+    def unload_loras(self, lora_ids: str | list[str] | None = None) -> None:
+        """Unload LoRA weights that are not merged.
+
+        Args:
+            lora_ids: LoRA id or LoRA ids to unload.
+                If None, unload all loaded LoRAs that are not merged.
+        """
+        return self._dispatch("unload_loras", lora_ids=lora_ids)
+
+    def set_active_loras(
+        self,
+        lora_ids: str | list[str],
+        scales: float | list[float] | None = None,
+    ) -> None:
+        """Set selected LoRAs active and deactivate other unmerged LoRAs.
+
+        Args:
+            lora_ids: LoRA id or LoRA ids to set active.
+            scales: Optional scale override for selected LoRAs.
+                If float, apply the same scale to every selected LoRA.
+                If list[float], apply one scale per LoRA id; its length must
+                    match ``lora_ids``.
+                If None, keep each selected LoRA's current scale.
+        """
+        return self._dispatch("set_active_loras", lora_ids=lora_ids, scales=scales)
+
+    def activate_loras(
+        self,
+        lora_ids: str | list[str],
+        scales: float | list[float] | None = None,
+    ) -> None:
+        """Activate selected LoRAs without changing other LoRA statuses.
+
+        Args:
+            lora_ids: LoRA id or LoRA ids to activate.
+            scales: Optional scale override for activated LoRAs.
+                If float, apply the same scale to every selected LoRA.
+                If list[float], apply one scale per LoRA id; its length must
+                    match ``lora_ids``.
+                If None, keep each selected LoRA's current scale.
+        """
+        return self._dispatch("activate_loras", lora_ids=lora_ids, scales=scales)
+
+    def deactivate_loras(self, lora_ids: str | list[str] | None = None) -> None:
+        """Deactivate LoRAs while keeping their weights loaded.
+
+        Args:
+            lora_ids: LoRA id or LoRA ids to deactivate.
+                If None, deactivate all loaded LoRAs.
+        """
+        return self._dispatch("deactivate_loras", lora_ids=lora_ids)
+
+    def merge_loras(
+        self,
+        target_module: str | None = None,
+        chunked: bool = False,
+        high_precision: bool = True,
+    ) -> None:
+        """Merge active LoRA weights into base weights.
+
+        Args:
+            target_module: Target module to merge.
+                If None, merge active LoRAs in all converted target modules.
+            chunked: If True, merge in chunks to limit peak memory usage.
+            high_precision: If True, compute merge in float32 for better numerical accuracy.
+        """
+        return self._dispatch(
+            "merge_loras",
+            target_module=target_module,
+            chunked=chunked,
+            high_precision=high_precision,
         )
 
-        if output_rank is None:
-            outputs = []
-            for rank, conn in enumerate(self.conns):
-                result = conn.recv()
-                if result["status"] != "success":
-                    raise RuntimeError(f"{method} failed on rank {rank}: {result.get('error', 'Unknown error')}")
-                outputs.append(result["output"])
-            return outputs
+    def unmerge_loras(self, target_module: str | None = None) -> None:
+        """Undo merged LoRAs and discard their LoRA refs.
 
-        result = self.conns[output_rank].recv()
-        if result["status"] != "success":
-            raise RuntimeError(f"{method} failed on rank {output_rank}: {result.get('error', 'Unknown error')}")
+        Args:
+            target_module: Target module to unmerge.
+                If None, unmerge LoRAs in all converted target modules.
+        """
+        return self._dispatch("unmerge_loras", target_module=target_module)
 
-        return result["output"]
+    def reset_loras(self, target_module: str | None = None) -> None:
+        """Reset LoRA status and restore base weights for selected modules.
+
+        Args:
+            target_module: Target module to reset.
+                If None, reset LoRA status in all converted target modules.
+        """
+        return self._dispatch("reset_loras", target_module=target_module)
+
+    def list_loras(self, lora_ids: str | list[str] | None = None) -> list[dict[str, Any]]:
+        """List loaded LoRAs and their current status.
+
+        Args:
+            lora_ids: LoRA id or LoRA ids to list.
+                If None, list all loaded LoRAs.
+
+        Returns:
+            List of dicts with keys: lora_id, path, target_module, scale, status.
+        """
+        return self._dispatch("list_loras", lora_ids=lora_ids)
 
     def __del__(self):
         self.shutdown()
@@ -146,20 +270,13 @@ class DiffSynthEngine:
 
     def start_profile(self, path: str = ".", profile_rank0_only: bool = True):
         if self.workers is not None:
-            self._run_worker(
-                "start_profile",
-                {
-                    "path": path,
-                    "profile_rank0_only": profile_rank0_only,
-                },
-                output_rank=0,
-            )
+            self._dispatch("start_profile", output_rank=0, path=path, profile_rank0_only=profile_rank0_only)
         else:
             TorchProfiler.start(path, profile_rank0_only=profile_rank0_only)
 
     def stop_profile(self):
         if self.workers is not None:
-            outputs = self._run_worker("stop_profile", {}, output_rank=None)
+            outputs = self._dispatch("stop_profile", output_rank=None)
         else:
             outputs = [TorchProfiler.stop()]
 

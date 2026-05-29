@@ -32,6 +32,7 @@ from diffsynth_engine.forward_context import set_forward_context
 from diffsynth_engine.layers.attention import get_attn_backend
 from diffsynth_engine.models.qwen_image import QwenImageTransformer2DModel, AutoencoderKLQwenImage
 from diffsynth_engine.pipelines.base import Pipeline
+from diffsynth_engine.pipelines.lora.pipeline_lora import LoRAPipeline
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -110,7 +111,7 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-class QwenImagePipeline(Pipeline):
+class QwenImagePipeline(LoRAPipeline, Pipeline):
     r"""
     The QwenImage pipeline for text-to-image generation.
 
