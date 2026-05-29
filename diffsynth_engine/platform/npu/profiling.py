@@ -10,6 +10,40 @@ import logging
 logger = logging.get_logger(__name__)
 
 
+def _resolve_profiler_enums(cfg: dict) -> dict:
+    """Map int profiler config values to torch_npu enum types."""
+    import torch_npu
+
+    resolved = dict(cfg)
+
+    level = cfg["profiler_level"]
+    if isinstance(level, int):
+        resolved["profiler_level"] = (
+            torch_npu.profiler.ProfilerLevel.Level0,
+            torch_npu.profiler.ProfilerLevel.Level1,
+            torch_npu.profiler.ProfilerLevel.Level2,
+        )[level]
+
+    metrics = cfg["aic_metrics"]
+    if isinstance(metrics, int):
+        resolved["aic_metrics"] = (
+            torch_npu.profiler.AiCMetrics.PipeUtilization,
+            torch_npu.profiler.AiCMetrics.AiCoreUtilization,
+            torch_npu.profiler.AiCMetrics.L2Cache,
+            torch_npu.profiler.AiCMetrics.Memory,
+        )[metrics]
+
+    activities = cfg["activities"]
+    if activities and isinstance(activities[0], int):
+        activity_map = {
+            0: torch_npu.profiler.ProfilerActivity.CPU,
+            1: torch_npu.profiler.ProfilerActivity.NPU,
+        }
+        resolved["activities"] = [activity_map[a] for a in activities]
+
+    return resolved
+
+
 def setup_block_profiling(profiling_tag: str, profiler_config: dict, rank: int):
     """Create a torch_npu.profiler from *profiler_config* and register it.
 
@@ -35,7 +69,7 @@ def setup_block_profiling(profiling_tag: str, profiler_config: dict, rank: int):
 
     reset_multi_block_profiler()
 
-    cfg = profiler_config
+    cfg = _resolve_profiler_enums(profiler_config)
     experimental_config = torch_npu.profiler._ExperimentalConfig(
         profiler_level=cfg["profiler_level"],
         aic_metrics=cfg["aic_metrics"],
@@ -45,9 +79,8 @@ def setup_block_profiling(profiling_tag: str, profiler_config: dict, rank: int):
         op_attr=cfg["op_attr"],
         record_op_args=cfg["record_op_args"],
     )
-    activities = [torch_npu.profiler.ProfilerActivity(a) for a in cfg["activities"]]
     profiler = torch_npu.profiler.profile(
-        activities=activities,
+        activities=cfg["activities"],
         schedule=torch_npu.profiler.schedule(
             wait=cfg["schedule_wait"],
             warmup=cfg["schedule_warmup"],
