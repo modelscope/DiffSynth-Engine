@@ -1,4 +1,3 @@
-import gc
 import json
 import os
 import re
@@ -29,7 +28,51 @@ except ImportError:
     FAST_SAFETENSORS_AVAILABLE = False
 
 
-def load_safetensors(path: str, device: str = "cpu") -> Dict[str, Any]:
+def _get_cgroup_memory_limit_bytes() -> Optional[int]:
+    for cgroup_path in (
+        "/sys/fs/cgroup/memory.max",
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    ):
+        if not os.path.exists(cgroup_path):
+            continue
+        with open(cgroup_path, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+        if raw in ("max", ""):
+            continue
+        limit = int(raw)
+        # cgroup v2 uses "max" encoded as a very large number on some systems
+        if limit > (1 << 62):
+            continue
+        return limit
+    return None
+
+
+def _estimate_checkpoint_bytes(weight_paths: List[str]) -> int:
+    return sum(os.path.getsize(path) for path in weight_paths)
+
+
+def _should_stream_load(weight_paths: List[str]) -> bool:
+    mode = os.environ.get("LOAD_WEIGHTS_STREAMING", "auto").lower()
+    if mode in ("1", "true", "yes"):
+        return True
+    if mode in ("0", "false", "no"):
+        return False
+
+    cgroup_limit = _get_cgroup_memory_limit_bytes()
+    if cgroup_limit is None:
+        return False
+
+    checkpoint_bytes = _estimate_checkpoint_bytes(weight_paths)
+    # Host needs headroom beyond raw checkpoint bytes for Python and copy peaks.
+    safety_factor = float(os.environ.get("LOAD_WEIGHTS_STREAMING_SAFETY", "1.15"))
+    return checkpoint_bytes * safety_factor > cgroup_limit
+
+
+def load_safetensors(
+    path: str,
+    device: Union[str, torch.device] = "cpu",
+    dtype: Optional[torch.dtype] = None,
+) -> Dict[str, Any]:
     is_rank_zero = not dist.is_initialized() or dist.get_rank() == 0
     start_time = time.perf_counter()
     if FAST_SAFETENSORS_AVAILABLE:
@@ -38,11 +81,18 @@ def load_safetensors(path: str, device: str = "cpu") -> Dict[str, Any]:
         num_threads = int(os.environ.get("FAST_SAFETENSORS_NUM_THREADS", 16))
         direct_io = os.environ.get("FAST_SAFETENSORS_DIRECT_IO", "False").upper() == "TRUE"
         state_dict = load_file(path, num_threads=num_threads, direct_io=direct_io)
-        state_dict = {k: v.to(device=device) for k, v in state_dict.items()}
+        if dtype is None:
+            state_dict = {k: v.to(device=device, non_blocking=True) for k, v in state_dict.items()}
+        else:
+            state_dict = {
+                k: v.to(device=device, dtype=dtype, non_blocking=True) for k, v in state_dict.items()
+            }
     else:
         if is_rank_zero:
             logger.info(f"Safetensors loading model from {path}...")
         state_dict = load_file(path, device=device)
+        if dtype is not None:
+            state_dict = {k: v.to(dtype=dtype, non_blocking=True) for k, v in state_dict.items()}
     elapsed_time = (time.perf_counter() - start_time) * 1000
     if is_rank_zero:
         logger.info(f"Model loaded in {elapsed_time} ms")
@@ -86,51 +136,38 @@ def _move_tensors(
     return {k: v.to(device=device, dtype=dtype, non_blocking=True) for k, v in state_dict.items()}
 
 
-def load_weights_into_module(
+def _load_weights_streaming(
     module: nn.Module,
-    model_path: str,
-    subfolder: Optional[str] = None,
-    device: Optional[Union[str, torch.device]] = None,
-    dtype: Optional[torch.dtype] = None,
-    key_mapping: Optional[Dict[str, str]] = None,
+    weight_paths: List[str],
+    device: Optional[Union[str, torch.device]],
+    dtype: Optional[torch.dtype],
+    key_mapping: Optional[Dict[str, str]],
 ) -> None:
-    """Load safetensors shard-by-shard directly into *module* to limit Host RAM peak."""
-    if subfolder is not None:
-        model_path = os.path.join(model_path, subfolder)
-
-    weight_paths = _resolve_weight_paths(model_path)
     is_rank_zero = not dist.is_initialized() or dist.get_rank() == 0
     expected_keys = set(module.state_dict().keys())
     loaded_keys: set[str] = set()
     total_params = 0
     total_size_bytes = 0
+    load_device = device if device is not None else "cpu"
 
     for shard_idx, shard_path in enumerate(weight_paths, start=1):
-        shard_dict = load_safetensors(shard_path)
+        if is_rank_zero:
+            start_time = time.perf_counter()
+
+        shard_dict = load_safetensors(shard_path, device=load_device, dtype=dtype)
         if key_mapping:
             shard_dict = fix_state_dict_key(shard_dict, key_mapping)
 
-        if is_rank_zero and device is not None:
-            shard_params = sum(v.numel() for v in shard_dict.values())
-            shard_size_gb = sum(v.numel() * v.element_size() for v in shard_dict.values()) / (1024**3)
-            logger.info(
-                f"Assigning shard {shard_idx}/{len(weight_paths)} "
-                f"({shard_params:,} parameters, {shard_size_gb:.2f} GB) to {device}..."
-            )
-            start_time = time.perf_counter()
-
-        shard_dict = _move_tensors(shard_dict, device, dtype)
         module.load_state_dict(shard_dict, strict=False, assign=True)
         loaded_keys.update(shard_dict.keys())
         total_params += sum(v.numel() for v in shard_dict.values())
         total_size_bytes += sum(v.numel() * v.element_size() for v in shard_dict.values())
 
-        if is_rank_zero and device is not None:
+        if is_rank_zero:
             elapsed = (time.perf_counter() - start_time) * 1000
             logger.info(f"Shard {shard_idx}/{len(weight_paths)} assigned in {elapsed:.2f} ms")
 
         del shard_dict
-        gc.collect()
 
     missing_keys = expected_keys - loaded_keys
     if missing_keys:
@@ -143,8 +180,45 @@ def load_weights_into_module(
         total_size_gb = total_size_bytes / (1024**3)
         logger.info(
             f"Loaded {total_params:,} parameters ({total_size_gb:.2f} GB) "
-            f"from {len(weight_paths)} shard(s) into module"
+            f"from {len(weight_paths)} shard(s) into module (streaming)"
         )
+
+
+def load_weights_into_module(
+    module: nn.Module,
+    model_path: str,
+    subfolder: Optional[str] = None,
+    device: Optional[Union[str, torch.device]] = None,
+    dtype: Optional[torch.dtype] = None,
+    key_mapping: Optional[Dict[str, str]] = None,
+) -> None:
+    """Load checkpoint into *module*, streaming shards only when Host RAM is tight."""
+    if subfolder is not None:
+        model_path = os.path.join(model_path, subfolder)
+
+    weight_paths = _resolve_weight_paths(model_path)
+    is_rank_zero = not dist.is_initialized() or dist.get_rank() == 0
+
+    if _should_stream_load(weight_paths):
+        if is_rank_zero:
+            checkpoint_gb = _estimate_checkpoint_bytes(weight_paths) / (1024**3)
+            cgroup_limit = _get_cgroup_memory_limit_bytes()
+            cgroup_gb = cgroup_limit / (1024**3) if cgroup_limit is not None else None
+            logger.info(
+                f"Using streaming weight load ({checkpoint_gb:.2f} GB checkpoint"
+                + (f", cgroup limit {cgroup_gb:.2f} GB)" if cgroup_gb is not None else ")")
+            )
+        _load_weights_streaming(module, weight_paths, device, dtype, key_mapping)
+        return
+
+    if is_rank_zero:
+        logger.info("Using bulk weight load")
+
+    state_dict = load_model_weights(model_path, device=device, dtype=dtype)
+    if key_mapping:
+        state_dict = fix_state_dict_key(state_dict, key_mapping)
+    module.load_state_dict(state_dict, strict=True, assign=True)
+    del state_dict
 
 
 def load_model_weights(
