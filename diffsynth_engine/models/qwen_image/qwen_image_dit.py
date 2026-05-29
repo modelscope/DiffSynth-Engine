@@ -8,8 +8,8 @@ from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm, GELU, RMSNorm
+from diffsynth_engine.models.basic.lora import LoRAFP8Linear
 from diffsynth_engine.utils.gguf import gguf_inference
-from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.parallel import (
     cfg_parallel,
     cfg_parallel_unshard,
@@ -467,10 +467,8 @@ class QwenImageDiT(PreTrainedModel):
         attn_kwargs: Optional[Dict[str, Any]] = None,
     ):
         h, w = image.shape[-2:]
-        fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         use_cfg = image.shape[0] > 1
         with (
-            fp8_inference(fp8_linear_enabled),
             gguf_inference(),
             cfg_parallel(
                 (
@@ -579,3 +577,9 @@ class QwenImageDiT(PreTrainedModel):
 
     def get_fsdp_module_cls(self):
         return {QwenImageTransformerBlock}
+
+    def enable_fp8_linear(self):
+        target_names = ["transformer_blocks"]
+        for name, module in self.named_modules():
+            if any([t in name for t in target_names]) and isinstance(module, nn.Linear):
+                self.set_submodule(name, LoRAFP8Linear.from_linear(module))

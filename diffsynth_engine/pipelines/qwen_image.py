@@ -36,7 +36,6 @@ from diffsynth_engine.utils.constants import (
 )
 from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.flag import NUNCHAKU_AVAILABLE
 
@@ -339,7 +338,7 @@ class QwenImagePipeline(BasePipeline):
                     use_zero_cond_t=config.use_zero_cond_t,
                 )
             if config.use_fp8_linear and not config.use_nunchaku:
-                enable_fp8_linear(dit)
+                dit.enable_fp8_linear()
 
         pipe = cls(
             config=config,

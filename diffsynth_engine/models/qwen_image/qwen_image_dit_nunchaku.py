@@ -340,3 +340,6 @@ class QwenImageDiTNunchaku(QwenImageDiT):
                 device=fuse_dict[key]["q"]["device"],
                 dtype=fuse_dict[key]["q"]["dtype"],
             )
+
+    def enable_fp8_linear(self):
+        raise NotImplementedError(f"{self.__class__.__name__} does not support FP8 linear")

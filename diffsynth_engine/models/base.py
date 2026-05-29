@@ -60,6 +60,9 @@ class PreTrainedModel(nn.Module):
     def get_fsdp_module_cls(self):
         raise NotImplementedError(f"{self.__class__.__name__} does not support FSDP")
 
+    def enable_fp8_linear(self):
+        raise NotImplementedError(f"{self.__class__.__name__} does not support FP8 linear")
+
 
 def split_suffix(name: str):
     suffix_list = [

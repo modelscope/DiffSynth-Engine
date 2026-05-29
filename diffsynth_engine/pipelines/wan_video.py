@@ -16,7 +16,6 @@ from diffsynth_engine.tokenizers import WanT5Tokenizer
 from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_model
-from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
 
@@ -615,7 +614,7 @@ class WanVideoPipeline(BasePipeline):
                 use_vsa=(config.dit_attn_impl.value == "vsa"),
             )
             if config.use_fp8_linear:
-                enable_fp8_linear(dit)
+                dit.enable_fp8_linear()
 
             dit2 = None
             if dit2_state_dict is not None:
@@ -627,7 +626,7 @@ class WanVideoPipeline(BasePipeline):
                     use_vsa=(config.dit_attn_impl.value == "vsa"),
                 )
                 if config.use_fp8_linear:
-                    enable_fp8_linear(dit2)
+                    dit2.enable_fp8_linear()
 
         pipe = cls(
             config=config,

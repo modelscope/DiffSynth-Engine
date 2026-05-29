@@ -11,11 +11,11 @@ from diffsynth_engine.models.basic.transformer_helper import (
     RoPEEmbedding,
     RMSNorm,
 )
+from diffsynth_engine.models.basic import attention as attention_ops
+from diffsynth_engine.models.basic.lora import LoRAFP8Linear
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
-from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.utils.gguf import gguf_inference
-from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
 from diffsynth_engine.utils.parallel import (
     cfg_parallel,
@@ -405,10 +405,8 @@ class FluxDiT(PreTrainedModel):
             controlnet_single_block_output if controlnet_single_block_output is not None else ()
         )
 
-        fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         use_cfg = hidden_states.shape[0] > 1
         with (
-            fp8_inference(fp8_linear_enabled),
             gguf_inference(),
             cfg_parallel(
                 (
@@ -506,3 +504,9 @@ class FluxDiT(PreTrainedModel):
 
     def get_fsdp_module_cls(self):
         return {FluxDoubleTransformerBlock, FluxSingleTransformerBlock}
+
+    def enable_fp8_linear(self):
+        target_names = ["blocks", "single_blocks"]
+        for name, module in self.named_modules():
+            if any([t in name for t in target_names]) and isinstance(module, nn.Linear):
+                self.set_submodule(name, LoRAFP8Linear.from_linear(module))

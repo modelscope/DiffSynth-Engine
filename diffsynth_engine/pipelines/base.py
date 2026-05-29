@@ -15,7 +15,7 @@ from diffsynth_engine.configs import (
 )
 from diffsynth_engine.models.basic.video_sparse_attention import get_vsa_kwargs
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload, offload_model_to_dict, restore_model_from_dict
-from diffsynth_engine.utils.fp8_linear import enable_fp8_autocast
+from diffsynth_engine.utils.autocast import enable_fp8_autocast
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.loader import load_file
