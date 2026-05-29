@@ -89,7 +89,16 @@ def load_model_weights(
     else:
         state_dict = load_safetensors(weights_file)
 
+    is_rank_zero = not dist.is_initialized() or dist.get_rank() == 0
+    if is_rank_zero and device is not None:
+        total_params = sum(v.numel() for v in state_dict.values())
+        total_size_gb = sum(v.numel() * v.element_size() for v in state_dict.values()) / (1024**3)
+        logger.info(f"Moving {total_params:,} parameters ({total_size_gb:.2f} GB) to {device}...")
+        start_time = time.perf_counter()
     state_dict = {k: v.to(device=device, dtype=dtype, non_blocking=True) for k, v in state_dict.items()}
+    if is_rank_zero and device is not None:
+        elapsed = (time.perf_counter() - start_time) * 1000
+        logger.info(f"Moved to {device} in {elapsed:.2f} ms")
     return state_dict
 
 
