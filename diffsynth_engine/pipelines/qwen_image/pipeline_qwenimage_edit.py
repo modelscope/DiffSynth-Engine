@@ -36,6 +36,7 @@ from diffsynth_engine.forward_context import set_forward_context
 from diffsynth_engine.layers.attention import get_attn_backend
 from diffsynth_engine.models.qwen_image import QwenImageTransformer2DModel, AutoencoderKLQwenImage
 from diffsynth_engine.pipelines.base import Pipeline
+from diffsynth_engine.pipelines.lora.pipeline_lora import LoRAPipeline
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -136,7 +137,7 @@ def calculate_dimensions(target_area, ratio):
     return width, height, None
 
 
-class QwenImageEditPipeline(Pipeline):
+class QwenImageEditPipeline(LoRAPipeline, Pipeline):
     r"""
     The Qwen-Image-Edit pipeline for image editing.
 

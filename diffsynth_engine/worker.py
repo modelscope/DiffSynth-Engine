@@ -69,6 +69,12 @@ class Worker:
         result = TorchProfiler.stop()
         get_world_group().barrier()
         return result
+    
+    def __getattr__(self, name):
+        pipeline = self.__dict__.get("pipeline")
+        if pipeline is None:
+            raise AttributeError(f"'{name}' attribute not found and pipeline is not initialized")
+        return getattr(pipeline, name)
 
 
 def run_worker_loop(
