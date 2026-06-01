@@ -87,7 +87,7 @@ class DiffSynthEngine:
         pipeline_class = get_pipeline_class(self.pipeline_config.pipeline_class_name)
         self.pipeline = pipeline_class.from_pretrained(self.pipeline_config)
 
-    def _dispatch(self, method: str, output_rank: int | None = None, **kwargs):
+    def _dispatch(self, method: str, output_rank: int | None = 0, **kwargs):
         if self.workers is not None:
             self.conns[0].send(
                 {
