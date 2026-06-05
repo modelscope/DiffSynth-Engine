@@ -17,6 +17,7 @@ _DIFFSYNTH_PIPELINES: dict[str, str] = {
 }
 
 PIPELINE_REGISTRY: dict[str, LazyImport] = {}
+_registry_initialized = False
 
 
 def register_pipeline(name: str, target: str) -> None:
@@ -49,7 +50,9 @@ def get_pipeline_class_name(model_path: str) -> str:
 
 
 def get_pipeline_class(name: str) -> type[Pipeline]:
-    if not PIPELINE_REGISTRY:
+    global _registry_initialized
+    if not _registry_initialized:
+        _registry_initialized = True
         _register_builtin_pipelines()
         load_general_plugins()
     if name not in PIPELINE_REGISTRY:
