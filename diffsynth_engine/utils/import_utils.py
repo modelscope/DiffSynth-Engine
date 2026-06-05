@@ -9,16 +9,16 @@ class LazyImport:
         self.class_name = class_name
         self._module = None
 
-    def _load(self):
+    def load(self):
         if self._module is None:
             module = importlib.import_module(self.module_name)
             self._module = getattr(module, self.class_name)
         return self._module
 
     def __getattr__(self, name: str):
-        module = self._load()
+        module = self.load()
         return getattr(module, name)
 
     def __call__(self, *args, **kwargs):
-        module = self._load()
+        module = self.load()
         return module(*args, **kwargs)

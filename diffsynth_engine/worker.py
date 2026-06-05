@@ -9,7 +9,7 @@ from diffsynth_engine.distributed.parallel_state import (
     init_distributed_environment,
     initialize_model_parallel,
 )
-from diffsynth_engine.pipelines.utils import get_pipeline_class
+from diffsynth_engine.pipelines.registry import get_pipeline_class
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.torch_profiler import TorchProfiler
 
@@ -69,7 +69,7 @@ class Worker:
         result = TorchProfiler.stop()
         get_world_group().barrier()
         return result
-    
+
     def __getattr__(self, name):
         pipeline = self.__dict__.get("pipeline")
         if pipeline is None:
