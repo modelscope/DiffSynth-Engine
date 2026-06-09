@@ -78,7 +78,7 @@ class AiterImpl(AttentionImpl):
         value: torch.Tensor,
         attn_metadata: AttentionMetadata | None = None,
         **kwargs,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         output, lse = aiter_flash_attn(
             query,
             key,

@@ -83,7 +83,7 @@ class SDPAImpl(AttentionImpl):
         attn_mask: torch.Tensor | None = None,
         attn_metadata: AttentionMetadata | None = None,
         **kwargs,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         query = rearrange(query, "b s n d -> b n s d")
         key = rearrange(key, "b s n d -> b n s d")
         value = rearrange(value, "b s n d -> b n s d")
