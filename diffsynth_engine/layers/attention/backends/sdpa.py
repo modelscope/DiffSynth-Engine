@@ -9,6 +9,8 @@ from diffsynth_engine.layers.attention.backends.abstract import (
     AttentionType,
 )
 
+_scaled_dot_product_efficient_attention = torch.ops.aten._scaled_dot_product_efficient_attention
+
 
 class SDPABackend(AttentionBackend):
     @staticmethod
@@ -72,3 +74,36 @@ class SDPAImpl(AttentionImpl):
         )
         output = rearrange(output, "b n s d -> b s n d")
         return output
+
+    def forward_with_lse(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attn_mask: torch.Tensor | None = None,
+        attn_metadata: AttentionMetadata | None = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        query = rearrange(query, "b s n d -> b n s d")
+        key = rearrange(key, "b s n d -> b n s d")
+        value = rearrange(value, "b s n d -> b n s d")
+
+        if self.num_kv_groups > 1:
+            key = torch.repeat_interleave(key, self.num_kv_groups, dim=1)
+            value = torch.repeat_interleave(value, self.num_kv_groups, dim=1)
+
+        seq_len = query.shape[2]
+        output, lse = _scaled_dot_product_efficient_attention(
+            query,
+            key,
+            value,
+            attn_bias=attn_mask,
+            compute_log_sumexp=True,
+            is_causal=self.causal,
+            scale=self.softmax_scale,
+        )[:2]
+
+        output = rearrange(output, "b n s d -> b s n d")
+        # the returned lse is padded but not restored, so we need to slice it
+        lse = lse[:, :, :seq_len]
+        return output, lse

@@ -71,6 +71,24 @@ class AiterImpl(AttentionImpl):
         )
         return output
 
+    def forward_with_lse(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attn_metadata: AttentionMetadata | None = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        output, lse = aiter_flash_attn(
+            query,
+            key,
+            value,
+            causal=self.causal,
+            softmax_scale=self.softmax_scale,
+            return_lse=True,
+        )
+        return output, lse
+
 
 class AiterFP8Backend(AiterBackend):
     @staticmethod
@@ -104,4 +122,29 @@ class AiterFP8Impl(AiterImpl):
             softmax_scale=self.softmax_scale,
         )
         output = output.to(original_dtype)
+        return output
+
+    def forward_with_lse(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attn_metadata: AttentionMetadata | None = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        # TODO: scaling
+        original_dtype = query.dtype
+        query = query.to(DTYPE_FP8)
+        key = key.to(DTYPE_FP8)
+        value = value.to(DTYPE_FP8)
+        output, lse = aiter_flash_attn_fp8(
+            query,
+            key,
+            value,
+            causal=self.causal,
+            softmax_scale=self.softmax_scale,
+            return_lse=True,
+        )
+        output = output.to(original_dtype)
+        lse = lse.to(original_dtype)
         return output
