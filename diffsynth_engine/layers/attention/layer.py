@@ -149,7 +149,7 @@ class USPAttention(nn.Module):
 
         if ring_parallel_world_size > 1:
             # warning: attn_kwargs is not supported for ring flash attention
-            output = ring_flash_attention_forward(q, k, v, self.attn_impl)
+            output = ring_flash_attention_forward(q, k, v, self.attn_impl, **attn_kwargs)
         else:
             output = self.attn_impl.forward(q, k, v, **attn_kwargs)
 

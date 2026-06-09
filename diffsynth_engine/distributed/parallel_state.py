@@ -737,6 +737,11 @@ def destroy_model_parallel():
         _VAE.destroy()
     _VAE = None
 
+    global _DIT
+    if _DIT is not None:
+        torch.distributed.destroy_process_group(_DIT)
+    _DIT = None
+
 
 def destroy_distributed_environment():
     global _WORLD

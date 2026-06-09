@@ -90,3 +90,43 @@ class FlashAttention2Impl(AttentionImpl):
                 window_size=window_size if window_size is not None else (-1, -1),
             )
         return output
+
+    def forward_with_lse(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        cu_seqlens_q: torch.Tensor | None = None,
+        cu_seqlens_k: torch.Tensor | None = None,
+        max_seqlen_q: int | None = None,
+        max_seqlen_k: int | None = None,
+        window_size: Tuple[int, int] | None = None,
+        attn_metadata: AttentionMetadata | None = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if cu_seqlens_q is not None:
+            output, lse, *_ = flash_attn_varlen_func(
+                query,
+                key,
+                value,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                max_seqlen_q,
+                max_seqlen_k,
+                causal=self.causal,
+                softmax_scale=self.softmax_scale,
+                window_size=window_size if window_size is not None else (-1, -1),
+                return_attn_probs=True,
+            )
+        else:
+            output, lse, *_ = flash_attn_func(
+                query,
+                key,
+                value,
+                causal=self.causal,
+                softmax_scale=self.softmax_scale,
+                window_size=window_size if window_size is not None else (-1, -1),
+                return_attn_probs=True,
+            )
+
+        return output, lse

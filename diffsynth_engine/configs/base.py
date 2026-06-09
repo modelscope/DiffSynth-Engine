@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 
 from diffsynth_engine.layers.attention import AttentionType
+from diffsynth_engine.layers.attention.ring import RING_ATTN_COMPATIBLE_TYPES
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -56,6 +57,7 @@ class PipelineConfig:
 
     def __post_init__(self):
         init_parallel_config(self)
+        validate_ring_attention_config(self)
 
 
 def init_parallel_config(config: PipelineConfig):
@@ -96,3 +98,12 @@ def init_parallel_config(config: PipelineConfig):
         if not config.vae_tiled:
             config.vae_tiled = True
             logger.warning("setting vae_tiled to True since use_vae_parallel is enabled")
+
+
+def validate_ring_attention_config(config) -> None:
+    if config.sp_ring_degree is not None and config.sp_ring_degree > 1:
+        if config.attn_type not in RING_ATTN_COMPATIBLE_TYPES:
+            raise ValueError(
+                f"attention backend {config.attn_type} does not support ring attention "
+                f"(missing forward_with_lse). Use one of: {', '.join(str(t) for t in RING_ATTN_COMPATIBLE_TYPES)}"
+            )
