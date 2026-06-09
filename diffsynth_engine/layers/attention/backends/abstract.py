@@ -10,21 +10,25 @@ from typing import Generic, TypeVar
 
 import torch
 
+from diffsynth_engine.utils import logging
 
-class AttentionType(enum.Enum):
-    SDPA = enum.auto()
-    FA2 = enum.auto()
-    FA3 = enum.auto()
-    FA3_FP8 = enum.auto()
-    FA4 = enum.auto()
-    AITER = enum.auto()
-    AITER_FP8 = enum.auto()
-    SAGE2 = enum.auto()
-    SAGE3 = enum.auto()
-    SPARGE = enum.auto()
+logger = logging.get_logger(__name__)
+
+
+class AttentionType(str, enum.Enum):
+    SDPA = "sdpa"
+    FA2 = "fa2"
+    FA3 = "fa3"
+    FA3_FP8 = "fa3_fp8"
+    FA4 = "fa4"
+    AITER = "aiter"
+    AITER_FP8 = "aiter_fp8"
+    SAGE2 = "sage2"
+    SAGE3 = "sage3"
+    SPARGE = "sparge"
 
     def __str__(self) -> str:
-        return self.name.lower()
+        return self.value
 
 
 class AttentionBackend(ABC):
@@ -37,7 +41,7 @@ class AttentionBackend(ABC):
 
     @staticmethod
     @abstractmethod
-    def get_type() -> AttentionType:
+    def get_type() -> str:
         raise NotImplementedError
 
     @staticmethod
@@ -64,7 +68,18 @@ class AttentionBackend(ABC):
     @classmethod
     def supports_head_size(cls, head_size: int) -> bool:
         supported_head_sizes = cls.get_supported_head_sizes()
-        return (not supported_head_sizes) or head_size in supported_head_sizes
+        if (not supported_head_sizes) or head_size in supported_head_sizes:
+            return True
+
+        logger.error(
+            f"Attention backend {cls.get_type()!r} does not support head size {head_size}. "
+            f"Supported head sizes: {supported_head_sizes}"
+        )
+        return False
+
+    @classmethod
+    def supports_ring_attention(cls) -> bool:
+        return False
 
 
 @dataclass

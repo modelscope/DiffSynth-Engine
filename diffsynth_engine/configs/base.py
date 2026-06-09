@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 
 from diffsynth_engine.layers.attention import AttentionType
-from diffsynth_engine.layers.attention.ring import RING_ATTN_COMPATIBLE_TYPES
+from diffsynth_engine.registry import get_attn_backend
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -37,7 +37,7 @@ class PipelineConfig:
     vae_tile_stride: int | Tuple[int, int] = (192, 192)
 
     # attention
-    attn_type: AttentionType = AttentionType.SDPA
+    attn_type: AttentionType | str = AttentionType.SDPA
     attn_params: Optional[AttentionParams] = None
 
     # parallelism
@@ -56,8 +56,9 @@ class PipelineConfig:
         return cls(**filtered_dict)
 
     def __post_init__(self):
+        self.attn_type = str(self.attn_type)
         init_parallel_config(self)
-        validate_ring_attention_config(self)
+        validate_attn_config(self)
 
 
 def init_parallel_config(config: PipelineConfig):
@@ -100,10 +101,8 @@ def init_parallel_config(config: PipelineConfig):
             logger.warning("setting vae_tiled to True since use_vae_parallel is enabled")
 
 
-def validate_ring_attention_config(config) -> None:
+def validate_attn_config(config: PipelineConfig):
+    attn_backend = get_attn_backend(config.attn_type)
     if config.sp_ring_degree is not None and config.sp_ring_degree > 1:
-        if config.attn_type not in RING_ATTN_COMPATIBLE_TYPES:
-            raise ValueError(
-                f"attention backend {config.attn_type} does not support ring attention "
-                f"(missing forward_with_lse). Use one of: {', '.join(str(t) for t in RING_ATTN_COMPATIBLE_TYPES)}"
-            )
+        if not attn_backend.supports_ring_attention():
+            raise ValueError(f"Attention backend {config.attn_type!r} does not support ring attention.")

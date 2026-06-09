@@ -30,8 +30,8 @@ class FlashAttention3Backend(AttentionBackend):
             raise RuntimeError(error_msg)
 
     @staticmethod
-    def get_type() -> AttentionType:
-        return AttentionType.FA3
+    def get_type() -> str:
+        return str(AttentionType.FA3)
 
     @staticmethod
     def get_impl_cls() -> type["AttentionImpl"]:
@@ -40,6 +40,10 @@ class FlashAttention3Backend(AttentionBackend):
     @staticmethod
     def get_supported_head_sizes() -> list[int]:
         return [32, 64, 96, 128, 160, 192, 224, 256]
+
+    @classmethod
+    def supports_ring_attention(cls) -> bool:
+        return True
 
 
 class FlashAttention3Impl(AttentionImpl):
@@ -134,8 +138,8 @@ class FlashAttention3Impl(AttentionImpl):
 
 class FlashAttention3FP8Backend(FlashAttention3Backend):
     @staticmethod
-    def get_type() -> AttentionType:
-        return AttentionType.FA3_FP8
+    def get_type() -> str:
+        return str(AttentionType.FA3_FP8)
 
     @staticmethod
     def get_impl_cls() -> type["AttentionImpl"]:

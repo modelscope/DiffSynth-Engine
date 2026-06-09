@@ -44,8 +44,8 @@ class SpargeAttentionBackend(AttentionBackend):
             raise RuntimeError(error_msg)
 
     @staticmethod
-    def get_type() -> AttentionType:
-        return AttentionType.SPARGE
+    def get_type() -> str:
+        return str(AttentionType.SPARGE)
 
     @staticmethod
     def get_impl_cls() -> type["AttentionImpl"]:

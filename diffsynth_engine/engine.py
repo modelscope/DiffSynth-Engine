@@ -4,7 +4,7 @@ import torch.multiprocessing as mp
 from torch.cuda import set_device
 
 from diffsynth_engine.configs import PipelineConfig
-from diffsynth_engine.pipelines.registry import (
+from diffsynth_engine.registry import (
     get_pipeline_class,
     get_pipeline_class_name,
 )

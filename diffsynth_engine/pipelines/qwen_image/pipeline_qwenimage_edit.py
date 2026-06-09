@@ -33,10 +33,10 @@ from diffsynth_engine.distributed.parallel_state import (
     model_parallel_is_initialized,
 )
 from diffsynth_engine.forward_context import set_forward_context
-from diffsynth_engine.layers.attention import get_attn_backend
-from diffsynth_engine.models.qwen_image import QwenImageTransformer2DModel, AutoencoderKLQwenImage
+from diffsynth_engine.models.qwen_image import AutoencoderKLQwenImage, QwenImageTransformer2DModel
 from diffsynth_engine.pipelines.base import Pipeline
 from diffsynth_engine.pipelines.lora.pipeline_lora import LoRAPipeline
+from diffsynth_engine.registry import get_attn_backend
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -189,10 +189,7 @@ class QwenImageEditPipeline(LoRAPipeline, Pipeline):
         self.prompt_template_encode_start_idx = 64
         self.default_sample_size = 128
 
-        self.attn_backend = get_attn_backend(
-            head_size=transformer.config.attention_head_dim,
-            attn_type=pipeline_config.attn_type,
-        )
+        self.attn_backend = get_attn_backend(pipeline_config.attn_type)
 
         self._attention_kwargs = None
         self._num_timesteps = None

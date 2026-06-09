@@ -28,8 +28,8 @@ class SageAttention3Backend(AttentionBackend):
             raise RuntimeError(error_msg)
 
     @staticmethod
-    def get_type() -> AttentionType:
-        return AttentionType.SAGE3
+    def get_type() -> str:
+        return str(AttentionType.SAGE3)
 
     @staticmethod
     def get_impl_cls() -> type["AttentionImpl"]:
