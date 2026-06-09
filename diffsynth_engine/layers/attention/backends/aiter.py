@@ -131,7 +131,7 @@ class AiterFP8Impl(AiterImpl):
         value: torch.Tensor,
         attn_metadata: AttentionMetadata | None = None,
         **kwargs,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         # TODO: scaling
         original_dtype = query.dtype
         query = query.to(DTYPE_FP8)
@@ -147,4 +147,4 @@ class AiterFP8Impl(AiterImpl):
         )
         output = output.to(original_dtype)
         lse = lse.to(original_dtype)
-        return output
+        return output, lse
