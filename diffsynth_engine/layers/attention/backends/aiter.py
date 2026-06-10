@@ -29,8 +29,8 @@ class AiterBackend(AttentionBackend):
             raise RuntimeError(error_msg)
 
     @staticmethod
-    def get_type() -> AttentionType:
-        return AttentionType.AITER
+    def get_type() -> str:
+        return str(AttentionType.AITER)
 
     @staticmethod
     def get_impl_cls() -> type["AttentionImpl"]:
@@ -92,8 +92,8 @@ class AiterImpl(AttentionImpl):
 
 class AiterFP8Backend(AiterBackend):
     @staticmethod
-    def get_type() -> AttentionType:
-        return AttentionType.AITER_FP8
+    def get_type() -> str:
+        return str(AttentionType.AITER_FP8)
 
     @staticmethod
     def get_impl_cls() -> type["AttentionImpl"]:

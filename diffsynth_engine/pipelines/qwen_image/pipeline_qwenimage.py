@@ -29,10 +29,10 @@ from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 from diffsynth_engine.configs import QwenImagePipelineConfig
 from diffsynth_engine.distributed.parallel_state import get_cfg_group, model_parallel_is_initialized
 from diffsynth_engine.forward_context import set_forward_context
-from diffsynth_engine.layers.attention import get_attn_backend
-from diffsynth_engine.models.qwen_image import QwenImageTransformer2DModel, AutoencoderKLQwenImage
+from diffsynth_engine.models.qwen_image import AutoencoderKLQwenImage, QwenImageTransformer2DModel
 from diffsynth_engine.pipelines.base import Pipeline
 from diffsynth_engine.pipelines.lora.pipeline_lora import LoRAPipeline
+from diffsynth_engine.registry import get_attn_backend
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -157,10 +157,7 @@ class QwenImagePipeline(LoRAPipeline, Pipeline):
         self.prompt_template_encode_start_idx = 34
         self.default_sample_size = 128
 
-        self.attn_backend = get_attn_backend(
-            head_size=transformer.config.attention_head_dim,
-            attn_type=pipeline_config.attn_type,
-        )
+        self.attn_backend = get_attn_backend(pipeline_config.attn_type)
 
     @classmethod
     def from_pretrained(cls, model_path_or_config: str | QwenImagePipelineConfig):

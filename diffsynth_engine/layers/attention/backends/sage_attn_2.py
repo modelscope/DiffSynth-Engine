@@ -28,8 +28,8 @@ class SageAttention2Backend(AttentionBackend):
             raise RuntimeError(error_msg)
 
     @staticmethod
-    def get_type() -> AttentionType:
-        return AttentionType.SAGE2
+    def get_type() -> str:
+        return str(AttentionType.SAGE2)
 
     @staticmethod
     def get_impl_cls() -> type["AttentionImpl"]:
@@ -38,6 +38,10 @@ class SageAttention2Backend(AttentionBackend):
     @staticmethod
     def get_supported_head_sizes() -> list[int]:
         return [32, 64, 96, 128, 160, 192, 224, 256]
+
+    @classmethod
+    def supports_ring_attention(cls) -> bool:
+        return True
 
 
 class SageAttention2Impl(AttentionImpl):

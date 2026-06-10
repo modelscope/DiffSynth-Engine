@@ -17,13 +17,8 @@ def _parse_tuple(value: str) -> Tuple[int, int] | int:
         raise ValueError(f"Cannot parse tuple: {value}, format should be '256,256' or '256'")
 
 
-def _parse_attention_type(attn_type_str: str) -> AttentionType:
-    """Convert string to AttentionType enum"""
-    return AttentionType[attn_type_str.upper()]
-
-
 def _parse_attention_params(
-    attn_type: AttentionType,
+    attn_type: str,
     sparge_topk: float | None = None,
 ) -> AttentionParams | None:
     """Parse attention parameters based on attention type"""
@@ -42,7 +37,6 @@ def parse_cli_args() -> Dict[str, Any]:
 
     # Define choices
     dtype_choices = ["float32", "float16", "bfloat16"]
-    attn_type_choices = [attn_type.name.lower() for attn_type in AttentionType]
 
     # Model configuration group
     model_group = parser.add_argument_group("Model Configuration")
@@ -107,7 +101,6 @@ def parse_cli_args() -> Dict[str, Any]:
         "--attn-type",
         type=str,
         default="sdpa",
-        choices=attn_type_choices,
         help="Attention type (default: sdpa)",
     )
     attn_group.add_argument(
@@ -178,7 +171,7 @@ def parse_cli_args() -> Dict[str, Any]:
     args_dict["vae_tile_stride"] = _parse_tuple(args.vae_tile_stride)
 
     # Attention configuration
-    attn_type = _parse_attention_type(args.attn_type)
+    attn_type = args.attn_type.lower()
     args_dict["attn_type"] = attn_type
     args_dict["attn_params"] = _parse_attention_params(attn_type, args.sparge_topk)
 

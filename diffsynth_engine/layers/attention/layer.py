@@ -13,9 +13,8 @@ from diffsynth_engine.distributed.parallel_state import (
     is_sp_group_initialized,
 )
 from diffsynth_engine.forward_context import ForwardContext, get_forward_context
-from diffsynth_engine.layers.attention.backends.abstract import AttentionType
 from diffsynth_engine.layers.attention.ring import ring_flash_attention_forward
-from diffsynth_engine.layers.attention.selector import get_attn_backend
+from diffsynth_engine.registry import get_attn_backend
 
 
 class LocalAttention(nn.Module):
@@ -26,7 +25,7 @@ class LocalAttention(nn.Module):
         softmax_scale: float | None = None,
         causal: bool = False,
         num_kv_heads: int | None = None,
-        attn_type: AttentionType | None = None,
+        attn_type: str | None = None,
         **extra_impl_args,
     ):
         super().__init__()
@@ -36,7 +35,10 @@ class LocalAttention(nn.Module):
         self.head_size = head_size
         self.num_kv_heads = num_kv_heads
 
-        attn_backend = get_attn_backend(head_size, attn_type)
+        attn_backend = get_attn_backend(attn_type)
+        if not attn_backend.supports_head_size(head_size):
+            raise ValueError(f"Attention backend {attn_type!r} does not support head size {head_size}.")
+
         impl_cls = attn_backend.get_impl_cls()
         self.attn_impl = impl_cls(
             num_heads=num_heads,
@@ -86,7 +88,7 @@ class USPAttention(nn.Module):
         softmax_scale: float | None = None,
         causal: bool = False,
         num_kv_heads: int | None = None,
-        attn_type: AttentionType | None = None,
+        attn_type: str | None = None,
         scatter_idx: int = 2,
         gather_idx: int = 1,
         **extra_impl_args,
@@ -100,7 +102,10 @@ class USPAttention(nn.Module):
         self.scatter_idx = scatter_idx
         self.gather_idx = gather_idx
 
-        attn_backend = get_attn_backend(head_size, attn_type)
+        attn_backend = get_attn_backend(attn_type)
+        if not attn_backend.supports_head_size(head_size):
+            raise ValueError(f"Attention backend {attn_type!r} does not support head size {head_size}.")
+
         impl_cls = attn_backend.get_impl_cls()
         self.attn_impl = impl_cls(
             num_heads=num_heads,

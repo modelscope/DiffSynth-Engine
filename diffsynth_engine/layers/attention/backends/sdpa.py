@@ -18,8 +18,8 @@ class SDPABackend(AttentionBackend):
         pass
 
     @staticmethod
-    def get_type() -> AttentionType:
-        return AttentionType.SDPA
+    def get_type() -> str:
+        return str(AttentionType.SDPA)
 
     @staticmethod
     def get_impl_cls() -> type["AttentionImpl"]:
@@ -28,6 +28,10 @@ class SDPABackend(AttentionBackend):
     @staticmethod
     def get_supported_head_sizes() -> list[int]:
         return []
+
+    @classmethod
+    def supports_ring_attention(cls) -> bool:
+        return True
 
 
 class SDPAImpl(AttentionImpl):

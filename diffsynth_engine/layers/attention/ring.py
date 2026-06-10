@@ -3,18 +3,7 @@ import torch.nn.functional as F
 
 from diffsynth_engine.distributed.comm import RingComm
 from diffsynth_engine.distributed.parallel_state import get_sp_group
-from diffsynth_engine.layers.attention.backends.abstract import AttentionImpl, AttentionType
-
-RING_ATTN_COMPATIBLE_TYPES = frozenset(
-    {
-        AttentionType.SDPA,
-        AttentionType.FA2,
-        AttentionType.FA3,
-        AttentionType.FA3_FP8,
-        AttentionType.FA4,
-        AttentionType.SAGE2,
-    }
-)
+from diffsynth_engine.layers.attention.backends.abstract import AttentionImpl
 
 
 def ring_flash_attention_forward(
