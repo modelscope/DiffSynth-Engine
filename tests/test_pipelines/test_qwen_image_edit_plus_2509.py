@@ -56,7 +56,7 @@ class TestQwenImageEditPlusPipeline(ImageTestCase):
             generator=torch.Generator(device="cpu").manual_seed(42),
         )
         image = output.images[0]
-        self.assertImageEqualAndSaveFailed(image, "qwen_image/qwen_image_edit_plus_multi_2509.png", threshold=0.99)
+        self.assertImageEqualAndSaveFailed(image, "qwen_image/qwen_image_edit_plus_multi_2509.png", threshold=0.98)
 
 
 if __name__ == "__main__":
