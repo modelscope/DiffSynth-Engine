@@ -14,32 +14,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import html
 import json
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable
 
 import PIL
 import regex as re
 import torch
 from accelerate import init_empty_weights
 from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
-from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
-from diffusers.schedulers.scheduling_utils import SCHEDULER_CONFIG_NAME
+from diffusers.schedulers import UniPCMultistepScheduler
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
 from transformers import AutoTokenizer, CLIPImageProcessor, CLIPVisionModel, UMT5EncoderModel
 
 from diffsynth_engine.configs.wan import WanPipelineConfig
-from diffsynth_engine.distributed.parallel_state import get_cfg_group, model_parallel_is_initialized
+from diffsynth_engine.distributed.parallel_state import (
+    get_cfg_group,
+    is_cfg_group_initialized,
+)
 from diffsynth_engine.forward_context import set_forward_context
-from diffsynth_engine.layers.attention import get_attn_backend
 from diffsynth_engine.models.wan import AutoencoderKLWan, WanTransformer3DModel
 from diffsynth_engine.pipelines.base import Pipeline
+from diffsynth_engine.registry import get_attn_backend
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.load_utils import load_model_weights
 
 logger = logging.get_logger(__name__)
+
+if TYPE_CHECKING:
+    from diffusers.image_processor import PipelineImageInput
 
 
 def basic_clean(text):
@@ -65,7 +71,7 @@ def prompt_clean(text):
 
 
 def retrieve_latents(
-    encoder_output: torch.Tensor, generator: Optional[torch.Generator] = None, sample_mode: str = "sample"
+    encoder_output: torch.Tensor, generator: torch.Generator | None = None, sample_mode: str = "sample"
 ):
     if hasattr(encoder_output, "latent_dist") and sample_mode == "sample":
         return encoder_output.latent_dist.sample(generator)
@@ -79,7 +85,7 @@ def retrieve_latents(
 
 class WanImageToVideoPipeline(Pipeline):
     r"""
-    Pipeline for image-to-video generation using Wan, adapted for DiffSynth-Engine.
+    Pipeline for image-to-video generation using Wan.
 
     Args:
         pipeline_config (`WanPipelineConfig`):
@@ -94,7 +100,7 @@ class WanImageToVideoPipeline(Pipeline):
             CLIP image processor for preprocessing input images.
         vae (`AutoencoderKLWan`):
             Variational Auto-Encoder (VAE) Model to encode and decode videos to and from latent representations.
-        scheduler (`FlowMatchEulerDiscreteScheduler`):
+        scheduler (`UniPCMultistepScheduler`):
             A scheduler to be used in combination with `transformer` to denoise the encoded video latents.
         transformer (`WanTransformer3DModel`, *optional*):
             Conditional Transformer to denoise the input latents.
@@ -104,6 +110,9 @@ class WanImageToVideoPipeline(Pipeline):
             stages. If not provided, only `transformer` is used.
         boundary_ratio (`float`, *optional*, defaults to `None`):
             Ratio of total timesteps to use as the boundary for switching between transformers in two-stage denoising.
+            The actual boundary timestep is calculated as `boundary_ratio * num_train_timesteps`. When provided,
+            `transformer` handles timesteps >= boundary_timestep and `transformer_2` handles timesteps <
+            boundary_timestep. If `None`, only `transformer` is used for the entire denoising process.
         expand_timesteps (`bool`, defaults to `False`):
             Whether to expand timesteps for Wan2.2 ti2v models.
     """
@@ -116,12 +125,12 @@ class WanImageToVideoPipeline(Pipeline):
         tokenizer: AutoTokenizer,
         text_encoder: UMT5EncoderModel,
         vae: AutoencoderKLWan,
-        scheduler: FlowMatchEulerDiscreteScheduler,
-        image_processor: Optional[CLIPImageProcessor] = None,
-        image_encoder: Optional[CLIPVisionModel] = None,
-        transformer: Optional[WanTransformer3DModel] = None,
-        transformer_2: Optional[WanTransformer3DModel] = None,
-        boundary_ratio: Optional[float] = None,
+        scheduler: UniPCMultistepScheduler,
+        image_processor: CLIPImageProcessor = None,
+        image_encoder: CLIPVisionModel = None,
+        transformer: WanTransformer3DModel = None,
+        transformer_2: WanTransformer3DModel = None,
+        boundary_ratio: float | None = None,
         expand_timesteps: bool = False,
     ):
         super().__init__(pipeline_config)
@@ -143,10 +152,9 @@ class WanImageToVideoPipeline(Pipeline):
 
         active_transformer = transformer if transformer is not None else transformer_2
         head_dim = active_transformer.config.attention_head_dim
-        self.attn_backend = get_attn_backend(
-            head_size=head_dim,
-            attn_type=pipeline_config.attn_type,
-        )
+        self.attn_backend = get_attn_backend(pipeline_config.attn_type)
+        if not self.attn_backend.supports_head_size(head_dim):
+            raise ValueError(f"Attention backend {pipeline_config.attn_type!r} does not support head size {head_dim}.")
 
     @classmethod
     def from_pretrained(cls, model_path_or_config: str | WanPipelineConfig):
@@ -167,7 +175,6 @@ class WanImageToVideoPipeline(Pipeline):
         if not os.path.exists(pipeline_config.model_path):
             raise FileNotFoundError(f"Model path not found: {pipeline_config.model_path}")
 
-        # Load model_index.json to read pipeline-level config and component declarations.
         model_index_path = os.path.join(pipeline_config.model_path, "model_index.json")
         model_index = {}
         boundary_ratio = None
@@ -182,15 +189,17 @@ class WanImageToVideoPipeline(Pipeline):
             if expand_timesteps:
                 logger.info(f"Loaded expand_timesteps={expand_timesteps} from model_index.json")
 
-        # Load transformer (subfolder defaults to "transformer")
-        transformer = cls.init_transformer(pipeline_config)
+        # Load transformer
+        transformer = cls.init_transformer(WanTransformer3DModel, pipeline_config)
 
-        # Load transformer_2 if declared in model_index.json.
+        # Load transformer_2
         transformer_2 = None
         if "transformer_2" in model_index and model_index["transformer_2"] is not None:
             transformer_2_subfolder = "transformer_2"
             if os.path.isdir(os.path.join(pipeline_config.model_path, transformer_2_subfolder)):
-                transformer_2 = cls.init_transformer(pipeline_config, subfolder=transformer_2_subfolder)
+                transformer_2 = cls.init_transformer(
+                    WanTransformer3DModel, pipeline_config, subfolder=transformer_2_subfolder
+                )
                 logger.info(
                     f"Loaded transformer_2 from `{transformer_2_subfolder}` subfolder of {pipeline_config.model_path}."
                 )
@@ -200,34 +209,17 @@ class WanImageToVideoPipeline(Pipeline):
                     f"'{transformer_2_subfolder}' not found in {pipeline_config.model_path}. Skipping."
                 )
 
-        # Load scheduler - auto-detect scheduler class from config
-        scheduler_config_path = os.path.join(pipeline_config.model_path, "scheduler", SCHEDULER_CONFIG_NAME)
-        scheduler_cls = FlowMatchEulerDiscreteScheduler
-        if os.path.exists(scheduler_config_path):
-            with open(scheduler_config_path, "r") as f:
-                scheduler_config_dict = json.load(f)
-            class_name = scheduler_config_dict.get("_class_name", None)
-            if class_name is not None:
-                try:
-                    from diffusers import schedulers as schedulers_module
-
-                    scheduler_cls = getattr(schedulers_module, class_name)
-                    logger.info(f"Using scheduler class from config: {class_name}")
-                except AttributeError:
-                    logger.warning(
-                        f"Scheduler class '{class_name}' not found in diffusers.schedulers, "
-                        f"falling back to FlowMatchEulerDiscreteScheduler"
-                    )
-        scheduler = scheduler_cls.from_pretrained(
+        # Load scheduler
+        scheduler = UniPCMultistepScheduler.from_pretrained(
             pipeline_config.model_path,
             subfolder="scheduler",
         )
 
         # Load VAE
-        vae = cls.init_vae(pipeline_config)
+        vae = cls.init_vae(AutoencoderKLWan, pipeline_config)
 
         # Load text encoder
-        text_encoder = cls.init_text_encoder(pipeline_config)
+        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False)
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -263,87 +255,11 @@ class WanImageToVideoPipeline(Pipeline):
         )
 
     @staticmethod
-    def init_transformer(
-        pipeline_config: WanPipelineConfig, empty_weights: bool = False, subfolder: str = "transformer"
-    ):
-        logger.info(f"Initializing transformer from subfolder={subfolder}...")
-        with set_forward_context(attn_type=pipeline_config.attn_type):
-            if empty_weights:
-                with init_empty_weights():
-                    config_dict = WanTransformer3DModel.load_config(
-                        pipeline_config.model_path,
-                        subfolder=subfolder,
-                        local_files_only=True,
-                    )
-                    model = WanTransformer3DModel.from_config(config_dict)
-            else:
-                model = WanTransformer3DModel.from_pretrained(
-                    pipeline_config.model_path,
-                    subfolder=subfolder,
-                    device=pipeline_config.device,
-                    dtype=pipeline_config.model_dtype,
-                )
-        return model
-
-    @staticmethod
-    def init_text_encoder(pipeline_config: WanPipelineConfig, empty_weights: bool = False):
-        logger.info("Initializing text encoder...")
-        if empty_weights:
-            with init_empty_weights():
-                model = UMT5EncoderModel.from_pretrained(
-                    pipeline_config.model_path,
-                    subfolder="text_encoder",
-                    local_files_only=True,
-                )
-            return model
-
-        state_dict = load_model_weights(
-            pipeline_config.model_path,
-            subfolder="text_encoder",
-            device=pipeline_config.device,
-            dtype=pipeline_config.text_encoder_dtype,
-        )
-        with init_empty_weights():
-            model = UMT5EncoderModel.from_pretrained(
-                pipeline_config.model_path,
-                subfolder="text_encoder",
-                local_files_only=True,
-            )
-
-        if "shared.weight" in state_dict and "encoder.embed_tokens.weight" not in state_dict:
-            state_dict["encoder.embed_tokens.weight"] = state_dict["shared.weight"]
-
-        model.load_state_dict(state_dict, strict=False, assign=True)
-        model.to(device=pipeline_config.device)
-        return model
-
-    @staticmethod
-    def init_vae(pipeline_config: WanPipelineConfig, empty_weights: bool = False):
-        logger.info("Initializing VAE...")
-        if empty_weights:
-            with init_empty_weights():
-                config_dict = AutoencoderKLWan.load_config(
-                    pipeline_config.model_path,
-                    subfolder="vae",
-                    local_files_only=True,
-                )
-                model = AutoencoderKLWan.from_config(config_dict)
-            return model
-
-        model = AutoencoderKLWan.from_pretrained(
-            pipeline_config.model_path,
-            subfolder="vae",
-            device=pipeline_config.device,
-            dtype=pipeline_config.vae_dtype,
-        )
-        return model
-
-    @staticmethod
     def init_image_encoder(pipeline_config: WanPipelineConfig, empty_weights: bool = False):
         logger.info("Initializing image encoder...")
         image_encoder_path = os.path.join(pipeline_config.model_path, "image_encoder")
         if not os.path.isdir(image_encoder_path):
-            logger.warning(f"image_encoder subfolder not found in {pipeline_config.model_path}. Skipping.")
+            logger.warning(f"image_encoder not found in {pipeline_config.model_path}.")
             return None
 
         if empty_weights:
@@ -365,11 +281,11 @@ class WanImageToVideoPipeline(Pipeline):
 
     def _get_t5_prompt_embeds(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: str | list[str] = None,
         num_videos_per_prompt: int = 1,
         max_sequence_length: int = 512,
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ):
         device = device or self.device
         dtype = dtype or self.pipeline_config.text_encoder_dtype
@@ -404,11 +320,7 @@ class WanImageToVideoPipeline(Pipeline):
 
         return prompt_embeds
 
-    def encode_image(
-        self,
-        image,
-        device: Optional[torch.device] = None,
-    ):
+    def encode_image(self, image: PipelineImageInput, device: torch.device | None = None):
         device = device or self.device
         image = self.image_processor(images=image, return_tensors="pt").to(device)
         image_embeds = self.image_encoder(**image, output_hidden_states=True)
@@ -416,23 +328,23 @@ class WanImageToVideoPipeline(Pipeline):
 
     def encode_prompt(
         self,
-        prompt: Union[str, List[str]],
-        negative_prompt: Optional[Union[str, List[str]]] = None,
+        prompt: str | list[str],
+        negative_prompt: str | list[str] | None = None,
         do_classifier_free_guidance: bool = True,
         num_videos_per_prompt: int = 1,
-        prompt_embeds: Optional[torch.Tensor] = None,
-        negative_prompt_embeds: Optional[torch.Tensor] = None,
+        prompt_embeds: torch.Tensor | None = None,
+        negative_prompt_embeds: torch.Tensor | None = None,
         max_sequence_length: int = 226,
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ):
         r"""
         Encodes the prompt into text encoder hidden states.
 
         Args:
-            prompt (`str` or `List[str]`, *optional*):
+            prompt (`str` or `list[str]`, *optional*):
                 prompt to be encoded
-            negative_prompt (`str` or `List[str]`, *optional*):
+            negative_prompt (`str` or `list[str]`, *optional*):
                 The prompt or prompts not to guide the video generation. If not defined, one has to pass
                 `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
                 less than `1`).
@@ -498,7 +410,7 @@ class WanImageToVideoPipeline(Pipeline):
         self,
         prompt,
         negative_prompt,
-        image,
+        image: PipelineImageInput,
         height,
         width,
         prompt_embeds=None,
@@ -558,18 +470,18 @@ class WanImageToVideoPipeline(Pipeline):
 
     def prepare_latents(
         self,
-        image,
+        image: PipelineImageInput,
         batch_size: int,
         num_channels_latents: int = 16,
         height: int = 480,
         width: int = 832,
         num_frames: int = 81,
-        dtype: Optional[torch.dtype] = None,
-        device: Optional[torch.device] = None,
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        latents: Optional[torch.Tensor] = None,
-        last_image: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, ...]:
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
+        generator: torch.Generator | list[torch.Generator] | None = None,
+        latents: torch.Tensor | None = None,
+        last_image: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         num_latent_frames = (num_frames - 1) // self.vae_scale_factor_temporal + 1
         latent_height = height // self.vae_scale_factor_spatial
         latent_width = width // self.vae_scale_factor_spatial
@@ -685,16 +597,15 @@ class WanImageToVideoPipeline(Pipeline):
         timestep: torch.Tensor,
         prompt_embeds: torch.Tensor,
         negative_prompt_embeds: torch.Tensor,
-        image_embeds: Optional[torch.Tensor],
+        image_embeds: torch.Tensor | None,
         attn_metadata,
         apply_cfg: bool,
         guidance_scale: float,
         use_cfg_parallel: bool,
-        batch_size: int,
-        model: Optional[WanTransformer3DModel] = None,
+        model: WanTransformer3DModel | None = None,
     ):
         """
-        Predict noise with optional classifier-free guidance and CFG parallelism.
+        Predict noise with classifier-free guidance, supporting parallel CFG inference.
 
         Args:
             latent_model_input: The model input (latents or latents + condition).
@@ -706,7 +617,6 @@ class WanImageToVideoPipeline(Pipeline):
             apply_cfg: Whether to apply classifier-free guidance this step.
             guidance_scale: The CFG scale factor.
             use_cfg_parallel: Whether to use CFG parallelism across devices.
-            batch_size: The actual batch size.
             model: The transformer model to use. If None, defaults to self.transformer.
 
         Returns:
@@ -729,8 +639,8 @@ class WanImageToVideoPipeline(Pipeline):
         # CFG mode
         cfg_group, cfg_rank = None, None
         if use_cfg_parallel:
-            if not model_parallel_is_initialized():
-                raise RuntimeError("Model parallel groups must be initialized when use_cfg_parallel=True")
+            if not is_cfg_group_initialized():
+                raise RuntimeError("CFG group must be initialized when use_cfg_parallel=True")
             cfg_group = get_cfg_group()
             cfg_rank = cfg_group.rank_in_group
 
@@ -771,27 +681,27 @@ class WanImageToVideoPipeline(Pipeline):
     @torch.no_grad()
     def __call__(
         self,
-        image,
-        prompt: Union[str, List[str]] = None,
-        negative_prompt: Union[str, List[str]] = None,
+        image: PipelineImageInput,
+        prompt: str | list[str] = None,
+        negative_prompt: str | list[str] = None,
         height: int = 480,
         width: int = 832,
         num_frames: int = 81,
         num_inference_steps: int = 50,
         guidance_scale: float = 5.0,
-        guidance_scale_2: Optional[float] = None,
-        num_videos_per_prompt: Optional[int] = 1,
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        latents: Optional[torch.Tensor] = None,
-        prompt_embeds: Optional[torch.Tensor] = None,
-        negative_prompt_embeds: Optional[torch.Tensor] = None,
-        image_embeds: Optional[torch.Tensor] = None,
-        last_image: Optional[torch.Tensor] = None,
-        output_type: Optional[str] = "np",
+        guidance_scale_2: float | None = None,
+        num_videos_per_prompt: int | None = 1,
+        generator: torch.Generator | list[torch.Generator] | None = None,
+        latents: torch.Tensor | None = None,
+        prompt_embeds: torch.Tensor | None = None,
+        negative_prompt_embeds: torch.Tensor | None = None,
+        image_embeds: torch.Tensor | None = None,
+        last_image: torch.Tensor | None = None,
+        output_type: str | None = "np",
         return_dict: bool = True,
-        attention_kwargs: Optional[Dict[str, Any]] = None,
-        callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
-        callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        attention_kwargs: dict[str, Any] | None = None,
+        callback_on_step_end: Callable[[int, int, dict], dict] | None = None,
+        callback_on_step_end_tensor_inputs: list[str] = ["latents"],
         max_sequence_length: int = 512,
     ):
         r"""
@@ -800,10 +710,11 @@ class WanImageToVideoPipeline(Pipeline):
         Args:
             image (`PipelineImageInput`):
                 The input image to condition the generation on. Must be an image, a list of images or a `torch.Tensor`.
-            prompt (`str` or `List[str]`, *optional*):
-                The prompt or prompts to guide the video generation.
-            negative_prompt (`str` or `List[str]`, *optional*):
-                The prompt or prompts to avoid during video generation.
+            prompt (`str` or `list[str]`, *optional*):
+                The prompt or prompts to guide the video generation. If not defined, pass `prompt_embeds` instead.
+            negative_prompt (`str` or `list[str]`, *optional*):
+                The prompt or prompts to avoid during video generation. If not defined, pass `negative_prompt_embeds`
+                instead. Ignored when not using guidance (`guidance_scale` < `1`).
             height (`int`, defaults to `480`):
                 The height in pixels of the generated video.
             width (`int`, defaults to `832`):
@@ -811,22 +722,30 @@ class WanImageToVideoPipeline(Pipeline):
             num_frames (`int`, defaults to `81`):
                 The number of frames in the generated video.
             num_inference_steps (`int`, defaults to `50`):
-                The number of denoising steps.
+                The number of denoising steps. More denoising steps usually lead to a higher quality image at the
+                expense of slower inference.
             guidance_scale (`float`, defaults to `5.0`):
-                Guidance scale for classifier-free guidance.
+                Guidance scale as defined in [Classifier-Free Diffusion
+                Guidance](https://huggingface.co/papers/2207.12598). `guidance_scale` is defined as `w` of equation 2.
+                of [Imagen Paper](https://huggingface.co/papers/2205.11487). Guidance scale is enabled by setting
+                `guidance_scale > 1`. Higher guidance scale encourages to generate images that are closely linked to
+                the text `prompt`, usually at the expense of lower image quality.
             guidance_scale_2 (`float`, *optional*, defaults to `None`):
-                Guidance scale for the low-noise stage when `boundary_ratio` is set. If `None` and
-                `boundary_ratio` is not None, uses the same value as `guidance_scale`.
+                Guidance scale for the low-noise stage transformer (`transformer_2`). If `None` and the pipeline's
+                `boundary_ratio` is not None, uses the same value as `guidance_scale`. Only used when `transformer_2`
+                and the pipeline's `boundary_ratio` are not None.
             num_videos_per_prompt (`int`, *optional*, defaults to 1):
                 The number of videos to generate per prompt.
-            generator (`torch.Generator` or `List[torch.Generator]`, *optional*):
-                Random generator(s) for deterministic generation.
+            generator (`torch.Generator` or `list[torch.Generator]`, *optional*):
+                A [`torch.Generator`](https://pytorch.org/docs/stable/generated/torch.Generator.html) to make
+                generation deterministic.
             latents (`torch.Tensor`, *optional*):
-                Pre-generated noisy latents.
+                Pre-generated noisy latents sampled from a Gaussian distribution, to be used as inputs for video
+                generation. If not provided, a latents tensor is generated by sampling using the supplied random `generator`.
             prompt_embeds (`torch.Tensor`, *optional*):
-                Pre-generated text embeddings.
+                Pre-generated text embeddings. If not provided, text embeddings are generated from the `prompt` input argument.
             negative_prompt_embeds (`torch.Tensor`, *optional*):
-                Pre-generated negative text embeddings.
+                Pre-generated negative text embeddings. If not provided, `negative_prompt_embeds` are generated from the `negative_prompt` input argument.
             image_embeds (`torch.Tensor`, *optional*):
                 Pre-generated image embeddings.
             last_image (`torch.Tensor`, *optional*):
@@ -836,16 +755,24 @@ class WanImageToVideoPipeline(Pipeline):
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether to return a `WanPipelineOutput` instead of a plain tuple.
             attention_kwargs (`dict`, *optional*):
-                Kwargs passed to the attention processor.
+                Attention kwargs dictionary.
             callback_on_step_end (`Callable`, *optional*):
-                A function called at the end of each denoising step.
-            callback_on_step_end_tensor_inputs (`List`, *optional*):
-                Tensor inputs for the callback function.
+                A function that is called at the end of each denoising step during the inference with the following
+                arguments: `callback_on_step_end(step: int, timestep: int, callback_kwargs: dict)`. `callback_kwargs`
+                will include a list of all tensors as specified by `callback_on_step_end_tensor_inputs`.
+            callback_on_step_end_tensor_inputs (`list`, *optional*):
+                The list of tensor inputs for the `callback_on_step_end` function. The tensors specified in the list
+                will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
+                `._callback_tensor_inputs` attribute of your pipeline class.
             max_sequence_length (`int`, defaults to `512`):
-                Maximum sequence length for the text encoder.
+                The maximum sequence length of the text encoder. If the prompt is longer than this, it will be
+                truncated. If the prompt is shorter, it will be padded to this length.
 
         Returns:
-            `WanPipelineOutput` or `tuple`: Generated video frames.
+            `WanPipelineOutput` or `tuple`:
+                If `return_dict` is `True`, [`WanPipelineOutput`] is returned, otherwise a `tuple` is returned where
+                the first element is a list with the generated images and the second element is a list of `bool`s
+                indicating whether the corresponding generated image contains "not-safe-for-work" (nsfw) content.
         """
         # 1. Check inputs
         self.check_inputs(
@@ -969,8 +896,6 @@ class WanImageToVideoPipeline(Pipeline):
         else:
             boundary_timestep = None
 
-        actual_batch_size = batch_size * num_videos_per_prompt
-
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
@@ -978,7 +903,6 @@ class WanImageToVideoPipeline(Pipeline):
 
                 self._current_timestep = t
 
-                # Determine current model and guidance scale based on boundary_ratio
                 if boundary_timestep is None or t >= boundary_timestep:
                     current_model = self.transformer
                     current_guidance_scale = guidance_scale
@@ -1008,7 +932,6 @@ class WanImageToVideoPipeline(Pipeline):
                     apply_cfg=self.do_classifier_free_guidance,
                     guidance_scale=current_guidance_scale,
                     use_cfg_parallel=self.pipeline_config.use_cfg_parallel,
-                    batch_size=actual_batch_size,
                     model=current_model,
                 )
 
@@ -1019,7 +942,7 @@ class WanImageToVideoPipeline(Pipeline):
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
                         callback_kwargs[k] = locals()[k]
-                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+                    callback_outputs = callback_on_step_end(i, t, callback_kwargs)
 
                     latents = callback_outputs.pop("latents", latents)
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)

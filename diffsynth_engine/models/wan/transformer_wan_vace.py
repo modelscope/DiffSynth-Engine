@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import math
-from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -38,13 +37,6 @@ logger = logging.get_logger(__name__)
 
 
 class WanVACETransformerBlock(nn.Module):
-    """
-    VACE control branch Transformer block for the Wan model.
-
-    This block mirrors the structure of WanTransformerBlock but adds input/output projection
-    layers for the VACE control signal injection.
-    """
-
     def __init__(
         self,
         dim: int,
@@ -53,13 +45,13 @@ class WanVACETransformerBlock(nn.Module):
         qk_norm: str = "rms_norm_across_heads",
         cross_attn_norm: bool = False,
         eps: float = 1e-6,
-        added_kv_proj_dim: Optional[int] = None,
+        added_kv_proj_dim: int | None = None,
         apply_input_projection: bool = False,
         apply_output_projection: bool = False,
     ):
         super().__init__()
 
-        # 1. Input projection (only for the first VACE block, layer 0)
+        # 1. Input projection
         self.proj_in = None
         if apply_input_projection:
             self.proj_in = nn.Linear(dim, dim)
@@ -141,14 +133,14 @@ class WanVACETransformerBlock(nn.Module):
 
 
 class WanVACETransformer3DModel(DiffusionModel):
-    """
+    r"""
     A Transformer model for video-like data used in the Wan VACE model.
 
     This model extends the base Wan Transformer with a VACE control branch that injects
     conditioning signals at specified layers for controllable video generation.
 
     Args:
-        patch_size (`Tuple[int]`, defaults to `(1, 2, 2)`):
+        patch_size (`tuple[int]`, defaults to `(1, 2, 2)`):
             3D patch dimensions for video embedding (t_patch, h_patch, w_patch).
         num_attention_heads (`int`, defaults to `40`):
             The number of attention heads.
@@ -180,7 +172,7 @@ class WanVACETransformer3DModel(DiffusionModel):
             Maximum sequence length for rotary position embeddings.
         pos_embed_seq_len (`int`, *optional*, defaults to `None`):
             Positional embedding sequence length.
-        vace_layers (`List[int]`, defaults to `[0, 5, 10, 15, 20, 25, 30, 35]`):
+        vace_layers (`list[int]`, defaults to `[0, 5, 10, 15, 20, 25, 30, 35]`):
             Layer indices where VACE control signals are injected.
         vace_in_channels (`int`, defaults to `96`):
             Number of input channels for the VACE patch embedding.
@@ -192,7 +184,7 @@ class WanVACETransformer3DModel(DiffusionModel):
     @register_to_config
     def __init__(
         self,
-        patch_size: Tuple[int, ...] = (1, 2, 2),
+        patch_size: tuple[int, ...] = (1, 2, 2),
         num_attention_heads: int = 40,
         attention_head_dim: int = 128,
         in_channels: int = 16,
@@ -202,13 +194,13 @@ class WanVACETransformer3DModel(DiffusionModel):
         ffn_dim: int = 13824,
         num_layers: int = 40,
         cross_attn_norm: bool = True,
-        qk_norm: Optional[str] = "rms_norm_across_heads",
+        qk_norm: str | None = "rms_norm_across_heads",
         eps: float = 1e-6,
-        image_dim: Optional[int] = None,
-        added_kv_proj_dim: Optional[int] = None,
+        image_dim: int | None = None,
+        added_kv_proj_dim: int | None = None,
         rope_max_seq_len: int = 1024,
-        pos_embed_seq_len: Optional[int] = None,
-        vace_layers: List[int] = [0, 5, 10, 15, 20, 25, 30, 35],
+        pos_embed_seq_len: int | None = None,
+        vace_layers: list[int] = [0, 5, 10, 15, 20, 25, 30, 35],
         vace_in_channels: int = 96,
     ) -> None:
         super().__init__()
@@ -227,6 +219,7 @@ class WanVACETransformer3DModel(DiffusionModel):
         self.vace_patch_embedding = nn.Conv3d(vace_in_channels, inner_dim, kernel_size=patch_size, stride=patch_size)
 
         # 2. Condition embeddings
+        # image_embedding_dim=1280 for I2V model
         self.condition_embedder = WanTimeTextImageEmbedding(
             dim=inner_dim,
             time_freq_dim=freq_dim,
@@ -236,7 +229,7 @@ class WanVACETransformer3DModel(DiffusionModel):
             pos_embed_seq_len=pos_embed_seq_len,
         )
 
-        # 3. Transformer blocks (main backbone)
+        # 3. Transformer blocks
         self.blocks = nn.ModuleList(
             [
                 WanTransformerBlock(
@@ -276,11 +269,34 @@ class WanVACETransformer3DModel(DiffusionModel):
         hidden_states: torch.Tensor,
         timestep: torch.LongTensor,
         encoder_hidden_states: torch.Tensor,
-        encoder_hidden_states_image: Optional[torch.Tensor] = None,
+        encoder_hidden_states_image: torch.Tensor | None = None,
         control_hidden_states: torch.Tensor = None,
         control_hidden_states_scale: torch.Tensor = None,
         return_dict: bool = True,
-    ) -> Union[torch.Tensor, Transformer2DModelOutput]:
+    ) -> torch.Tensor | Transformer2DModelOutput:
+        """
+        The [`WanVACETransformer3DModel`] forward method.
+
+        Args:
+            hidden_states (`torch.Tensor` of shape `(batch_size, num_channels, num_frames, height, width)`):
+                Input `hidden_states`.
+            timestep (`torch.LongTensor`):
+                Used to indicate denoising step.
+            encoder_hidden_states (`torch.Tensor` of shape `(batch_size, sequence_len, embed_dims)`):
+                Conditional embeddings (embeddings computed from the input conditions such as prompts) to use.
+            encoder_hidden_states_image (`torch.Tensor`, *optional*):
+                Conditional image embeddings for image-conditioned generation.
+            control_hidden_states (`torch.Tensor`, *optional*):
+                Control latents used by the VACE control branch.
+            control_hidden_states_scale (`torch.Tensor`, *optional*):
+                Per-VACE-layer scale applied to the control hidden states.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether or not to return a [`~models.transformer_2d.Transformer2DModelOutput`] instead of a plain
+                tuple.
+        Returns:
+            If `return_dict` is True, an [`~models.transformer_2d.Transformer2DModelOutput`] is returned, otherwise a
+            `tuple` where the first element is the sample tensor.
+        """
         batch_size, num_channels, num_frames, height, width = hidden_states.shape
         p_t, p_h, p_w = self.config.patch_size
         post_patch_num_frames = num_frames // p_t
@@ -310,7 +326,6 @@ class WanVACETransformer3DModel(DiffusionModel):
         )
         control_hidden_states = torch.cat([control_hidden_states, control_hidden_states_padding], dim=1)
 
-        # Save original sequence length for unshard
         original_seq_len = hidden_states.shape[1]
 
         # 3. Time embedding
@@ -323,7 +338,6 @@ class WanVACETransformer3DModel(DiffusionModel):
         if encoder_hidden_states_image is not None:
             encoder_hidden_states = torch.concat([encoder_hidden_states_image, encoder_hidden_states], dim=1)
 
-        # 5. Sequence parallel shard
         rotary_emb_cos, rotary_emb_sin = rotary_emb
         hidden_states, control_hidden_states, rotary_emb_cos, rotary_emb_sin = sequence_parallel_shard(
             [hidden_states, control_hidden_states, rotary_emb_cos, rotary_emb_sin],
@@ -331,7 +345,7 @@ class WanVACETransformer3DModel(DiffusionModel):
         )
         rotary_emb = (rotary_emb_cos, rotary_emb_sin)
 
-        # 6. VACE control blocks (prepare control hints)
+        # 5. VACE control blocks
         control_hidden_states_list = []
         for i, block in enumerate(self.vace_blocks):
             conditioning_states, control_hidden_states = block(
@@ -340,17 +354,16 @@ class WanVACETransformer3DModel(DiffusionModel):
             control_hidden_states_list.append((conditioning_states, control_hidden_states_scale[i]))
         control_hidden_states_list = control_hidden_states_list[::-1]
 
-        # 7. Main transformer blocks with VACE injection
+        # 6. Transformer blocks
         for i, block in enumerate(self.blocks):
             hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
             if i in self.config.vace_layers:
                 control_hint, scale = control_hidden_states_list.pop()
                 hidden_states = hidden_states + control_hint * scale
 
-        # 8. Sequence parallel unshard
         (hidden_states,) = sequence_parallel_unshard([hidden_states], seq_dims=[1], seq_lens=[original_seq_len])
 
-        # 9. Output norm, projection & unpatchify
+        # 7. Output norm, projection & unpatchify
         shift, scale = (self.scale_shift_table.to(temb.device) + temb.unsqueeze(1)).chunk(2, dim=1)
 
         shift = shift.to(hidden_states.device)

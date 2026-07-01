@@ -29,14 +29,19 @@ class Pipeline:
         raise NotImplementedError()
 
     @staticmethod
-    def init_transformer(model_cls: Type[nn.Module], pipeline_config: PipelineConfig, empty_weights: bool = False):
+    def init_transformer(
+        model_cls: Type[nn.Module],
+        pipeline_config: PipelineConfig,
+        empty_weights: bool = False,
+        subfolder: str = "transformer",
+    ):
         use_fsdp = pipeline_config.use_fsdp and is_world_group_initialized()
 
         with set_forward_context(attn_type=pipeline_config.attn_type):
             with init_empty_weights():
                 config = model_cls.load_config(
                     pipeline_config.model_path,
-                    subfolder="transformer",
+                    subfolder=subfolder,
                     local_files_only=True,
                 )
                 model = model_cls.from_config(config)
@@ -51,7 +56,7 @@ class Pipeline:
 
         state_dict = load_model_weights(
             pipeline_config.model_path,
-            subfolder="transformer",
+            subfolder=subfolder,
             device="cpu" if use_fsdp else pipeline_config.device,
             dtype=pipeline_config.model_dtype,
             broadcast_from_rank0=not use_fsdp,
@@ -76,6 +81,7 @@ class Pipeline:
         pipeline_config: PipelineConfig,
         key_mapping: dict = None,
         empty_weights: bool = False,
+        strict: bool = True,
     ):
         use_fsdp = pipeline_config.use_fsdp and is_world_group_initialized()
 
@@ -91,7 +97,13 @@ class Pipeline:
             return model
 
         if use_fsdp:
-            for layer in model.model.language_model.layers:
+            if hasattr(model, "model") and hasattr(model.model, "language_model"):
+                layers = model.model.language_model.layers
+            elif hasattr(model, "encoder") and hasattr(model.encoder, "block"):
+                layers = model.encoder.block
+            else:
+                raise ValueError(f"Unsupported text encoder model for FSDP: {type(model).__name__}")
+            for layer in layers:
                 fully_shard(layer)
             fully_shard(model)
 
@@ -110,10 +122,14 @@ class Pipeline:
             set_model_state_dict(
                 model,
                 state_dict,
-                options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True),
+                options=StateDictOptions(
+                    full_state_dict=True,
+                    broadcast_from_rank0=True,
+                    strict=strict,
+                ),
             )
         else:
-            model.load_state_dict(state_dict, strict=True, assign=True)
+            model.load_state_dict(state_dict, strict=strict, assign=True)
             model.to(device=pipeline_config.device)
 
         del state_dict
@@ -167,5 +183,3 @@ class Pipeline:
 
     def set_progress_bar_config(self, **kwargs):
         self._progress_bar_config = kwargs
-
-    # TODO: preprocess & postprocess & LoRA

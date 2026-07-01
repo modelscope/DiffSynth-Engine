@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import math
-from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -39,7 +38,22 @@ def apply_wan_rotary_emb(
     freqs_cos: torch.Tensor,
     freqs_sin: torch.Tensor,
 ) -> torch.Tensor:
-    """Apply rotary positional embeddings to hidden states in the Wan-specific format."""
+    """
+    Apply rotary embeddings to input tensors using the given cosine and sine frequency tensors. This function applies
+    rotary embeddings to the given query or key `hidden_states` tensor using the provided frequency tensors
+    `freqs_cos` and `freqs_sin`. The input tensor is reshaped into real and imaginary components, and the frequency
+    tensors are indexed for broadcasting compatibility. The resulting tensor contains rotary embeddings and is returned
+    as a real tensor.
+
+    Args:
+        hidden_states (`torch.Tensor`):
+            Query or key tensor to apply rotary embeddings. [B, S, H, D]
+        freqs_cos (`torch.Tensor`): Precomputed cosine frequency tensor.
+        freqs_sin (`torch.Tensor`): Precomputed sine frequency tensor.
+
+    Returns:
+        `torch.Tensor`: Modified query or key tensor with rotary embeddings.
+    """
     x1, x2 = hidden_states.unflatten(-1, (-1, 2)).unbind(-1)
     cos = freqs_cos[..., 0::2]
     sin = freqs_sin[..., 1::2]
@@ -50,10 +64,6 @@ def apply_wan_rotary_emb(
 
 
 class WanAttention(nn.Module):
-    """
-    Simplified attention module for Wan, using USPAttention instead of the processor pattern.
-    """
-
     def __init__(
         self,
         dim: int,
@@ -61,8 +71,8 @@ class WanAttention(nn.Module):
         dim_head: int = 64,
         eps: float = 1e-5,
         dropout: float = 0.0,
-        added_kv_proj_dim: Optional[int] = None,
-        cross_attention_dim_head: Optional[int] = None,
+        added_kv_proj_dim: int | None = None,
+        cross_attention_dim_head: int | None = None,
     ):
         super().__init__()
 
@@ -75,7 +85,6 @@ class WanAttention(nn.Module):
         self.to_q = nn.Linear(dim, self.inner_dim, bias=True)
         self.to_k = nn.Linear(dim, self.kv_inner_dim, bias=True)
         self.to_v = nn.Linear(dim, self.kv_inner_dim, bias=True)
-        # Keep as ModuleList to match diffusers weight names (to_out.0.weight, to_out.0.bias)
         self.to_out = nn.ModuleList(
             [
                 nn.Linear(self.inner_dim, dim, bias=True),
@@ -91,9 +100,6 @@ class WanAttention(nn.Module):
             self.add_v_proj = nn.Linear(added_kv_proj_dim, self.inner_dim, bias=True)
             self.norm_added_k = nn.RMSNorm(dim_head * heads, eps=eps)
 
-        self.is_cross_attention = cross_attention_dim_head is not None
-
-        # USPAttention for attention computation, attn_type from ForwardContext
         forward_context = get_forward_context()
         self.usp_attn = USPAttention(
             num_heads=heads,
@@ -104,11 +110,11 @@ class WanAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        encoder_hidden_states: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        rotary_emb: tuple[torch.Tensor, torch.Tensor] | None = None,
     ) -> torch.Tensor:
-        # Handle I2V: split image and text from encoder_hidden_states
+        # I2V: split image and text from encoder_hidden_states
         encoder_hidden_states_img = None
         if self.add_k_proj is not None and encoder_hidden_states is not None:
             # 512 is the context length of the text encoder, hardcoded for now
@@ -133,12 +139,12 @@ class WanAttention(nn.Module):
         key = key.unflatten(2, (self.heads, -1))
         value = value.unflatten(2, (self.heads, -1))
 
-        # Apply rotary embeddings (only for self-attention)
+        # Apply rotary embeddings
         if rotary_emb is not None:
             query = apply_wan_rotary_emb(query, *rotary_emb)
             key = apply_wan_rotary_emb(key, *rotary_emb)
 
-        # I2V: compute attention with image encoder hidden states
+        # I2V: cross attention with image encoder hidden states
         hidden_states_img = None
         if encoder_hidden_states_img is not None:
             key_img = self.add_k_proj(encoder_hidden_states_img)
@@ -152,7 +158,7 @@ class WanAttention(nn.Module):
             hidden_states_img = hidden_states_img.flatten(2, 3)
             hidden_states_img = hidden_states_img.type_as(query)
 
-        # Main attention
+        # Self attention
         hidden_states = self.usp_attn(query, key, value, attn_mask=attention_mask)
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.type_as(query)
@@ -198,8 +204,8 @@ class WanTimeTextImageEmbedding(nn.Module):
         time_freq_dim: int,
         time_proj_dim: int,
         text_embed_dim: int,
-        image_embed_dim: Optional[int] = None,
-        pos_embed_seq_len: Optional[int] = None,
+        image_embed_dim: int | None = None,
+        pos_embed_seq_len: int | None = None,
     ):
         super().__init__()
 
@@ -217,14 +223,14 @@ class WanTimeTextImageEmbedding(nn.Module):
         self,
         timestep: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
-        encoder_hidden_states_image: Optional[torch.Tensor] = None,
-        timestep_seq_len: Optional[int] = None,
+        encoder_hidden_states_image: torch.Tensor | None = None,
+        timestep_seq_len: int | None = None,
     ):
         timestep = self.timesteps_proj(timestep)
         if timestep_seq_len is not None:
             timestep = timestep.unflatten(0, (-1, timestep_seq_len))
 
-        # Compute time embedding in fp32 to avoid bfloat16 precision loss
+        # Compute time embedding in fp32 to avoid precision loss
         with torch.amp.autocast(device_type=timestep.device.type, dtype=torch.float32):
             timestep = timestep.float()
             temb = self.time_embedder(timestep)
@@ -243,7 +249,7 @@ class WanRotaryPosEmbed(nn.Module):
     def __init__(
         self,
         attention_head_dim: int,
-        patch_size: Tuple[int, int, int],
+        patch_size: tuple[int, int, int],
         max_seq_len: int,
         theta: float = 10000.0,
     ):
@@ -260,7 +266,6 @@ class WanRotaryPosEmbed(nn.Module):
         self.h_dim = h_dim
         self.w_dim = w_dim
 
-        # Force CPU initialization to avoid issues with meta device
         with torch.device("cpu"):
             freqs_dtype = torch.float32 if torch.backends.mps.is_available() else torch.float64
 
@@ -282,7 +287,7 @@ class WanRotaryPosEmbed(nn.Module):
         self.register_buffer("freqs_cos", torch.cat(freqs_cos, dim=1), persistent=False)
         self.register_buffer("freqs_sin", torch.cat(freqs_sin, dim=1), persistent=False)
 
-    def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size, num_channels, num_frames, height, width = hidden_states.shape
         p_t, p_h, p_w = self.patch_size
         ppf, pph, ppw = num_frames // p_t, height // p_h, width // p_w
@@ -315,7 +320,7 @@ class WanTransformerBlock(nn.Module):
         qk_norm: str = "rms_norm_across_heads",
         cross_attn_norm: bool = False,
         eps: float = 1e-6,
-        added_kv_proj_dim: Optional[int] = None,
+        added_kv_proj_dim: int | None = None,
     ):
         super().__init__()
 
@@ -358,6 +363,7 @@ class WanTransformerBlock(nn.Module):
             shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (
                 self.scale_shift_table.unsqueeze(0) + temb.float()
             ).chunk(6, dim=2)
+            # batch_size, seq_len, 1, inner_dim
             shift_msa = shift_msa.squeeze(2)
             scale_msa = scale_msa.squeeze(2)
             gate_msa = gate_msa.squeeze(2)
@@ -391,18 +397,51 @@ class WanTransformerBlock(nn.Module):
 
 
 class WanTransformer3DModel(DiffusionModel):
-    """
+    r"""
     A Transformer model for video-like data used in the Wan model.
+
+    Args:
+        patch_size (`tuple[int]`, defaults to `(1, 2, 2)`):
+            3D patch dimensions for video embedding (t_patch, h_patch, w_patch).
+        num_attention_heads (`int`, defaults to `40`):
+            Fixed length for text embeddings.
+        attention_head_dim (`int`, defaults to `128`):
+            The number of channels in each head.
+        in_channels (`int`, defaults to `16`):
+            The number of channels in the input.
+        out_channels (`int`, defaults to `16`):
+            The number of channels in the output.
+        text_dim (`int`, defaults to `4096`):
+            Input dimension for text embeddings.
+        freq_dim (`int`, defaults to `256`):
+            Dimension for sinusoidal time embeddings.
+        ffn_dim (`int`, defaults to `13824`):
+            Intermediate dimension in feed-forward network.
+        num_layers (`int`, defaults to `40`):
+            The number of layers of transformer blocks to use.
+        cross_attn_norm (`bool`, defaults to `True`):
+            Enable cross-attention normalization.
+        qk_norm (`str`, *optional*, defaults to `"rms_norm_across_heads"`):
+            Query/key normalization type.
+        eps (`float`, defaults to `1e-6`):
+            Epsilon value for normalization layers.
+        image_dim (`int`, *optional*, defaults to `None`):
+            Dimension for image embeddings.
+        added_kv_proj_dim (`int`, *optional*, defaults to `None`):
+            The number of channels to use for the added key and value projections. If `None`, no projection is used.
+        rope_max_seq_len (`int`, defaults to `1024`):
+            Maximum sequence length for rotary position embeddings.
+        pos_embed_seq_len (`int`, *optional*, defaults to `None`):
+            Positional embedding sequence length.
     """
 
-    # Keep precision-sensitive submodules in fp32.
     _keep_in_fp32_modules = ["time_embedder", "scale_shift_table", "norm1", "norm2", "norm3"]
     _keys_to_ignore_on_load_unexpected = ["norm_added_q"]
 
     @register_to_config
     def __init__(
         self,
-        patch_size: Tuple[int, ...] = (1, 2, 2),
+        patch_size: tuple[int, ...] = (1, 2, 2),
         num_attention_heads: int = 40,
         attention_head_dim: int = 128,
         in_channels: int = 16,
@@ -412,12 +451,12 @@ class WanTransformer3DModel(DiffusionModel):
         ffn_dim: int = 13824,
         num_layers: int = 40,
         cross_attn_norm: bool = True,
-        qk_norm: Optional[str] = "rms_norm_across_heads",
+        qk_norm: str | None = "rms_norm_across_heads",
         eps: float = 1e-6,
-        image_dim: Optional[int] = None,
-        added_kv_proj_dim: Optional[int] = None,
+        image_dim: int | None = None,
+        added_kv_proj_dim: int | None = None,
         rope_max_seq_len: int = 1024,
-        pos_embed_seq_len: Optional[int] = None,
+        pos_embed_seq_len: int | None = None,
     ) -> None:
         super().__init__()
 
@@ -429,6 +468,7 @@ class WanTransformer3DModel(DiffusionModel):
         self.patch_embedding = nn.Conv3d(in_channels, inner_dim, kernel_size=patch_size, stride=patch_size)
 
         # 2. Condition embeddings
+        # image_embedding_dim=1280 for I2V model
         self.condition_embedder = WanTimeTextImageEmbedding(
             dim=inner_dim,
             time_freq_dim=freq_dim,
@@ -460,9 +500,28 @@ class WanTransformer3DModel(DiffusionModel):
         hidden_states: torch.Tensor,
         timestep: torch.LongTensor,
         encoder_hidden_states: torch.Tensor,
-        encoder_hidden_states_image: Optional[torch.Tensor] = None,
+        encoder_hidden_states_image: torch.Tensor | None = None,
         return_dict: bool = True,
-    ) -> Union[torch.Tensor, Transformer2DModelOutput]:
+    ) -> torch.Tensor | Transformer2DModelOutput:
+        """
+        The [`WanTransformer3DModel`] forward method.
+
+        Args:
+            hidden_states (`torch.Tensor` of shape `(batch_size, num_channels, num_frames, height, width)`):
+                Input `hidden_states`.
+            timestep (`torch.LongTensor`):
+                Used to indicate denoising step.
+            encoder_hidden_states (`torch.Tensor` of shape `(batch_size, sequence_len, embed_dims)`):
+                Conditional embeddings (embeddings computed from the input conditions such as prompts) to use.
+            encoder_hidden_states_image (`torch.Tensor`, *optional*):
+                Conditional image embeddings for image-conditioned generation.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether or not to return a [`~models.transformer_2d.Transformer2DModelOutput`] instead of a plain
+                tuple.
+        Returns:
+            If `return_dict` is True, an [`~models.transformer_2d.Transformer2DModelOutput`] is returned, otherwise a
+            `tuple` where the first element is the sample tensor.
+        """
         batch_size, num_channels, num_frames, height, width = hidden_states.shape
         p_t, p_h, p_w = self.config.patch_size
         post_patch_num_frames = num_frames // p_t
@@ -474,7 +533,6 @@ class WanTransformer3DModel(DiffusionModel):
         hidden_states = self.patch_embedding(hidden_states)
         hidden_states = hidden_states.flatten(2).transpose(1, 2)
 
-        # Save original sequence length for unshard
         original_seq_len = hidden_states.shape[1]
 
         # timestep shape: batch_size, or batch_size, seq_len (wan 2.2 ti2v)
@@ -497,7 +555,6 @@ class WanTransformer3DModel(DiffusionModel):
         if encoder_hidden_states_image is not None:
             encoder_hidden_states = torch.concat([encoder_hidden_states_image, encoder_hidden_states], dim=1)
 
-        # Sequence parallel shard
         rotary_emb_cos, rotary_emb_sin = rotary_emb
         hidden_states, rotary_emb_cos, rotary_emb_sin = sequence_parallel_shard(
             [hidden_states, rotary_emb_cos, rotary_emb_sin],
@@ -515,7 +572,6 @@ class WanTransformer3DModel(DiffusionModel):
             for block in self.blocks:
                 hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
 
-        # Sequence parallel unshard
         (hidden_states,) = sequence_parallel_unshard([hidden_states], seq_dims=[1], seq_lens=[original_seq_len])
 
         # 5. Output norm, projection & unpatchify

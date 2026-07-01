@@ -14,34 +14,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import html
-import json
 import os
 from copy import deepcopy
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable
 
 import PIL
 import regex as re
 import torch
+import torch.nn.functional as F
 from accelerate import init_empty_weights
 from diffusers.pipelines.wan.image_processor import WanAnimateImageProcessor
 from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
 from diffusers.schedulers import UniPCMultistepScheduler
-from diffusers.schedulers.scheduling_utils import SCHEDULER_CONFIG_NAME
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
 from transformers import AutoTokenizer, CLIPImageProcessor, CLIPVisionModel, UMT5EncoderModel
 
 from diffsynth_engine.configs.wan import WanPipelineConfig
-from diffsynth_engine.distributed.parallel_state import get_cfg_group, model_parallel_is_initialized
+from diffsynth_engine.distributed.parallel_state import (
+    get_cfg_group,
+    is_cfg_group_initialized,
+)
 from diffsynth_engine.forward_context import set_forward_context
-from diffsynth_engine.layers.attention import get_attn_backend
 from diffsynth_engine.models.wan import AutoencoderKLWan, WanAnimateTransformer3DModel
 from diffsynth_engine.pipelines.base import Pipeline
+from diffsynth_engine.registry import get_attn_backend
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.load_utils import load_model_weights
 
 logger = logging.get_logger(__name__)
+
+if TYPE_CHECKING:
+    from diffusers.image_processor import PipelineImageInput
 
 
 def basic_clean(text):
@@ -67,7 +73,7 @@ def prompt_clean(text):
 
 
 def retrieve_latents(
-    encoder_output: torch.Tensor, generator: Optional[torch.Generator] = None, sample_mode: str = "sample"
+    encoder_output: torch.Tensor, generator: torch.Generator | None = None, sample_mode: str = "sample"
 ):
     if hasattr(encoder_output, "latent_dist") and sample_mode == "sample":
         return encoder_output.latent_dist.sample(generator)
@@ -81,14 +87,19 @@ def retrieve_latents(
 
 class WanAnimatePipeline(Pipeline):
     r"""
-    Pipeline for unified character animation and replacement using Wan-Animate,
-    adapted for DiffSynth-Engine.
+    Pipeline for unified character animation and replacement using Wan-Animate.
 
-    Supports two modes:
-    1. **Animation mode**: Generates a video of the character image that mimics the human motion
-       in the input pose and face videos.
-    2. **Replacement mode**: Replaces a character in a background video with the provided character
-       image, using the pose and face videos for motion control.
+    WanAnimatePipeline takes a character image, pose video, and face video as input, and generates a video in two
+    modes:
+
+    1. **Animation mode**: The model generates a video of the character image that mimics the human motion in the input
+       pose and face videos. The character is animated based on the provided motion controls, creating a new animated
+       video of the character.
+
+    2. **Replacement mode**: The model replaces a character in a background video with the provided character image,
+       using the pose and face videos for motion control. This mode requires additional `background_video` and
+       `mask_video` inputs. The mask video should have black regions where the original content should be preserved and
+       white regions where the new character should be generated.
 
     Args:
         pipeline_config (`WanPipelineConfig`):
@@ -148,10 +159,9 @@ class WanAnimatePipeline(Pipeline):
         )
 
         head_dim = self.transformer.config.attention_head_dim
-        self.attn_backend = get_attn_backend(
-            head_size=head_dim,
-            attn_type=pipeline_config.attn_type,
-        )
+        self.attn_backend = get_attn_backend(pipeline_config.attn_type)
+        if not self.attn_backend.supports_head_size(head_dim):
+            raise ValueError(f"Attention backend {pipeline_config.attn_type!r} does not support head size {head_dim}.")
 
     @classmethod
     def from_pretrained(cls, model_path_or_config: str | WanPipelineConfig):
@@ -173,36 +183,19 @@ class WanAnimatePipeline(Pipeline):
             raise FileNotFoundError(f"Model path not found: {pipeline_config.model_path}")
 
         # Load transformer
-        transformer = cls.init_transformer(pipeline_config)
+        transformer = cls.init_transformer(WanAnimateTransformer3DModel, pipeline_config)
 
-        # Load scheduler - auto-detect scheduler class from config
-        scheduler_config_path = os.path.join(pipeline_config.model_path, "scheduler", SCHEDULER_CONFIG_NAME)
-        scheduler_cls = UniPCMultistepScheduler
-        if os.path.exists(scheduler_config_path):
-            with open(scheduler_config_path, "r") as f:
-                scheduler_config_dict = json.load(f)
-            class_name = scheduler_config_dict.get("_class_name", None)
-            if class_name is not None:
-                try:
-                    from diffusers import schedulers as schedulers_module
-
-                    scheduler_cls = getattr(schedulers_module, class_name)
-                    logger.info(f"Using scheduler class from config: {class_name}")
-                except AttributeError:
-                    logger.warning(
-                        f"Scheduler class '{class_name}' not found in diffusers.schedulers, "
-                        f"falling back to UniPCMultistepScheduler"
-                    )
-        scheduler = scheduler_cls.from_pretrained(
+        # Load scheduler
+        scheduler = UniPCMultistepScheduler.from_pretrained(
             pipeline_config.model_path,
             subfolder="scheduler",
         )
 
         # Load VAE
-        vae = cls.init_vae(pipeline_config)
+        vae = cls.init_vae(AutoencoderKLWan, pipeline_config)
 
         # Load text encoder
-        text_encoder = cls.init_text_encoder(pipeline_config)
+        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False)
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -235,87 +228,11 @@ class WanAnimatePipeline(Pipeline):
         )
 
     @staticmethod
-    def init_transformer(
-        pipeline_config: WanPipelineConfig, empty_weights: bool = False, subfolder: str = "transformer"
-    ):
-        logger.info(f"Initializing transformer from subfolder={subfolder}...")
-        with set_forward_context(attn_type=pipeline_config.attn_type):
-            if empty_weights:
-                with init_empty_weights():
-                    config_dict = WanAnimateTransformer3DModel.load_config(
-                        pipeline_config.model_path,
-                        subfolder=subfolder,
-                        local_files_only=True,
-                    )
-                    model = WanAnimateTransformer3DModel.from_config(config_dict)
-            else:
-                model = WanAnimateTransformer3DModel.from_pretrained(
-                    pipeline_config.model_path,
-                    subfolder=subfolder,
-                    device=pipeline_config.device,
-                    dtype=pipeline_config.model_dtype,
-                )
-        return model
-
-    @staticmethod
-    def init_text_encoder(pipeline_config: WanPipelineConfig, empty_weights: bool = False):
-        logger.info("Initializing text encoder...")
-        if empty_weights:
-            with init_empty_weights():
-                model = UMT5EncoderModel.from_pretrained(
-                    pipeline_config.model_path,
-                    subfolder="text_encoder",
-                    local_files_only=True,
-                )
-            return model
-
-        state_dict = load_model_weights(
-            pipeline_config.model_path,
-            subfolder="text_encoder",
-            device=pipeline_config.device,
-            dtype=pipeline_config.text_encoder_dtype,
-        )
-        with init_empty_weights():
-            model = UMT5EncoderModel.from_pretrained(
-                pipeline_config.model_path,
-                subfolder="text_encoder",
-                local_files_only=True,
-            )
-
-        if "shared.weight" in state_dict and "encoder.embed_tokens.weight" not in state_dict:
-            state_dict["encoder.embed_tokens.weight"] = state_dict["shared.weight"]
-
-        model.load_state_dict(state_dict, strict=False, assign=True)
-        model.to(device=pipeline_config.device)
-        return model
-
-    @staticmethod
-    def init_vae(pipeline_config: WanPipelineConfig, empty_weights: bool = False):
-        logger.info("Initializing VAE...")
-        if empty_weights:
-            with init_empty_weights():
-                config_dict = AutoencoderKLWan.load_config(
-                    pipeline_config.model_path,
-                    subfolder="vae",
-                    local_files_only=True,
-                )
-                model = AutoencoderKLWan.from_config(config_dict)
-            return model
-
-        model = AutoencoderKLWan.from_pretrained(
-            pipeline_config.model_path,
-            subfolder="vae",
-            device=pipeline_config.device,
-            dtype=pipeline_config.vae_dtype,
-        )
-        return model
-
-    @staticmethod
     def init_image_encoder(pipeline_config: WanPipelineConfig, empty_weights: bool = False):
         logger.info("Initializing image encoder...")
         image_encoder_path = os.path.join(pipeline_config.model_path, "image_encoder")
         if not os.path.isdir(image_encoder_path):
-            logger.warning(f"image_encoder subfolder not found in {pipeline_config.model_path}. Skipping.")
+            logger.warning(f"image_encoder not found in {pipeline_config.model_path}.")
             return None
 
         if empty_weights:
@@ -337,11 +254,11 @@ class WanAnimatePipeline(Pipeline):
 
     def _get_t5_prompt_embeds(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: str | list[str] = None,
         num_videos_per_prompt: int = 1,
         max_sequence_length: int = 512,
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ):
         device = device or self.device
         dtype = dtype or self.pipeline_config.text_encoder_dtype
@@ -376,11 +293,7 @@ class WanAnimatePipeline(Pipeline):
 
         return prompt_embeds
 
-    def encode_image(
-        self,
-        image,
-        device: Optional[torch.device] = None,
-    ):
+    def encode_image(self, image: PipelineImageInput, device: torch.device | None = None):
         device = device or self.device
         image = self.image_processor(images=image, return_tensors="pt").to(device)
         image_embeds = self.image_encoder(**image, output_hidden_states=True)
@@ -388,23 +301,23 @@ class WanAnimatePipeline(Pipeline):
 
     def encode_prompt(
         self,
-        prompt: Union[str, List[str]],
-        negative_prompt: Optional[Union[str, List[str]]] = None,
+        prompt: str | list[str],
+        negative_prompt: str | list[str] | None = None,
         do_classifier_free_guidance: bool = True,
         num_videos_per_prompt: int = 1,
-        prompt_embeds: Optional[torch.Tensor] = None,
-        negative_prompt_embeds: Optional[torch.Tensor] = None,
+        prompt_embeds: torch.Tensor | None = None,
+        negative_prompt_embeds: torch.Tensor | None = None,
         max_sequence_length: int = 226,
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ):
         r"""
         Encodes the prompt into text encoder hidden states.
 
         Args:
-            prompt (`str` or `List[str]`, *optional*):
+            prompt (`str` or `list[str]`, *optional*):
                 prompt to be encoded
-            negative_prompt (`str` or `List[str]`, *optional*):
+            negative_prompt (`str` or `list[str]`, *optional*):
                 The prompt or prompts not to guide the video generation. If not defined, one has to pass
                 `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
                 less than `1`).
@@ -563,9 +476,9 @@ class WanAnimatePipeline(Pipeline):
         latent_h: int,
         latent_w: int,
         mask_len: int = 1,
-        mask_pixel_values: Optional[torch.Tensor] = None,
-        dtype: Optional[torch.dtype] = None,
-        device: Union[str, torch.device] = "cuda",
+        mask_pixel_values: torch.Tensor | None = None,
+        dtype: torch.dtype | None = None,
+        device: str | torch.device = "cuda",
     ) -> torch.Tensor:
         # mask_pixel_values shape (if supplied): [B, C = 1, T, latent_h, latent_w]
         if mask_pixel_values is None:
@@ -589,12 +502,12 @@ class WanAnimatePipeline(Pipeline):
         image: torch.Tensor,
         batch_size: int = 1,
         sample_mode: str = "argmax",
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        dtype: Optional[torch.dtype] = None,
-        device: Optional[torch.device] = None,
+        generator: torch.Generator | list[torch.Generator] | None = None,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
     ) -> torch.Tensor:
         # image shape: (B, C, H, W) or (B, C, T, H, W)
-        dtype = dtype or next(self.vae.parameters()).dtype
+        dtype = dtype or self.pipeline_config.vae_dtype
         if image.ndim == 4:
             image = image.unsqueeze(2)
 
@@ -631,9 +544,9 @@ class WanAnimatePipeline(Pipeline):
 
     def prepare_prev_segment_cond_latents(
         self,
-        prev_segment_cond_video: Optional[torch.Tensor] = None,
-        background_video: Optional[torch.Tensor] = None,
-        mask_video: Optional[torch.Tensor] = None,
+        prev_segment_cond_video: torch.Tensor | None = None,
+        background_video: torch.Tensor | None = None,
+        mask_video: torch.Tensor | None = None,
         batch_size: int = 1,
         segment_frame_length: int = 77,
         start_frame: int = 0,
@@ -643,11 +556,14 @@ class WanAnimatePipeline(Pipeline):
         task: str = "animate",
         interpolation_mode: str = "bicubic",
         sample_mode: str = "argmax",
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        dtype: Optional[torch.dtype] = None,
-        device: Optional[torch.device] = None,
+        generator: torch.Generator | list[torch.Generator] | None = None,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
     ) -> torch.Tensor:
-        dtype = dtype or next(self.vae.parameters()).dtype
+        # prev_segment_cond_video shape: (B, C, T, H, W) in pixel space if supplied
+        # background_video shape: (B, C, T, H, W) (same as prev_segment_cond_video shape)
+        # mask_video shape: (B, 1, T, H, W) (same as prev_segment_cond_video, but with only 1 channel)
+        dtype = dtype or self.pipeline_config.vae_dtype
         if prev_segment_cond_video is None:
             if task == "replace":
                 prev_segment_cond_video = background_video[:, :, :prev_segment_cond_frames].to(dtype)
@@ -664,7 +580,7 @@ class WanAnimatePipeline(Pipeline):
                 f"Interpolating prev segment cond video from ({segment_width}, {segment_height}) to ({width}, {height})"
             )
             prev_segment_cond_video = prev_segment_cond_video.transpose(1, 2).flatten(0, 1)
-            prev_segment_cond_video = torch.nn.functional.interpolate(
+            prev_segment_cond_video = F.interpolate(
                 prev_segment_cond_video, size=(height, width), mode=interpolation_mode
             )
             prev_segment_cond_video = prev_segment_cond_video.unflatten(0, (batch_size, -1)).transpose(1, 2)
@@ -715,9 +631,9 @@ class WanAnimatePipeline(Pipeline):
             mask_video = 1 - mask_video
             mask_video = mask_video.permute(0, 2, 1, 3, 4)
             mask_video = mask_video.flatten(0, 1)
-            mask_video = torch.nn.functional.interpolate(mask_video, size=(latent_height, latent_width), mode="nearest")
+            mask_video = F.interpolate(mask_video, size=(latent_height, latent_width), mode="nearest")
             mask_pixel_values = mask_video.unflatten(0, (batch_size, -1))
-            mask_pixel_values = mask_pixel_values.permute(0, 2, 1, 3, 4)
+            mask_pixel_values = mask_pixel_values.permute(0, 2, 1, 3, 4)  # output shape: [B, C = 1, T, H_lat, W_lat]
         else:
             mask_pixel_values = None
         prev_segment_cond_mask = self.get_i2v_mask(
@@ -739,13 +655,13 @@ class WanAnimatePipeline(Pipeline):
         pose_video: torch.Tensor,
         batch_size: int = 1,
         sample_mode: str = "argmax",
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        dtype: Optional[torch.dtype] = None,
-        device: Optional[torch.device] = None,
+        generator: torch.Generator | list[torch.Generator] | None = None,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
     ) -> torch.Tensor:
-        pose_video = pose_video.to(
-            device=device, dtype=dtype if dtype is not None else next(self.vae.parameters()).dtype
-        )
+        # pose_video shape: (B, C, T, H, W)
+        dtype = dtype if dtype is not None else self.pipeline_config.vae_dtype
+        pose_video = pose_video.to(device=device, dtype=dtype)
         if isinstance(generator, list):
             pose_latents = [
                 retrieve_latents(self.vae.encode(pose_video), generator=g, sample_mode=sample_mode) for g in generator
@@ -774,10 +690,10 @@ class WanAnimatePipeline(Pipeline):
         height: int = 720,
         width: int = 1280,
         num_frames: int = 77,
-        dtype: Optional[torch.dtype] = None,
-        device: Optional[torch.device] = None,
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        latents: Optional[torch.Tensor] = None,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
+        generator: torch.Generator | list[torch.Generator] | None = None,
+        latents: torch.Tensor | None = None,
     ) -> torch.Tensor:
         num_latent_frames = (num_frames - 1) // self.vae_scale_factor_temporal + 1
         latent_height = height // self.vae_scale_factor_spatial
@@ -798,11 +714,12 @@ class WanAnimatePipeline(Pipeline):
 
         return latents
 
-    def pad_video_frames(self, frames: List[Any], num_target_frames: int) -> List[Any]:
+    def pad_video_frames(self, frames: list[Any], num_target_frames: int) -> list[Any]:
         """
-        Pads an array-like video `frames` to `num_target_frames` using a "reflect"-like strategy.
+        Pads an array-like video `frames` to `num_target_frames` using a "reflect"-like strategy. The frame dimension
+        is assumed to be the first dimension. In the 1D case, we can visualize this strategy as follows:
 
-        Example: pad_video_frames([1, 2, 3, 4, 5], 10) -> [1, 2, 3, 4, 5, 4, 3, 2, 1, 2]
+        pad_video_frames([1, 2, 3, 4, 5], 10) -> [1, 2, 3, 4, 5, 4, 3, 2, 1, 2]
         """
         idx = 0
         flip = False
@@ -858,18 +775,17 @@ class WanAnimatePipeline(Pipeline):
         timestep: torch.Tensor,
         prompt_embeds: torch.Tensor,
         negative_prompt_embeds: torch.Tensor,
-        image_embeds: Optional[torch.Tensor],
+        image_embeds: torch.Tensor | None,
         pose_latents: torch.Tensor,
         face_video_segment: torch.Tensor,
-        motion_encode_batch_size: Optional[int],
+        motion_encode_batch_size: int | None,
         attn_metadata,
         apply_cfg: bool,
         guidance_scale: float,
         use_cfg_parallel: bool,
-        batch_size: int,
     ):
         """
-        Predict noise with optional classifier-free guidance and CFG parallelism.
+        Predict noise with classifier-free guidance, supporting parallel CFG inference.
 
         For Wan Animate, the unconditional pass blanks out the face video (sets all pixels to -1)
         to remove face conditioning.
@@ -887,7 +803,6 @@ class WanAnimatePipeline(Pipeline):
             apply_cfg: Whether to apply classifier-free guidance this step.
             guidance_scale: The CFG scale factor.
             use_cfg_parallel: Whether to use CFG parallelism across devices.
-            batch_size: The actual batch size.
 
         Returns:
             noise_pred: The predicted noise tensor.
@@ -909,8 +824,8 @@ class WanAnimatePipeline(Pipeline):
         # CFG mode
         cfg_group, cfg_rank = None, None
         if use_cfg_parallel:
-            if not model_parallel_is_initialized():
-                raise RuntimeError("Model parallel groups must be initialized when use_cfg_parallel=True")
+            if not is_cfg_group_initialized():
+                raise RuntimeError("CFG group must be initialized when use_cfg_parallel=True")
             cfg_group = get_cfg_group()
             cfg_rank = cfg_group.rank_in_group
 
@@ -958,68 +873,118 @@ class WanAnimatePipeline(Pipeline):
     @torch.no_grad()
     def __call__(
         self,
-        image,
-        pose_video: List[PIL.Image.Image],
-        face_video: List[PIL.Image.Image],
-        background_video: Optional[List[PIL.Image.Image]] = None,
-        mask_video: Optional[List[PIL.Image.Image]] = None,
-        prompt: Union[str, List[str]] = None,
-        negative_prompt: Union[str, List[str]] = None,
+        image: PipelineImageInput,
+        pose_video: list[PIL.Image.Image],
+        face_video: list[PIL.Image.Image],
+        background_video: list[PIL.Image.Image] | None = None,
+        mask_video: list[PIL.Image.Image] | None = None,
+        prompt: str | list[str] = None,
+        negative_prompt: str | list[str] = None,
         height: int = 720,
         width: int = 1280,
         segment_frame_length: int = 77,
         num_inference_steps: int = 20,
         mode: str = "animate",
         prev_segment_conditioning_frames: int = 1,
-        motion_encode_batch_size: Optional[int] = None,
+        motion_encode_batch_size: int | None = None,
         guidance_scale: float = 1.0,
-        num_videos_per_prompt: Optional[int] = 1,
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        latents: Optional[torch.Tensor] = None,
-        prompt_embeds: Optional[torch.Tensor] = None,
-        negative_prompt_embeds: Optional[torch.Tensor] = None,
-        image_embeds: Optional[torch.Tensor] = None,
-        output_type: Optional[str] = "np",
+        num_videos_per_prompt: int | None = 1,
+        generator: torch.Generator | list[torch.Generator] | None = None,
+        latents: torch.Tensor | None = None,
+        prompt_embeds: torch.Tensor | None = None,
+        negative_prompt_embeds: torch.Tensor | None = None,
+        image_embeds: torch.Tensor | None = None,
+        output_type: str | None = "np",
         return_dict: bool = True,
-        attention_kwargs: Optional[Dict[str, Any]] = None,
-        callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
-        callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        attention_kwargs: dict[str, Any] | None = None,
+        callback_on_step_end: Callable[[int, int, dict], dict] | None = None,
+        callback_on_step_end_tensor_inputs: list[str] = ["latents"],
         max_sequence_length: int = 512,
     ):
         r"""
         The call function to the pipeline for generation.
 
         Args:
-            image: The input character image to condition the generation on.
-            pose_video (`List[PIL.Image.Image]`): The input pose video.
-            face_video (`List[PIL.Image.Image]`): The input face video.
-            background_video (`List[PIL.Image.Image]`, *optional*): Background video for replace mode.
-            mask_video (`List[PIL.Image.Image]`, *optional*): Mask video for replace mode.
-            prompt (`str` or `List[str]`, *optional*): The prompt(s) to guide generation.
-            negative_prompt (`str` or `List[str]`, *optional*): The negative prompt(s).
-            height (`int`, defaults to `720`): The height of the generated video.
-            width (`int`, defaults to `1280`): The width of the generated video.
-            segment_frame_length (`int`, defaults to `77`): Frames per generated segment.
-            num_inference_steps (`int`, defaults to `20`): Number of denoising steps.
-            mode (`str`, defaults to `"animate"`): `"animate"` or `"replace"`.
-            prev_segment_conditioning_frames (`int`, defaults to `1`): Frames from previous segment for conditioning.
-            motion_encode_batch_size (`int`, *optional*): Batch size for motion encoding.
-            guidance_scale (`float`, defaults to `1.0`): CFG scale.
-            num_videos_per_prompt (`int`, *optional*, defaults to 1): Videos per prompt.
-            generator: Random generator(s) for deterministic generation.
-            latents (`torch.Tensor`, *optional*): Pre-generated noisy latents.
-            prompt_embeds (`torch.Tensor`, *optional*): Pre-generated text embeddings.
-            negative_prompt_embeds (`torch.Tensor`, *optional*): Pre-generated negative text embeddings.
-            image_embeds (`torch.Tensor`, *optional*): Pre-generated image embeddings.
-            output_type (`str`, *optional*, defaults to `"np"`): Output format.
-            return_dict (`bool`, *optional*, defaults to `True`): Whether to return a `WanPipelineOutput`.
-            attention_kwargs (`dict`, *optional*): Kwargs for attention.
-            callback_on_step_end (`Callable`, *optional*): Callback at end of each denoising step.
-            callback_on_step_end_tensor_inputs (`List`, *optional*): Tensor inputs for callback.
-            max_sequence_length (`int`, defaults to `512`): Max sequence length for text encoder.
+            image (`PipelineImageInput`):
+                The input character image to condition the generation on. Must be an image, a list of images or a
+                `torch.Tensor`.
+            pose_video (`list[PIL.Image.Image]`):
+                The input pose video to condition the generation on. Must be a list of PIL images.
+            face_video (`list[PIL.Image.Image]`):
+                The input face video to condition the generation on. Must be a list of PIL images.
+            background_video (`list[PIL.Image.Image]`, *optional*):
+                When mode is `"replace"`, the input background video to condition the generation on. Must be a list of
+                PIL images.
+            mask_video (`list[PIL.Image.Image]`, *optional*):
+                When mode is `"replace"`, the input mask video to condition the generation on. Must be a list of PIL
+                images.
+            prompt (`str` or `list[str]`, *optional*):
+                The prompt or prompts to guide the video generation. If not defined, pass `prompt_embeds` instead.
+            negative_prompt (`str` or `list[str]`, *optional*):
+                The prompt or prompts to avoid during video generation. If not defined, pass `negative_prompt_embeds`
+                instead. Ignored when not using guidance (`guidance_scale` < `1`).
+            height (`int`, defaults to `720`):
+                The height in pixels of the generated video.
+            width (`int`, defaults to `1280`):
+                The width in pixels of the generated video.
+            segment_frame_length (`int`, defaults to `77`):
+                The number of frames in each generated video segment. The total frames of video generated will be equal
+                to the number of frames in `pose_video`; we will generate the video in segments until we have hit this
+                length. In general, should be 4N + 1, where N is a non-negative integer.
+            num_inference_steps (`int`, defaults to `20`):
+                The number of denoising steps. More denoising steps usually lead to a higher quality image at the
+                expense of slower inference.
+            mode (`str`, defaults to `"animate"`):
+                The mode of the generation. Choose between `"animate"` and `"replace"`.
+            prev_segment_conditioning_frames (`int`, defaults to `1`):
+                The number of frames from the previous video segment to be used for temporal guidance.
+            motion_encode_batch_size (`int`, *optional*):
+                The batch size for batched encoding of the face video via the motion encoder. This allows trading off
+                inference speed for lower memory usage by setting a smaller batch size.
+            guidance_scale (`float`, defaults to `1.0`):
+                Guidance scale as defined in [Classifier-Free Diffusion
+                Guidance](https://huggingface.co/papers/2207.12598). `guidance_scale` is defined as `w` of equation 2.
+                of [Imagen Paper](https://huggingface.co/papers/2205.11487). Guidance scale is enabled by setting
+                `guidance_scale > 1`. Higher guidance scale encourages to generate images that are closely linked to
+                the text `prompt`, usually at the expense of lower image quality. By default, CFG is not used in Wan
+                Animate inference.
+            num_videos_per_prompt (`int`, *optional*, defaults to 1):
+                The number of videos to generate per prompt.
+            generator (`torch.Generator` or `list[torch.Generator]`, *optional*):
+                A [`torch.Generator`](https://pytorch.org/docs/stable/generated/torch.Generator.html) to make
+                generation deterministic.
+            latents (`torch.Tensor`, *optional*):
+                Pre-generated noisy latents sampled from a Gaussian distribution, to be used as inputs for video
+                generation. If not provided, a latents tensor is generated by sampling using the supplied random `generator`.
+            prompt_embeds (`torch.Tensor`, *optional*):
+                Pre-generated text embeddings. If not provided, text embeddings are generated from the `prompt` input argument.
+            negative_prompt_embeds (`torch.Tensor`, *optional*):
+                Pre-generated negative text embeddings. If not provided, `negative_prompt_embeds` are generated from the `negative_prompt` input argument.
+            image_embeds (`torch.Tensor`, *optional*):
+                Pre-generated image embeddings.
+            output_type (`str`, *optional*, defaults to `"np"`):
+                The output format of the generated video.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether to return a `WanPipelineOutput` instead of a plain tuple.
+            attention_kwargs (`dict`, *optional*):
+                Attention kwargs dictionary.
+            callback_on_step_end (`Callable`, *optional*):
+                A function that is called at the end of each denoising step during the inference with the following
+                arguments: `callback_on_step_end(step: int, timestep: int, callback_kwargs: dict)`. `callback_kwargs`
+                will include a list of all tensors as specified by `callback_on_step_end_tensor_inputs`.
+            callback_on_step_end_tensor_inputs (`list`, *optional*):
+                The list of tensor inputs for the `callback_on_step_end` function. The tensors specified in the list
+                will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
+                `._callback_tensor_inputs` attribute of your pipeline class.
+            max_sequence_length (`int`, defaults to `512`):
+                The maximum sequence length of the text encoder. If the prompt is longer than this, it will be
+                truncated. If the prompt is shorter, it will be padded to this length.
 
         Returns:
-            `WanPipelineOutput` or `tuple`: Generated video frames.
+            `WanPipelineOutput` or `tuple`:
+                If `return_dict` is `True`, [`WanPipelineOutput`] is returned, otherwise a `tuple` is returned where
+                the first element is a list with the generated images and the second element is a list of `bool`s
+                indicating whether the corresponding generated image contains "not-safe-for-work" (nsfw) content.
         """
         # 1. Check inputs
         self.check_inputs(
@@ -1251,7 +1216,6 @@ class WanAnimatePipeline(Pipeline):
                         apply_cfg=self.do_classifier_free_guidance,
                         guidance_scale=guidance_scale,
                         use_cfg_parallel=self.pipeline_config.use_cfg_parallel,
-                        batch_size=actual_batch_size,
                     )
 
                     # Compute the previous noisy sample x_t -> x_t-1
@@ -1261,7 +1225,7 @@ class WanAnimatePipeline(Pipeline):
                         callback_kwargs = {}
                         for k in callback_on_step_end_tensor_inputs:
                             callback_kwargs[k] = locals()[k]
-                        callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+                        callback_outputs = callback_on_step_end(i, t, callback_kwargs)
 
                         latents = callback_outputs.pop("latents", latents)
                         prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)

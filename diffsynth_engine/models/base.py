@@ -15,10 +15,7 @@ logger = logging.get_logger(__name__)
 class DiffusionModel(nn.Module, ConfigMixin):
     config_name = CONFIG_NAME
 
-    # This is identical to diffusers' ModelMixin._keep_in_fp32_modules.
     _keep_in_fp32_modules: list[str] | None = None
-
-    # ModelMixin._keys_to_ignore_on_load_unexpected.
     _keys_to_ignore_on_load_unexpected: list[str] | None = None
 
     @property
@@ -43,7 +40,7 @@ class DiffusionModel(nn.Module, ConfigMixin):
         with init_empty_weights():
             model = cls.from_config(config_dict)
 
-        # avoids precision loss
+        # avoid precision loss
         if dtype is not None and dtype != torch.float32 and cls._keep_in_fp32_modules:
             state_dict = load_model_weights(model_path, subfolder, device, dtype=None)
             for key in state_dict:
@@ -54,7 +51,7 @@ class DiffusionModel(nn.Module, ConfigMixin):
         else:
             state_dict = load_model_weights(model_path, subfolder, device, dtype)
 
-        # Filter out unexpected keys that the model explicitly ignores
+        # filter unexpected keys that the model explicitly ignores
         if cls._keys_to_ignore_on_load_unexpected:
             keys_to_remove = [
                 key for key in state_dict if any(pattern in key for pattern in cls._keys_to_ignore_on_load_unexpected)

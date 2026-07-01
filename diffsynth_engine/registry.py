@@ -19,6 +19,10 @@ _PIPELINES: dict[str, str] = {
     "QwenImageEditPipeline": "diffsynth_engine.pipelines.qwen_image.pipeline_qwenimage_edit:QwenImageEditPipeline",
     "QwenImageEditPlusPipeline": "diffsynth_engine.pipelines.qwen_image.pipeline_qwenimage_edit_plus:QwenImageEditPlusPipeline",
     "QwenImageLayeredPipeline": "diffsynth_engine.pipelines.qwen_image.pipeline_qwenimage_layered:QwenImageLayeredPipeline",
+    "WanAnimatePipeline": "diffsynth_engine.pipelines.wan.pipeline_wan_animate:WanAnimatePipeline",
+    "WanImageToVideoPipeline": "diffsynth_engine.pipelines.wan.pipeline_wan_i2v:WanImageToVideoPipeline",
+    "WanTextToVideoPipeline": "diffsynth_engine.pipelines.wan.pipeline_wan_t2v:WanTextToVideoPipeline",
+    "WanVACEPipeline": "diffsynth_engine.pipelines.wan.pipeline_wan_vace:WanVACEPipeline",
 }
 
 _ATTENTION_BACKENDS: dict[str, str] = {
