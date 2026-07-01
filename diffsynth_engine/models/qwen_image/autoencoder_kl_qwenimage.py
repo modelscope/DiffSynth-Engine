@@ -1058,6 +1058,8 @@ class AutoencoderKLQwenImage(DiffusionModel):
         """Build border weight mask for tile blending."""
         _, _, _, h, w = tile.shape
         border_h, border_w = border
+        border_h = min(h, border_h)
+        border_w = min(w, border_w)
         is_top, is_bottom, is_left, is_right = is_bound
 
         mask = torch.ones(1, 1, 1, h, w, dtype=tile.dtype, device=tile.device)
@@ -1068,7 +1070,7 @@ class AutoencoderKLQwenImage(DiffusionModel):
 
         if not is_bottom and border_h > 0:
             for y in range(border_h):
-                mask[:, :, :, h - 1 - y, :] *= y / border_h
+                mask[:, :, :, h - border_h + y, :] *= 1 - y / border_h
 
         if not is_left and border_w > 0:
             for x in range(border_w):
@@ -1076,7 +1078,7 @@ class AutoencoderKLQwenImage(DiffusionModel):
 
         if not is_right and border_w > 0:
             for x in range(border_w):
-                mask[:, :, :, :, w - 1 - x] *= x / border_w
+                mask[:, :, :, :, w - border_w + x] *= 1 - x / border_w
 
         return mask
 
