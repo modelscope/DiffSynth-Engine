@@ -9,11 +9,25 @@ from diffsynth_engine.utils.download import fetch_model
 from tests.common.test_case import VideoTestCase
 
 
-class TestWan22ImageToVideoPipeline(VideoTestCase):
+class TestWan22ImageToVideoPipelineCfgParallel(VideoTestCase):
+    """Non-expand_timesteps I2V (Wan2.2 A14B).
+
+    latent_model_input = cat([latents(16), condition(20)], dim=1) -> 36 channels,
+    which currently triggers a shape-mismatch bug in _predict_noise_with_cfg's
+    zeros_like allocation when use_cfg_parallel=True.
+    """
+
     @classmethod
     def setUpClass(cls):
         model_path = fetch_model("Wan-AI/Wan2.2-I2V-A14B-Diffusers")
-        config = WanPipelineConfig(model_path=model_path, pipeline_class_name="WanImageToVideoPipeline")
+        config = WanPipelineConfig(
+            model_path=model_path,
+            pipeline_class_name="WanImageToVideoPipeline",
+            parallelism=2,
+            use_cfg_parallel=True,
+            sp_ulysses_degree=1,
+            sp_ring_degree=1,
+        )
         cls.engine = DiffSynthEngine.from_pretrained(config)
 
     @classmethod
@@ -22,12 +36,13 @@ class TestWan22ImageToVideoPipeline(VideoTestCase):
         del cls.engine
         torch.cuda.empty_cache()
 
-    def test_image_to_video(self):
+    def test_image_to_video_cfg_parallel(self):
         image = self.get_input_image("wan_22_i2v_input.png")
         max_area = 480 * 832
         aspect_ratio = image.height / image.width
-        pipeline = self.engine.pipeline
-        mod_value = pipeline.vae_scale_factor_spatial * pipeline.transformer.config.patch_size[1]
+        # DistributedEngine does not expose .pipeline (it lives in workers).
+        # For Wan I2V-A14B: vae.scale_factor_spatial=8, transformer.patch_size=(1,2,2) -> mod=16.
+        mod_value = 16
         height = round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value
         width = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
         image = image.resize((width, height))

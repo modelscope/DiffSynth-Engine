@@ -54,13 +54,31 @@ class Pipeline:
                 fully_shard(block)
             fully_shard(model)
 
-        state_dict = load_model_weights(
-            pipeline_config.model_path,
-            subfolder=subfolder,
-            device="cpu" if use_fsdp else pipeline_config.device,
-            dtype=pipeline_config.model_dtype,
-            broadcast_from_rank0=not use_fsdp,
-        )
+        load_device = "cpu" if use_fsdp else pipeline_config.device
+        model_dtype = pipeline_config.model_dtype
+        keep_in_fp32_modules = getattr(model_cls, "_keep_in_fp32_modules", None)
+        if model_dtype is not None and model_dtype != torch.float32 and keep_in_fp32_modules:
+            # avoid precision loss: keep specified modules (norms, time embedder, modulation) in fp32
+            state_dict = load_model_weights(
+                pipeline_config.model_path,
+                subfolder=subfolder,
+                device=load_device,
+                dtype=None,
+                broadcast_from_rank0=not use_fsdp,
+            )
+            for key in state_dict:
+                if any(m in key.split(".") for m in keep_in_fp32_modules):
+                    state_dict[key] = state_dict[key].to(device=load_device, dtype=torch.float32)
+                else:
+                    state_dict[key] = state_dict[key].to(device=load_device, dtype=model_dtype)
+        else:
+            state_dict = load_model_weights(
+                pipeline_config.model_path,
+                subfolder=subfolder,
+                device=load_device,
+                dtype=model_dtype,
+                broadcast_from_rank0=not use_fsdp,
+            )
 
         if use_fsdp:
             set_model_state_dict(

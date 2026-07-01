@@ -8,11 +8,24 @@ from diffsynth_engine.utils.download import fetch_model
 from tests.common.test_case import VideoTestCase
 
 
-class TestWan22AnimatePipeline(VideoTestCase):
+class TestWan22AnimatePipelineCfgParallel(VideoTestCase):
+    """Wan2.2 Animate under cfg parallel.
+
+    latent_model_input = cat([latents, reference_latents], dim=1) has more than
+    16 channels, so this exercises the same zeros_like shape path as I2V-A14B.
+    """
+
     @classmethod
     def setUpClass(cls):
         model_path = fetch_model("Wan-AI/Wan2.2-Animate-14B-Diffusers")
-        config = WanPipelineConfig(model_path=model_path, pipeline_class_name="WanAnimatePipeline")
+        config = WanPipelineConfig(
+            model_path=model_path,
+            pipeline_class_name="WanAnimatePipeline",
+            parallelism=2,
+            use_cfg_parallel=True,
+            sp_ulysses_degree=1,
+            sp_ring_degree=1,
+        )
         cls.engine = DiffSynthEngine.from_pretrained(config)
 
     @classmethod
@@ -21,7 +34,7 @@ class TestWan22AnimatePipeline(VideoTestCase):
         del cls.engine
         torch.cuda.empty_cache()
 
-    def test_animate(self):
+    def test_animate_cfg_parallel(self):
         image = self.get_input_image("wan_22_animate_input.png")
 
         pose_video_reader = self.get_input_video("wan_22_animate_pose.mp4")

@@ -183,7 +183,7 @@ class WanAnimatePipeline(Pipeline):
             raise FileNotFoundError(f"Model path not found: {pipeline_config.model_path}")
 
         # Load transformer
-        transformer = cls.init_transformer(WanAnimateTransformer3DModel, pipeline_config)
+        transformer = cls.init_transformer(WanAnimateTransformer3DModel, pipeline_config).eval()
 
         # Load scheduler
         scheduler = UniPCMultistepScheduler.from_pretrained(
@@ -192,10 +192,10 @@ class WanAnimatePipeline(Pipeline):
         )
 
         # Load VAE
-        vae = cls.init_vae(AutoencoderKLWan, pipeline_config)
+        vae = cls.init_vae(AutoencoderKLWan, pipeline_config).eval()
 
         # Load text encoder
-        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False)
+        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False).eval()
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -819,7 +819,7 @@ class WanAnimatePipeline(Pipeline):
                     motion_encode_batch_size=motion_encode_batch_size,
                     return_dict=False,
                 )[0]
-            return noise_pred.float()
+            return noise_pred
 
         # CFG mode
         cfg_group, cfg_rank = None, None
@@ -829,8 +829,19 @@ class WanAnimatePipeline(Pipeline):
             cfg_group = get_cfg_group()
             cfg_rank = cfg_group.rank_in_group
 
-        noise_pred_pos = torch.zeros_like(latent_model_input, dtype=torch.float32)
-        noise_pred_neg = torch.zeros_like(latent_model_input, dtype=torch.float32)
+        # Match diffusers reference: keep noise predictions in transformer dtype (bf16)
+        # so that UniPCMultistepScheduler's cached previous-step model outputs have the
+        # same dtype as the reference, preventing trajectory drift / ghosting under CFG.
+        transformer_dtype = latent_model_input.dtype
+        # noise pred shape follows the transformer's out_channels (16), NOT the input
+        # channel count. Animate's latent_model_input is cat([latents, reference_latents])
+        # with more channels than the output — a zeros_like(latent_model_input) placeholder
+        # would break under cfg parallel, where one rank skips its forward pass and the
+        # unwritten placeholder is used downstream.
+        out_channels = self.transformer.config.out_channels or self.transformer.config.in_channels
+        out_shape = (latent_model_input.shape[0], out_channels, *latent_model_input.shape[2:])
+        noise_pred_pos = torch.zeros(out_shape, dtype=transformer_dtype, device=latent_model_input.device)
+        noise_pred_neg = torch.zeros(out_shape, dtype=transformer_dtype, device=latent_model_input.device)
 
         # Positive prompt forward pass (conditional)
         if not (use_cfg_parallel and cfg_rank != 0):
@@ -844,7 +855,7 @@ class WanAnimatePipeline(Pipeline):
                     face_pixel_values=face_video_segment,
                     motion_encode_batch_size=motion_encode_batch_size,
                     return_dict=False,
-                )[0].float()
+                )[0]
 
         # Negative prompt forward pass (unconditional) - blank out face
         face_pixel_values_uncond = face_video_segment * 0 - 1
@@ -859,14 +870,15 @@ class WanAnimatePipeline(Pipeline):
                     face_pixel_values=face_pixel_values_uncond,
                     motion_encode_batch_size=motion_encode_batch_size,
                     return_dict=False,
-                )[0].float()
+                )[0]
 
-        # All-reduce for CFG parallel
+        # All-reduce for CFG parallel (cast to fp32 for numerically stable accumulation,
+        # then cast back to match the non-parallel path)
         if use_cfg_parallel:
-            noise_pred_pos = cfg_group.all_reduce(noise_pred_pos)
-            noise_pred_neg = cfg_group.all_reduce(noise_pred_neg)
+            noise_pred_pos = cfg_group.all_reduce(noise_pred_pos.float()).to(transformer_dtype)
+            noise_pred_neg = cfg_group.all_reduce(noise_pred_neg.float()).to(transformer_dtype)
 
-        # Apply CFG
+        # Apply CFG in transformer dtype to match the reference implementation
         noise_pred = noise_pred_neg + guidance_scale * (noise_pred_pos - noise_pred_neg)
         return noise_pred
 

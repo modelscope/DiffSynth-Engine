@@ -143,6 +143,15 @@ class WanVACEPipeline(Pipeline):
         if not self.attn_backend.supports_head_size(head_dim):
             raise ValueError(f"Attention backend {pipeline_config.attn_type!r} does not support head size {head_dim}.")
 
+    def set_scheduler_flow_shift(self, flow_shift: float):
+        """Reconfigure the UniPCMultistepScheduler with a new flow_shift.
+
+        Exposed as a top-level pipeline method so tests running under
+        DistributedEngine can dispatch it to workers (which do not expose
+        the pipeline object directly).
+        """
+        self.scheduler = UniPCMultistepScheduler.from_config(self.scheduler.config, flow_shift=flow_shift)
+
     @classmethod
     def from_pretrained(cls, model_path_or_config: str | WanPipelineConfig):
         """
@@ -173,7 +182,7 @@ class WanVACEPipeline(Pipeline):
                 logger.info(f"Loaded boundary_ratio={boundary_ratio} from model_index.json")
 
         # Load transformer
-        transformer = cls.init_transformer(WanVACETransformer3DModel, pipeline_config)
+        transformer = cls.init_transformer(WanVACETransformer3DModel, pipeline_config).eval()
 
         # Load transformer_2
         transformer_2 = None
@@ -182,7 +191,7 @@ class WanVACEPipeline(Pipeline):
             if os.path.isdir(os.path.join(pipeline_config.model_path, transformer_2_subfolder)):
                 transformer_2 = cls.init_transformer(
                     WanVACETransformer3DModel, pipeline_config, subfolder=transformer_2_subfolder
-                )
+                ).eval()
                 logger.info(
                     f"Loaded transformer_2 from `{transformer_2_subfolder}` subfolder of {pipeline_config.model_path}."
                 )
@@ -196,10 +205,10 @@ class WanVACEPipeline(Pipeline):
         scheduler = UniPCMultistepScheduler.from_pretrained(pipeline_config.model_path, subfolder="scheduler")
 
         # Load VAE
-        vae = cls.init_vae(AutoencoderKLWan, pipeline_config)
+        vae = cls.init_vae(AutoencoderKLWan, pipeline_config).eval()
 
         # Load text encoder
-        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False)
+        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False).eval()
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(pipeline_config.model_path, subfolder="tokenizer")
@@ -745,7 +754,7 @@ class WanVACEPipeline(Pipeline):
                     control_hidden_states_scale=control_hidden_states_scale,
                     return_dict=False,
                 )[0]
-            return noise_pred.float()
+            return noise_pred
 
         # CFG mode
         cfg_group, cfg_rank = None, None
@@ -755,8 +764,18 @@ class WanVACEPipeline(Pipeline):
             cfg_group = get_cfg_group()
             cfg_rank = cfg_group.rank_in_group
 
-        noise_pred_pos = torch.zeros_like(latent_model_input, dtype=torch.float32)
-        noise_pred_neg = torch.zeros_like(latent_model_input, dtype=torch.float32)
+        # Match diffusers reference: keep noise predictions in transformer dtype (bf16)
+        # so that UniPCMultistepScheduler's cached previous-step model outputs have the
+        # same dtype as the reference, preventing trajectory drift / ghosting under CFG.
+        transformer_dtype = latent_model_input.dtype
+        # noise pred shape follows the transformer's out_channels, not the input channel
+        # count. Currently VACE's latent_model_input == latents so channels match, but
+        # allocating by out_channels keeps this correct if the input ever grows extra
+        # conditioning channels — and matches the fix applied to I2V / Animate.
+        out_channels = model.config.out_channels or model.config.in_channels
+        out_shape = (latent_model_input.shape[0], out_channels, *latent_model_input.shape[2:])
+        noise_pred_pos = torch.zeros(out_shape, dtype=transformer_dtype, device=latent_model_input.device)
+        noise_pred_neg = torch.zeros(out_shape, dtype=transformer_dtype, device=latent_model_input.device)
 
         # Positive prompt forward pass
         if not (use_cfg_parallel and cfg_rank != 0):
@@ -768,7 +787,7 @@ class WanVACEPipeline(Pipeline):
                     control_hidden_states=control_hidden_states,
                     control_hidden_states_scale=control_hidden_states_scale,
                     return_dict=False,
-                )[0].float()
+                )[0]
 
         # Negative prompt forward pass
         if not use_cfg_parallel or cfg_rank != 0:
@@ -780,14 +799,15 @@ class WanVACEPipeline(Pipeline):
                     control_hidden_states=control_hidden_states,
                     control_hidden_states_scale=control_hidden_states_scale,
                     return_dict=False,
-                )[0].float()
+                )[0]
 
-        # All-reduce for CFG parallel
+        # All-reduce for CFG parallel (cast to fp32 for numerically stable accumulation,
+        # then cast back to match the non-parallel path)
         if use_cfg_parallel:
-            noise_pred_pos = cfg_group.all_reduce(noise_pred_pos)
-            noise_pred_neg = cfg_group.all_reduce(noise_pred_neg)
+            noise_pred_pos = cfg_group.all_reduce(noise_pred_pos.float()).to(transformer_dtype)
+            noise_pred_neg = cfg_group.all_reduce(noise_pred_neg.float()).to(transformer_dtype)
 
-        # Apply CFG
+        # Apply CFG in transformer dtype to match the reference implementation
         noise_pred = noise_pred_neg + guidance_scale * (noise_pred_pos - noise_pred_neg)
         return noise_pred
 

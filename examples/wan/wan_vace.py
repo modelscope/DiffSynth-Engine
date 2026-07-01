@@ -3,7 +3,8 @@ import torch
 from diffusers.schedulers import UniPCMultistepScheduler
 from diffusers.utils import export_to_video, load_image
 
-from diffsynth_engine.pipelines.wan import WanVACEPipeline
+from diffsynth_engine import DiffSynthEngine
+from diffsynth_engine.configs import WanPipelineConfig
 from diffsynth_engine.utils.download import fetch_model
 
 
@@ -27,7 +28,9 @@ def prepare_video_and_mask(
 
 if __name__ == "__main__":
     model_path = fetch_model("Wan-AI/Wan2.1-VACE-14B-diffusers")
-    pipe = WanVACEPipeline.from_pretrained(model_path)
+    config = WanPipelineConfig(model_path=model_path, pipeline_class_name="WanVACEPipeline")
+    engine = DiffSynthEngine.from_pretrained(config)
+    pipe = engine.pipeline
 
     # Set flow_shift to 5.0 for 720P (use 3.0 for 480P)
     flow_shift = 5.0  # 5.0 for 720P, 3.0 for 480P
@@ -57,7 +60,7 @@ if __name__ == "__main__":
     num_frames = 81
     video, mask = prepare_video_and_mask(first_frame, last_frame, height, width, num_frames)
 
-    output = pipe(
+    output = engine.generate(
         video=video,
         mask=mask,
         prompt=prompt,
@@ -71,3 +74,4 @@ if __name__ == "__main__":
     )
 
     export_to_video(output.frames[0], "wan_vace_output.mp4", fps=16)
+    engine.shutdown()

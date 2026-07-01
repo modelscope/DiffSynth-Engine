@@ -230,13 +230,14 @@ class WanTimeTextImageEmbedding(nn.Module):
         if timestep_seq_len is not None:
             timestep = timestep.unflatten(0, (-1, timestep_seq_len))
 
-        # Compute time embedding in fp32 to avoid precision loss
-        with torch.amp.autocast(device_type=timestep.device.type, dtype=torch.float32):
-            timestep = timestep.float()
-            temb = self.time_embedder(timestep)
-            timestep_proj = self.time_proj(self.act_fn(temb))
-        timestep_proj = timestep_proj.type_as(encoder_hidden_states)
-        temb = temb.type_as(encoder_hidden_states)
+        # Match diffusers reference: cast temb to model dtype BEFORE time_proj
+        # (computing timestep_proj from the bf16 temb, not fp32) to avoid diverging
+        # from the reference denoising trajectory.
+        time_embedder_dtype = next(iter(self.time_embedder.parameters())).dtype
+        if timestep.dtype != time_embedder_dtype and time_embedder_dtype != torch.int8:
+            timestep = timestep.to(time_embedder_dtype)
+        temb = self.time_embedder(timestep).type_as(encoder_hidden_states)
+        timestep_proj = self.time_proj(self.act_fn(temb))
 
         encoder_hidden_states = self.text_embedder(encoder_hidden_states)
         if encoder_hidden_states_image is not None:

@@ -2,12 +2,14 @@ import torch
 from diffusers.utils import export_to_video, load_video
 from PIL import Image
 
-from diffsynth_engine.pipelines.wan import WanAnimatePipeline
+from diffsynth_engine import DiffSynthEngine
+from diffsynth_engine.configs import WanPipelineConfig
 from diffsynth_engine.utils.download import fetch_model
 
 if __name__ == "__main__":
     model_path = fetch_model("Wan-AI/Wan2.2-Animate-14B-Diffusers")
-    pipe = WanAnimatePipeline.from_pretrained(model_path)
+    config = WanPipelineConfig(model_path=model_path, pipeline_class_name="WanAnimatePipeline")
+    engine = DiffSynthEngine.from_pretrained(config)
 
     # Load the reference character image
     image = Image.open("examples/input/wan_22_animate_input.png")
@@ -19,7 +21,7 @@ if __name__ == "__main__":
     prompt = "People in the video are doing actions."
 
     # ---- Animate mode ----
-    video = pipe(
+    video = engine.generate(
         image=image,
         pose_video=pose_video,
         face_video=face_video,
@@ -42,7 +44,7 @@ if __name__ == "__main__":
     # background_video = load_video("examples/input/wan_22_animate_background.mp4")
     # mask_video = load_video("examples/input/wan_22_animate_mask.mp4")
     #
-    # video_replace = pipe(
+    # video_replace = engine.generate(
     #     image=image,
     #     pose_video=pose_video,
     #     face_video=face_video,
@@ -58,3 +60,5 @@ if __name__ == "__main__":
     # )
     #
     # export_to_video(video_replace.frames[0], "animated_output_replace.mp4", fps=30)
+
+    engine.shutdown()

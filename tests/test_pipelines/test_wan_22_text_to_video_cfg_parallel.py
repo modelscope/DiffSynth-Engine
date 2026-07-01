@@ -8,11 +8,18 @@ from diffsynth_engine.utils.download import fetch_model
 from tests.common.test_case import VideoTestCase
 
 
-class TestWan22TextToVideoPipeline(VideoTestCase):
+class TestWan22TextToVideoPipelineCfgParallel(VideoTestCase):
     @classmethod
     def setUpClass(cls):
         model_path = fetch_model("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
-        config = WanPipelineConfig(model_path=model_path, pipeline_class_name="WanTextToVideoPipeline")
+        config = WanPipelineConfig(
+            model_path=model_path,
+            pipeline_class_name="WanTextToVideoPipeline",
+            parallelism=2,
+            use_cfg_parallel=True,
+            sp_ulysses_degree=1,
+            sp_ring_degree=1,
+        )
         cls.engine = DiffSynthEngine.from_pretrained(config)
 
     @classmethod
@@ -21,7 +28,7 @@ class TestWan22TextToVideoPipeline(VideoTestCase):
         del cls.engine
         torch.cuda.empty_cache()
 
-    def test_text_to_video(self):
+    def test_text_to_video_cfg_parallel(self):
         prompt = (
             "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
         )

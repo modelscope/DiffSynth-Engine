@@ -2,7 +2,6 @@ import unittest
 
 import PIL.Image
 import torch
-from diffusers.schedulers import UniPCMultistepScheduler
 
 from diffsynth_engine import DiffSynthEngine
 from diffsynth_engine.configs import WanPipelineConfig
@@ -28,15 +27,22 @@ def prepare_video_and_mask(
     return frames, mask
 
 
-class TestWanVACEPipeline(VideoTestCase):
+class TestWanVACEPipelineCfgParallel(VideoTestCase):
     @classmethod
     def setUpClass(cls):
         model_path = fetch_model("Wan-AI/Wan2.1-VACE-14B-diffusers")
-        config = WanPipelineConfig(model_path=model_path, pipeline_class_name="WanVACEPipeline")
+        config = WanPipelineConfig(
+            model_path=model_path,
+            pipeline_class_name="WanVACEPipeline",
+            parallelism=2,
+            use_cfg_parallel=True,
+            sp_ulysses_degree=1,
+            sp_ring_degree=1,
+        )
         cls.engine = DiffSynthEngine.from_pretrained(config)
         flow_shift = 5.0  # 5.0 for 720P, 3.0 for 480P
-        pipeline = cls.engine.pipeline
-        pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config, flow_shift=flow_shift)
+        # DistributedEngine does not expose .pipeline; broadcast the reconfig to all workers.
+        cls.engine._dispatch("set_scheduler_flow_shift", output_rank=None, flow_shift=flow_shift)
 
     @classmethod
     def tearDownClass(cls):
@@ -44,7 +50,7 @@ class TestWanVACEPipeline(VideoTestCase):
         del cls.engine
         torch.cuda.empty_cache()
 
-    def test_vace(self):
+    def test_vace_cfg_parallel(self):
         first_frame = self.get_input_image("wan_vace_first_frame.png")
         last_frame = self.get_input_image("wan_vace_last_frame.png")
 

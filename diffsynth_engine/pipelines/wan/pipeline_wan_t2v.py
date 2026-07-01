@@ -164,7 +164,7 @@ class WanTextToVideoPipeline(Pipeline):
                 logger.info(f"Loaded expand_timesteps={expand_timesteps} from model_index.json")
 
         # Load transformer
-        transformer = cls.init_transformer(WanTransformer3DModel, pipeline_config)
+        transformer = cls.init_transformer(WanTransformer3DModel, pipeline_config).eval()
 
         # Load transformer_2
         transformer_2 = None
@@ -173,7 +173,7 @@ class WanTextToVideoPipeline(Pipeline):
             if os.path.isdir(os.path.join(pipeline_config.model_path, transformer_2_subfolder)):
                 transformer_2 = cls.init_transformer(
                     WanTransformer3DModel, pipeline_config, subfolder=transformer_2_subfolder
-                )
+                ).eval()
                 logger.info(
                     f"Loaded transformer_2 from `{transformer_2_subfolder}` subfolder of {pipeline_config.model_path}."
                 )
@@ -190,10 +190,10 @@ class WanTextToVideoPipeline(Pipeline):
         )
 
         # Load VAE
-        vae = cls.init_vae(AutoencoderKLWan, pipeline_config)
+        vae = cls.init_vae(AutoencoderKLWan, pipeline_config).eval()
 
         # Load text encoder
-        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False)
+        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False).eval()
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -489,7 +489,7 @@ class WanTextToVideoPipeline(Pipeline):
                     encoder_hidden_states=prompt_embeds,
                     return_dict=False,
                 )[0]
-            return noise_pred.float()
+            return noise_pred
 
         # CFG mode
         cfg_group, cfg_rank = None, None
@@ -501,8 +501,11 @@ class WanTextToVideoPipeline(Pipeline):
 
         latent_model_input = latents.to(transformer_dtype)
 
-        noise_pred_pos = torch.zeros_like(latents, dtype=torch.float32)
-        noise_pred_neg = torch.zeros_like(latents, dtype=torch.float32)
+        # Match diffusers reference: keep noise predictions in transformer dtype (bf16)
+        # so that UniPCMultistepScheduler's cached previous-step model outputs have the
+        # same dtype as the reference, preventing trajectory drift / ghosting under CFG.
+        noise_pred_pos = torch.zeros_like(latents, dtype=transformer_dtype)
+        noise_pred_neg = torch.zeros_like(latents, dtype=transformer_dtype)
 
         # Positive prompt forward pass
         if not (use_cfg_parallel and cfg_rank != 0):
@@ -512,7 +515,7 @@ class WanTextToVideoPipeline(Pipeline):
                     timestep=timestep,
                     encoder_hidden_states=prompt_embeds,
                     return_dict=False,
-                )[0].float()
+                )[0]
 
         # Negative prompt forward pass
         if not use_cfg_parallel or cfg_rank != 0:
@@ -522,14 +525,15 @@ class WanTextToVideoPipeline(Pipeline):
                     timestep=timestep,
                     encoder_hidden_states=negative_prompt_embeds,
                     return_dict=False,
-                )[0].float()
+                )[0]
 
-        # All-reduce for CFG parallel
+        # All-reduce for CFG parallel (cast to fp32 for numerically stable accumulation,
+        # then cast back to match the non-parallel path)
         if use_cfg_parallel:
-            noise_pred_pos = cfg_group.all_reduce(noise_pred_pos)
-            noise_pred_neg = cfg_group.all_reduce(noise_pred_neg)
+            noise_pred_pos = cfg_group.all_reduce(noise_pred_pos.float()).to(transformer_dtype)
+            noise_pred_neg = cfg_group.all_reduce(noise_pred_neg.float()).to(transformer_dtype)
 
-        # Apply CFG
+        # Apply CFG in transformer dtype to match the reference implementation
         noise_pred = noise_pred_neg + guidance_scale * (noise_pred_pos - noise_pred_neg)
         return noise_pred
 
