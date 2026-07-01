@@ -43,24 +43,22 @@ class DiffusionModel(nn.Module, ConfigMixin):
         # avoid precision loss
         if dtype is not None and dtype != torch.float32 and cls._keep_in_fp32_modules:
             state_dict = load_model_weights(model_path, subfolder, device, dtype=None)
-            for key in state_dict:
-                if any(m in key.split(".") for m in cls._keep_in_fp32_modules):
-                    state_dict[key] = state_dict[key].to(device=device, dtype=torch.float32)
+            for k, v in state_dict.items():
+                if any(m in k.split(".") for m in cls._keep_in_fp32_modules):
+                    state_dict[k] = v.to(dtype=torch.float32)
                 else:
-                    state_dict[key] = state_dict[key].to(device=device, dtype=dtype)
+                    state_dict[k] = v.to(dtype=dtype)
         else:
             state_dict = load_model_weights(model_path, subfolder, device, dtype)
 
-        # filter unexpected keys that the model explicitly ignores
+        # drop unexpected keys
         if cls._keys_to_ignore_on_load_unexpected:
-            keys_to_remove = [
-                key for key in state_dict if any(pattern in key for pattern in cls._keys_to_ignore_on_load_unexpected)
-            ]
-            for key in keys_to_remove:
-                del state_dict[key]
-            if keys_to_remove:
+            unexpected_keys = [k for k in state_dict if any(pat in k for pat in cls._keys_to_ignore_on_load_unexpected)]
+            for k in unexpected_keys:
+                del state_dict[k]
+            if unexpected_keys:
                 logger.info(
-                    f"Dropped {len(keys_to_remove)} unexpected key(s) matching "
+                    f"Dropped {len(unexpected_keys)} unexpected key(s) matching "
                     f"{cls._keys_to_ignore_on_load_unexpected} from state_dict."
                 )
 

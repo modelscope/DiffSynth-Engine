@@ -2,7 +2,6 @@ import unittest
 
 import PIL.Image
 import torch
-from diffusers.schedulers import UniPCMultistepScheduler
 
 from diffsynth_engine import DiffSynthEngine
 from diffsynth_engine.configs import WanPipelineConfig
@@ -32,11 +31,16 @@ class TestWanVACEPipeline(VideoTestCase):
     @classmethod
     def setUpClass(cls):
         model_path = fetch_model("Wan-AI/Wan2.1-VACE-14B-diffusers")
-        config = WanPipelineConfig(model_path=model_path, pipeline_class_name="WanVACEPipeline")
+        config = WanPipelineConfig(
+            model_path=model_path,
+            pipeline_class_name="WanVACEPipeline",
+            parallelism=4,
+            use_cfg_parallel=True,
+            sp_ulysses_degree=2,
+            sp_ring_degree=1,
+            flow_shift=5.0,
+        )
         cls.engine = DiffSynthEngine.from_pretrained(config)
-        flow_shift = 5.0  # 5.0 for 720P, 3.0 for 480P
-        pipeline = cls.engine.pipeline
-        pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config, flow_shift=flow_shift)
 
     @classmethod
     def tearDownClass(cls):

@@ -190,7 +190,8 @@ class WanImageToVideoPipeline(Pipeline):
                 logger.info(f"Loaded expand_timesteps={expand_timesteps} from model_index.json")
 
         # Load transformer
-        transformer = cls.init_transformer(WanTransformer3DModel, pipeline_config).eval()
+        transformer = cls.init_transformer(WanTransformer3DModel, pipeline_config)
+        transformer.eval()
 
         # Load transformer_2
         transformer_2 = None
@@ -199,7 +200,8 @@ class WanImageToVideoPipeline(Pipeline):
             if os.path.isdir(os.path.join(pipeline_config.model_path, transformer_2_subfolder)):
                 transformer_2 = cls.init_transformer(
                     WanTransformer3DModel, pipeline_config, subfolder=transformer_2_subfolder
-                ).eval()
+                )
+                transformer_2.eval()
                 logger.info(
                     f"Loaded transformer_2 from `{transformer_2_subfolder}` subfolder of {pipeline_config.model_path}."
                 )
@@ -210,16 +212,22 @@ class WanImageToVideoPipeline(Pipeline):
                 )
 
         # Load scheduler
+        scheduler_kwargs = {}
+        if pipeline_config.flow_shift is not None:
+            scheduler_kwargs["flow_shift"] = pipeline_config.flow_shift
         scheduler = UniPCMultistepScheduler.from_pretrained(
             pipeline_config.model_path,
             subfolder="scheduler",
+            **scheduler_kwargs,
         )
 
         # Load VAE
-        vae = cls.init_vae(AutoencoderKLWan, pipeline_config).eval()
+        vae = cls.init_vae(AutoencoderKLWan, pipeline_config)
+        vae.eval()
 
         # Load text encoder
-        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False).eval()
+        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False)
+        text_encoder.eval()
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -593,7 +601,9 @@ class WanImageToVideoPipeline(Pipeline):
 
     def _predict_noise_with_cfg(
         self,
-        latent_model_input: torch.Tensor,
+        latents: torch.Tensor,
+        condition: torch.Tensor,
+        first_frame_mask: torch.Tensor | None,
         timestep: torch.Tensor,
         prompt_embeds: torch.Tensor,
         negative_prompt_embeds: torch.Tensor,
@@ -608,7 +618,9 @@ class WanImageToVideoPipeline(Pipeline):
         Predict noise with classifier-free guidance, supporting parallel CFG inference.
 
         Args:
-            latent_model_input: The model input (latents or latents + condition).
+            latents: Current noisy latents.
+            condition: Image conditioning latents.
+            first_frame_mask: First-frame mask for expanded timestep models.
             timestep: Current timestep tensor.
             prompt_embeds: Positive prompt embeddings tensor.
             negative_prompt_embeds: Negative prompt embeddings tensor.
@@ -624,6 +636,13 @@ class WanImageToVideoPipeline(Pipeline):
         """
         if model is None:
             model = self.transformer
+
+        transformer_dtype = self.pipeline_config.model_dtype
+        if first_frame_mask is not None:
+            latent_model_input = (1 - first_frame_mask) * condition + first_frame_mask * latents
+            latent_model_input = latent_model_input.to(transformer_dtype)
+        else:
+            latent_model_input = torch.cat([latents, condition], dim=1).to(transformer_dtype)
 
         if not apply_cfg:
             with set_forward_context(attn_metadata=attn_metadata):
@@ -644,19 +663,8 @@ class WanImageToVideoPipeline(Pipeline):
             cfg_group = get_cfg_group()
             cfg_rank = cfg_group.rank_in_group
 
-        # Match diffusers reference: keep noise predictions in transformer dtype (bf16)
-        # so that UniPCMultistepScheduler's cached previous-step model outputs have the
-        # same dtype as the reference, preventing trajectory drift / ghosting under CFG.
-        transformer_dtype = latent_model_input.dtype
-        # noise pred shape follows the transformer's out_channels (16), NOT the input
-        # channel count. For non-expand I2V, latent_model_input is cat([latents, cond])
-        # with more channels than the output — a zeros_like(latent_model_input) placeholder
-        # would break under cfg parallel, where one rank skips its forward pass and the
-        # unwritten placeholder is used downstream.
-        out_channels = model.config.out_channels or model.config.in_channels
-        out_shape = (latent_model_input.shape[0], out_channels, *latent_model_input.shape[2:])
-        noise_pred_pos = torch.zeros(out_shape, dtype=transformer_dtype, device=latent_model_input.device)
-        noise_pred_neg = torch.zeros(out_shape, dtype=transformer_dtype, device=latent_model_input.device)
+        noise_pred_pos = torch.zeros_like(latents, dtype=transformer_dtype)
+        noise_pred_neg = torch.zeros_like(latents, dtype=transformer_dtype)
 
         # Positive prompt forward pass
         if not (use_cfg_parallel and cfg_rank != 0):
@@ -923,19 +931,17 @@ class WanImageToVideoPipeline(Pipeline):
                     current_guidance_scale = guidance_scale_2
 
                 if self.expand_timesteps:
-                    latent_model_input = (1 - first_frame_mask) * condition + first_frame_mask * latents
-                    latent_model_input = latent_model_input.to(transformer_dtype)
-
                     temp_ts = (first_frame_mask[0][0][:, ::2, ::2] * t).flatten()
                     timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
                 else:
-                    latent_model_input = torch.cat([latents, condition], dim=1).to(transformer_dtype)
                     timestep = t.expand(latents.shape[0])
 
                 attn_metadata = self._build_attn_metadata(self.pipeline_config.attn_params)
 
                 noise_pred = self._predict_noise_with_cfg(
-                    latent_model_input=latent_model_input,
+                    latents=latents,
+                    condition=condition,
+                    first_frame_mask=first_frame_mask if self.expand_timesteps else None,
                     timestep=timestep,
                     prompt_embeds=prompt_embeds,
                     negative_prompt_embeds=negative_prompt_embeds,

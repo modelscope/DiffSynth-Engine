@@ -11,12 +11,12 @@ if __name__ == "__main__":
     model_path = fetch_model("Wan-AI/Wan2.2-I2V-A14B-Diffusers")
     config = WanPipelineConfig(model_path=model_path, pipeline_class_name="WanImageToVideoPipeline")
     engine = DiffSynthEngine.from_pretrained(config)
-    pipe = engine.pipeline
 
     image = Image.open("examples/input/wan_22_i2v_input.png")
     max_area = 480 * 832
     aspect_ratio = image.height / image.width
-    mod_value = pipe.vae_scale_factor_spatial * pipe.transformer.config.patch_size[1]
+    # For Wan I2V-A14B: vae.scale_factor_spatial=8, transformer.patch_size=(1,2,2) -> mod=16.
+    mod_value = 16
     height = round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value
     width = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
     image = image.resize((width, height))

@@ -12,7 +12,14 @@ class TestWan22AnimatePipeline(VideoTestCase):
     @classmethod
     def setUpClass(cls):
         model_path = fetch_model("Wan-AI/Wan2.2-Animate-14B-Diffusers")
-        config = WanPipelineConfig(model_path=model_path, pipeline_class_name="WanAnimatePipeline")
+        config = WanPipelineConfig(
+            model_path=model_path,
+            pipeline_class_name="WanAnimatePipeline",
+            parallelism=4,
+            use_cfg_parallel=True,
+            sp_ulysses_degree=2,
+            sp_ring_degree=1,
+        )
         cls.engine = DiffSynthEngine.from_pretrained(config)
 
     @classmethod

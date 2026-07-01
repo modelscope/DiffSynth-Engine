@@ -164,7 +164,8 @@ class WanTextToVideoPipeline(Pipeline):
                 logger.info(f"Loaded expand_timesteps={expand_timesteps} from model_index.json")
 
         # Load transformer
-        transformer = cls.init_transformer(WanTransformer3DModel, pipeline_config).eval()
+        transformer = cls.init_transformer(WanTransformer3DModel, pipeline_config)
+        transformer.eval()
 
         # Load transformer_2
         transformer_2 = None
@@ -173,7 +174,8 @@ class WanTextToVideoPipeline(Pipeline):
             if os.path.isdir(os.path.join(pipeline_config.model_path, transformer_2_subfolder)):
                 transformer_2 = cls.init_transformer(
                     WanTransformer3DModel, pipeline_config, subfolder=transformer_2_subfolder
-                ).eval()
+                )
+                transformer_2.eval()
                 logger.info(
                     f"Loaded transformer_2 from `{transformer_2_subfolder}` subfolder of {pipeline_config.model_path}."
                 )
@@ -184,16 +186,22 @@ class WanTextToVideoPipeline(Pipeline):
                 )
 
         # Load scheduler
+        scheduler_kwargs = {}
+        if pipeline_config.flow_shift is not None:
+            scheduler_kwargs["flow_shift"] = pipeline_config.flow_shift
         scheduler = UniPCMultistepScheduler.from_pretrained(
             pipeline_config.model_path,
             subfolder="scheduler",
+            **scheduler_kwargs,
         )
 
         # Load VAE
-        vae = cls.init_vae(AutoencoderKLWan, pipeline_config).eval()
+        vae = cls.init_vae(AutoencoderKLWan, pipeline_config)
+        vae.eval()
 
         # Load text encoder
-        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False).eval()
+        text_encoder = cls.init_text_encoder(UMT5EncoderModel, pipeline_config, strict=False)
+        text_encoder.eval()
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -479,12 +487,12 @@ class WanTextToVideoPipeline(Pipeline):
             model = self.transformer
 
         transformer_dtype = self.pipeline_config.model_dtype
+        latents = latents.to(transformer_dtype)
 
         if not apply_cfg:
-            latent_model_input = latents.to(transformer_dtype)
             with set_forward_context(attn_metadata=attn_metadata):
                 noise_pred = model(
-                    hidden_states=latent_model_input,
+                    hidden_states=latents,
                     timestep=timestep,
                     encoder_hidden_states=prompt_embeds,
                     return_dict=False,
@@ -499,11 +507,6 @@ class WanTextToVideoPipeline(Pipeline):
             cfg_group = get_cfg_group()
             cfg_rank = cfg_group.rank_in_group
 
-        latent_model_input = latents.to(transformer_dtype)
-
-        # Match diffusers reference: keep noise predictions in transformer dtype (bf16)
-        # so that UniPCMultistepScheduler's cached previous-step model outputs have the
-        # same dtype as the reference, preventing trajectory drift / ghosting under CFG.
         noise_pred_pos = torch.zeros_like(latents, dtype=transformer_dtype)
         noise_pred_neg = torch.zeros_like(latents, dtype=transformer_dtype)
 
@@ -511,7 +514,7 @@ class WanTextToVideoPipeline(Pipeline):
         if not (use_cfg_parallel and cfg_rank != 0):
             with set_forward_context(attn_metadata=attn_metadata):
                 noise_pred_pos = model(
-                    hidden_states=latent_model_input,
+                    hidden_states=latents,
                     timestep=timestep,
                     encoder_hidden_states=prompt_embeds,
                     return_dict=False,
@@ -521,19 +524,18 @@ class WanTextToVideoPipeline(Pipeline):
         if not use_cfg_parallel or cfg_rank != 0:
             with set_forward_context(attn_metadata=attn_metadata):
                 noise_pred_neg = model(
-                    hidden_states=latent_model_input,
+                    hidden_states=latents,
                     timestep=timestep,
                     encoder_hidden_states=negative_prompt_embeds,
                     return_dict=False,
                 )[0]
 
-        # All-reduce for CFG parallel (cast to fp32 for numerically stable accumulation,
-        # then cast back to match the non-parallel path)
+        # All-reduce for CFG parallel
         if use_cfg_parallel:
             noise_pred_pos = cfg_group.all_reduce(noise_pred_pos.float()).to(transformer_dtype)
             noise_pred_neg = cfg_group.all_reduce(noise_pred_neg.float()).to(transformer_dtype)
 
-        # Apply CFG in transformer dtype to match the reference implementation
+        # Apply CFG
         noise_pred = noise_pred_neg + guidance_scale * (noise_pred_pos - noise_pred_neg)
         return noise_pred
 

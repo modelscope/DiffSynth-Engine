@@ -5,4 +5,4 @@ from diffsynth_engine.configs.base import PipelineConfig
 
 @dataclass
 class WanPipelineConfig(PipelineConfig):
-    pass
+    flow_shift: float | None = None

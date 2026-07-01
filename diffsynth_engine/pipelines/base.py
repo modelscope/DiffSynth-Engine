@@ -58,7 +58,7 @@ class Pipeline:
         model_dtype = pipeline_config.model_dtype
         keep_in_fp32_modules = getattr(model_cls, "_keep_in_fp32_modules", None)
         if model_dtype is not None and model_dtype != torch.float32 and keep_in_fp32_modules:
-            # avoid precision loss: keep specified modules (norms, time embedder, modulation) in fp32
+            # avoid precision loss: keep modules (time embedder, modulation, norms) in fp32
             state_dict = load_model_weights(
                 pipeline_config.model_path,
                 subfolder=subfolder,
@@ -66,11 +66,11 @@ class Pipeline:
                 dtype=None,
                 broadcast_from_rank0=not use_fsdp,
             )
-            for key in state_dict:
-                if any(m in key.split(".") for m in keep_in_fp32_modules):
-                    state_dict[key] = state_dict[key].to(device=load_device, dtype=torch.float32)
+            for k, v in state_dict.items():
+                if any(m in k.split(".") for m in keep_in_fp32_modules):
+                    state_dict[k] = v.to(dtype=torch.float32)
                 else:
-                    state_dict[key] = state_dict[key].to(device=load_device, dtype=model_dtype)
+                    state_dict[k] = v.to(dtype=model_dtype)
         else:
             state_dict = load_model_weights(
                 pipeline_config.model_path,
@@ -125,10 +125,11 @@ class Pipeline:
                 fully_shard(layer)
             fully_shard(model)
 
+        load_device = "cpu" if use_fsdp else pipeline_config.device
         state_dict = load_model_weights(
             pipeline_config.model_path,
             subfolder="text_encoder",
-            device="cpu" if use_fsdp else pipeline_config.device,
+            device=load_device,
             dtype=pipeline_config.text_encoder_dtype,
             broadcast_from_rank0=not use_fsdp,
         )

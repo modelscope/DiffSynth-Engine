@@ -230,9 +230,6 @@ class WanTimeTextImageEmbedding(nn.Module):
         if timestep_seq_len is not None:
             timestep = timestep.unflatten(0, (-1, timestep_seq_len))
 
-        # Match diffusers reference: cast temb to model dtype BEFORE time_proj
-        # (computing timestep_proj from the bf16 temb, not fp32) to avoid diverging
-        # from the reference denoising trajectory.
         time_embedder_dtype = next(iter(self.time_embedder.parameters())).dtype
         if timestep.dtype != time_embedder_dtype and time_embedder_dtype != torch.int8:
             timestep = timestep.to(time_embedder_dtype)
