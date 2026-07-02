@@ -25,7 +25,7 @@ from diffusers.models.normalization import FP32LayerNorm
 
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
-from diffsynth_engine.layers.attention import USPAttention
+from diffsynth_engine.layers.attention import LocalAttention
 from diffsynth_engine.models.base import DiffusionModel
 from diffsynth_engine.models.wan.transformer_wan import (
     WanRotaryPosEmbed,
@@ -423,7 +423,7 @@ class WanAnimateFaceBlockCrossAttention(nn.Module):
 
         # 4. Attention
         forward_context = get_forward_context()
-        self.usp_attn = USPAttention(
+        self.attn = LocalAttention(
             num_heads=heads,
             head_size=dim_head,
             attn_type=forward_context.attn_type,
@@ -462,7 +462,7 @@ class WanAnimateFaceBlockCrossAttention(nn.Module):
         key = key.flatten(0, 1)
         value = value.flatten(0, 1)
 
-        hidden_states = self.usp_attn(query, key, value)
+        hidden_states = self.attn(query, key, value)
 
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.type_as(query)
@@ -657,8 +657,6 @@ class WanAnimateTransformer3DModel(DiffusionModel):
         self.proj_out = nn.Linear(inner_dim, out_channels * math.prod(patch_size))
         self.scale_shift_table = nn.Parameter(torch.randn(1, 2, inner_dim) / inner_dim**0.5)
 
-        self.gradient_checkpointing = False
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -765,28 +763,27 @@ class WanAnimateTransformer3DModel(DiffusionModel):
 
         rotary_emb_cos, rotary_emb_sin = rotary_emb
         hidden_states, rotary_emb_cos, rotary_emb_sin = sequence_parallel_shard(
-            [hidden_states, rotary_emb_cos, rotary_emb_sin],
-            seq_dims=[1, 1, 1],
+            (hidden_states, rotary_emb_cos, rotary_emb_sin),
+            seq_dims=(1, 1, 1),
         )
         rotary_emb = (rotary_emb_cos, rotary_emb_sin)
 
         # 5. Transformer blocks with face adapter integration
         for block_idx, block in enumerate(self.blocks):
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                hidden_states = self._gradient_checkpointing_func(
-                    block, hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
-                )
-            else:
-                hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+            hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
 
             # Face adapter integration: apply after every 5th block (0, 5, 10, 15, ...)
             if block_idx % self.config.inject_face_latents_blocks == 0:
                 face_adapter_block_idx = block_idx // self.config.inject_face_latents_blocks
+                (hidden_states,) = sequence_parallel_unshard(
+                    (hidden_states,), seq_dims=(1,), seq_lens=(original_seq_len,)
+                )
                 face_adapter_output = self.face_adapter[face_adapter_block_idx](hidden_states, motion_vec)
                 face_adapter_output = face_adapter_output.to(device=hidden_states.device)
                 hidden_states = face_adapter_output + hidden_states
+                (hidden_states,) = sequence_parallel_shard((hidden_states,), seq_dims=(1,))
 
-        (hidden_states,) = sequence_parallel_unshard([hidden_states], seq_dims=[1], seq_lens=[original_seq_len])
+        (hidden_states,) = sequence_parallel_unshard((hidden_states,), seq_dims=(1,), seq_lens=(original_seq_len,))
 
         # 6. Output norm, projection & unpatchify
         # batch_size, inner_dim

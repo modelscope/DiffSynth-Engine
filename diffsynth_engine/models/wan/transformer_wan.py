@@ -26,7 +26,7 @@ from diffusers.models.normalization import FP32LayerNorm
 
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
-from diffsynth_engine.layers.attention import USPAttention
+from diffsynth_engine.layers.attention import LocalAttention, USPAttention
 from diffsynth_engine.models.base import DiffusionModel
 from diffsynth_engine.utils import logging
 
@@ -101,7 +101,8 @@ class WanAttention(nn.Module):
             self.norm_added_k = nn.RMSNorm(dim_head * heads, eps=eps)
 
         forward_context = get_forward_context()
-        self.usp_attn = USPAttention(
+        attn_cls = LocalAttention if cross_attention_dim_head is not None else USPAttention
+        self.attn = attn_cls(
             num_heads=heads,
             head_size=dim_head,
             attn_type=forward_context.attn_type,
@@ -154,12 +155,12 @@ class WanAttention(nn.Module):
             key_img = key_img.unflatten(2, (self.heads, -1))
             value_img = value_img.unflatten(2, (self.heads, -1))
 
-            hidden_states_img = self.usp_attn(query, key_img, value_img)
+            hidden_states_img = self.attn(query, key_img, value_img)
             hidden_states_img = hidden_states_img.flatten(2, 3)
             hidden_states_img = hidden_states_img.type_as(query)
 
-        # Self attention
-        hidden_states = self.usp_attn(query, key, value, attn_mask=attention_mask)
+        # Attention
+        hidden_states = self.attn(query, key, value, attn_mask=attention_mask)
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.type_as(query)
 
@@ -491,8 +492,6 @@ class WanTransformer3DModel(DiffusionModel):
         self.proj_out = nn.Linear(inner_dim, out_channels * math.prod(patch_size))
         self.scale_shift_table = nn.Parameter(torch.randn(1, 2, inner_dim) / inner_dim**0.5)
 
-        self.gradient_checkpointing = False
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -555,22 +554,16 @@ class WanTransformer3DModel(DiffusionModel):
 
         rotary_emb_cos, rotary_emb_sin = rotary_emb
         hidden_states, rotary_emb_cos, rotary_emb_sin = sequence_parallel_shard(
-            [hidden_states, rotary_emb_cos, rotary_emb_sin],
-            seq_dims=[1, 1, 1],
+            (hidden_states, rotary_emb_cos, rotary_emb_sin),
+            seq_dims=(1, 1, 1),
         )
         rotary_emb = (rotary_emb_cos, rotary_emb_sin)
 
         # 4. Transformer blocks
-        if torch.is_grad_enabled() and self.gradient_checkpointing:
-            for block in self.blocks:
-                hidden_states = self._gradient_checkpointing_func(
-                    block, hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
-                )
-        else:
-            for block in self.blocks:
-                hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+        for block in self.blocks:
+            hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
 
-        (hidden_states,) = sequence_parallel_unshard([hidden_states], seq_dims=[1], seq_lens=[original_seq_len])
+        (hidden_states,) = sequence_parallel_unshard((hidden_states,), seq_dims=(1,), seq_lens=(original_seq_len,))
 
         # 5. Output norm, projection & unpatchify
         if temb.ndim == 3:

@@ -262,8 +262,6 @@ class WanVACETransformer3DModel(DiffusionModel):
         self.proj_out = nn.Linear(inner_dim, out_channels * math.prod(patch_size))
         self.scale_shift_table = nn.Parameter(torch.randn(1, 2, inner_dim) / inner_dim**0.5)
 
-        self.gradient_checkpointing = False
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -340,8 +338,8 @@ class WanVACETransformer3DModel(DiffusionModel):
 
         rotary_emb_cos, rotary_emb_sin = rotary_emb
         hidden_states, control_hidden_states, rotary_emb_cos, rotary_emb_sin = sequence_parallel_shard(
-            [hidden_states, control_hidden_states, rotary_emb_cos, rotary_emb_sin],
-            seq_dims=[1, 1, 1, 1],
+            (hidden_states, control_hidden_states, rotary_emb_cos, rotary_emb_sin),
+            seq_dims=(1, 1, 1, 1),
         )
         rotary_emb = (rotary_emb_cos, rotary_emb_sin)
 
@@ -361,7 +359,7 @@ class WanVACETransformer3DModel(DiffusionModel):
                 control_hint, scale = control_hidden_states_list.pop()
                 hidden_states = hidden_states + control_hint * scale
 
-        (hidden_states,) = sequence_parallel_unshard([hidden_states], seq_dims=[1], seq_lens=[original_seq_len])
+        (hidden_states,) = sequence_parallel_unshard((hidden_states,), seq_dims=(1,), seq_lens=(original_seq_len,))
 
         # 7. Output norm, projection & unpatchify
         shift, scale = (self.scale_shift_table.to(temb.device) + temb.unsqueeze(1)).chunk(2, dim=1)
