@@ -54,6 +54,7 @@ def sequence_parallel_unshard(
 
     unshard_tensors = []
     for tensor, seq_dim, seq_len in zip(tensors, seq_dims, seq_lens):
+        tensor = tensor.contiguous()
         unshard = sp_group.all_gather(tensor, dim=seq_dim)
         unshard = unshard.narrow(dim=seq_dim, start=0, length=seq_len)
         unshard_tensors.append(unshard)

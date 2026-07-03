@@ -29,14 +29,19 @@ class Pipeline:
         raise NotImplementedError()
 
     @staticmethod
-    def init_transformer(model_cls: Type[nn.Module], pipeline_config: PipelineConfig, empty_weights: bool = False):
+    def init_transformer(
+        model_cls: Type[nn.Module],
+        pipeline_config: PipelineConfig,
+        empty_weights: bool = False,
+        subfolder: str = "transformer",
+    ):
         use_fsdp = pipeline_config.use_fsdp and is_world_group_initialized()
 
         with set_forward_context(attn_type=pipeline_config.attn_type):
             with init_empty_weights():
                 config = model_cls.load_config(
                     pipeline_config.model_path,
-                    subfolder="transformer",
+                    subfolder=subfolder,
                     local_files_only=True,
                 )
                 model = model_cls.from_config(config)
@@ -49,13 +54,31 @@ class Pipeline:
                 fully_shard(block)
             fully_shard(model)
 
-        state_dict = load_model_weights(
-            pipeline_config.model_path,
-            subfolder="transformer",
-            device="cpu" if use_fsdp else pipeline_config.device,
-            dtype=pipeline_config.model_dtype,
-            broadcast_from_rank0=not use_fsdp,
-        )
+        load_device = "cpu" if use_fsdp else pipeline_config.device
+        model_dtype = pipeline_config.model_dtype
+        keep_in_fp32_modules = getattr(model_cls, "_keep_in_fp32_modules", None)
+        if model_dtype is not None and model_dtype != torch.float32 and keep_in_fp32_modules:
+            # avoid precision loss: keep modules (time embedder, modulation, norms) in fp32
+            state_dict = load_model_weights(
+                pipeline_config.model_path,
+                subfolder=subfolder,
+                device=load_device,
+                dtype=None,
+                broadcast_from_rank0=not use_fsdp,
+            )
+            for k, v in state_dict.items():
+                if any(m in k.split(".") for m in keep_in_fp32_modules):
+                    state_dict[k] = v.to(dtype=torch.float32)
+                else:
+                    state_dict[k] = v.to(dtype=model_dtype)
+        else:
+            state_dict = load_model_weights(
+                pipeline_config.model_path,
+                subfolder=subfolder,
+                device=load_device,
+                dtype=model_dtype,
+                broadcast_from_rank0=not use_fsdp,
+            )
 
         if use_fsdp:
             set_model_state_dict(
@@ -76,6 +99,7 @@ class Pipeline:
         pipeline_config: PipelineConfig,
         key_mapping: dict = None,
         empty_weights: bool = False,
+        strict: bool = True,
     ):
         use_fsdp = pipeline_config.use_fsdp and is_world_group_initialized()
 
@@ -91,14 +115,21 @@ class Pipeline:
             return model
 
         if use_fsdp:
-            for layer in model.model.language_model.layers:
+            if hasattr(model, "model") and hasattr(model.model, "language_model"):
+                layers = model.model.language_model.layers
+            elif hasattr(model, "encoder") and hasattr(model.encoder, "block"):
+                layers = model.encoder.block
+            else:
+                raise ValueError(f"Unsupported text encoder model for FSDP: {type(model).__name__}")
+            for layer in layers:
                 fully_shard(layer)
             fully_shard(model)
 
+        load_device = "cpu" if use_fsdp else pipeline_config.device
         state_dict = load_model_weights(
             pipeline_config.model_path,
             subfolder="text_encoder",
-            device="cpu" if use_fsdp else pipeline_config.device,
+            device=load_device,
             dtype=pipeline_config.text_encoder_dtype,
             broadcast_from_rank0=not use_fsdp,
         )
@@ -110,10 +141,14 @@ class Pipeline:
             set_model_state_dict(
                 model,
                 state_dict,
-                options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True),
+                options=StateDictOptions(
+                    full_state_dict=True,
+                    broadcast_from_rank0=True,
+                    strict=strict,
+                ),
             )
         else:
-            model.load_state_dict(state_dict, strict=True, assign=True)
+            model.load_state_dict(state_dict, strict=strict, assign=True)
             model.to(device=pipeline_config.device)
 
         del state_dict
@@ -167,5 +202,3 @@ class Pipeline:
 
     def set_progress_bar_config(self, **kwargs):
         self._progress_bar_config = kwargs
-
-    # TODO: preprocess & postprocess & LoRA
