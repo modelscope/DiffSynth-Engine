@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import math
-from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -27,7 +26,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
-from diffsynth_engine.layers.attention import USPAttention
+from diffsynth_engine.layers.attention import LocalAttention, USPAttention
 from diffsynth_engine.models.base import DiffusionModel
 from diffsynth_engine.utils import logging
 
@@ -49,24 +48,23 @@ def apply_rotary_emb(x_in: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tenso
 
 def _linear_with_batch_padding(module: nn.Module, input_tensor: torch.Tensor, min_batch_size: int = 2) -> torch.Tensor:
     """
-    Run a Linear (or Sequential containing Linear) with batch padding to align CUDA kernel paths.
+    Run a Linear (or Sequential containing Linear) with batch padding.
 
-    When bsz=1, PyTorch 2.10.0's addmm routes through cublas::gemm (_badd kernel)
-    instead of cublasLt (_bias kernel) because mat1_sizes[0]==1 fails the
-    isInputCompliesAddmmCudaLt check. By padding to bsz>=2, we ensure the same
-    cublasLt path regardless of batch size, eliminating BF16 accumulation differences.
+    In PyTorch 2.10 and later, torch.addmm dispatches to cuBLAS GEMM when batch_size == 1, but dispatches
+    to cublasLtMatmul with a fused bias epilogue when batch_size > 1. In earlier PyTorch versions, it always
+    dispatches to cublasLtMatmul. Batch padding avoids computation precision differences.
     """
-    if input_tensor.shape[0] < min_batch_size:
-        pad_count = min_batch_size - input_tensor.shape[0]
-        padded = torch.cat([input_tensor, input_tensor[-1:].expand(pad_count, *input_tensor.shape[1:])])
+    batch_size = input_tensor.shape[0]
+    if batch_size < min_batch_size:
+        pad_batch_size = min_batch_size - batch_size
+        padding = input_tensor[-1:].expand(pad_batch_size, *input_tensor.shape[1:])
+        padded = torch.cat([input_tensor, padding])
         result = module(padded)
-        return result[: input_tensor.shape[0]]
+        return result[:batch_size]
     return module(input_tensor)
 
 
 class TimestepEmbedder(nn.Module):
-    """Embeds scalar timesteps into vector representations via sinusoidal frequency encoding + MLP."""
-
     def __init__(self, out_size, mid_size=None, frequency_embedding_size=256):
         super().__init__()
         if mid_size is None:
@@ -76,6 +74,7 @@ class TimestepEmbedder(nn.Module):
             nn.SiLU(),
             nn.Linear(mid_size, out_size, bias=True),
         )
+
         self.frequency_embedding_size = frequency_embedding_size
 
     @staticmethod
@@ -104,11 +103,6 @@ class TimestepEmbedder(nn.Module):
 
 
 class ZImageSingleStreamAttention(nn.Module):
-    """
-    Single-stream self-attention for Z-Image, replacing diffusers Attention + ZSingleStreamAttnProcessor.
-    Uses USPAttention for the core attention computation.
-    """
-
     def __init__(
         self,
         dim: int,
@@ -116,6 +110,7 @@ class ZImageSingleStreamAttention(nn.Module):
         n_kv_heads: int,
         qk_norm: bool = True,
         norm_eps: float = 1e-5,
+        use_usp: bool = False,
     ):
         super().__init__()
         self.heads = n_heads
@@ -125,10 +120,8 @@ class ZImageSingleStreamAttention(nn.Module):
         self.to_k = nn.Linear(dim, dim, bias=False)
         self.to_v = nn.Linear(dim, dim, bias=False)
 
-        # Keep to_out as ModuleList to match diffusers weight names: attention.to_out.0.weight
         self.to_out = nn.ModuleList([nn.Linear(dim, dim, bias=False)])
 
-        # QK normalization
         if qk_norm:
             self.norm_q = RMSNorm(self.head_dim, eps=norm_eps)
             self.norm_k = RMSNorm(self.head_dim, eps=norm_eps)
@@ -136,9 +129,9 @@ class ZImageSingleStreamAttention(nn.Module):
             self.norm_q = None
             self.norm_k = None
 
-        # USPAttention for attention computation with sequence parallel support
         forward_context = get_forward_context()
-        self.usp_attn = USPAttention(
+        attn_cls = USPAttention if use_usp else LocalAttention
+        self.attn = attn_cls(
             num_heads=n_heads,
             head_size=self.head_dim,
             attn_type=forward_context.attn_type,
@@ -147,8 +140,8 @@ class ZImageSingleStreamAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        freqs_cis: torch.Tensor | None = None,
     ) -> torch.Tensor:
         query = self.to_q(hidden_states)
         key = self.to_k(hidden_states)
@@ -165,7 +158,7 @@ class ZImageSingleStreamAttention(nn.Module):
         if self.norm_k is not None:
             key = self.norm_k(key)
 
-        # Apply RoPE (complex form)
+        # Apply RoPE
         if freqs_cis is not None:
             query = apply_rotary_emb(query, freqs_cis)
             key = apply_rotary_emb(key, freqs_cis)
@@ -174,12 +167,11 @@ class ZImageSingleStreamAttention(nn.Module):
         dtype = query.dtype
         query, key = query.to(dtype), key.to(dtype)
 
-        # Expand 2D bool mask [B, S] to 4D [B, 1, 1, S] for SDPA
+        # [B, S] -> [B, 1, 1, S]
         if attention_mask is not None and attention_mask.ndim == 2:
             attention_mask = attention_mask[:, None, None, :]
 
-        # USPAttention: [B, S, H, D] -> [B, S, H, D]
-        hidden_states = self.usp_attn(query, key, value, attn_mask=attention_mask)
+        hidden_states = self.attn(query, key, value, attn_mask=attention_mask)
 
         # [B, S, H, D] -> [B, S, H*D]
         hidden_states = hidden_states.flatten(2, 3)
@@ -194,18 +186,11 @@ def select_per_token(
     noise_mask: torch.Tensor,
     seq_len: int,
 ) -> torch.Tensor:
-    """Select per-token values based on noise mask for omni mode modulation.
-
-    Note: diffsynth-engine uses mask*val + (1-mask)*val arithmetic instead of
-    diffusers' torch.where + unsqueeze/expand approach, but produces equivalent results.
-    """
     mask = noise_mask[:, :seq_len].unsqueeze(-1).float()
     return value_noisy * mask + value_clean * (1.0 - mask)
 
 
 class FeedForward(nn.Module):
-    """SwiGLU-style feed-forward network (w1/w2/w3 structure)."""
-
     def __init__(self, dim: int, hidden_dim: int):
         super().__init__()
         self.w1 = nn.Linear(dim, hidden_dim, bias=False)
@@ -229,6 +214,7 @@ class ZImageTransformerBlock(nn.Module):
         norm_eps: float,
         qk_norm: bool,
         modulation: bool = True,
+        use_usp: bool = False,
     ):
         super().__init__()
         self.dim = dim
@@ -240,6 +226,7 @@ class ZImageTransformerBlock(nn.Module):
             n_kv_heads=n_kv_heads,
             qk_norm=qk_norm,
             norm_eps=1e-5,
+            use_usp=use_usp,
         )
 
         self.feed_forward = FeedForward(dim=dim, hidden_dim=int(dim / 3 * 8))
@@ -260,10 +247,10 @@ class ZImageTransformerBlock(nn.Module):
         x: torch.Tensor,
         attn_mask: torch.Tensor,
         freqs_cis: torch.Tensor,
-        adaln_input: Optional[torch.Tensor] = None,
-        noise_mask: Optional[torch.Tensor] = None,
-        adaln_noisy: Optional[torch.Tensor] = None,
-        adaln_clean: Optional[torch.Tensor] = None,
+        adaln_input: torch.Tensor | None = None,
+        noise_mask: torch.Tensor | None = None,
+        adaln_noisy: torch.Tensor | None = None,
+        adaln_clean: torch.Tensor | None = None,
     ):
         if self.modulation:
             seq_len = x.shape[1]
@@ -346,8 +333,8 @@ class RopeEmbedder:
     def __init__(
         self,
         theta: float = 256.0,
-        axes_dims: List[int] = (16, 56, 56),
-        axes_lens: List[int] = (64, 128, 128),
+        axes_dims: list[int] = (16, 56, 56),
+        axes_lens: list[int] = (64, 128, 128),
     ):
         self.theta = theta
         self.axes_dims = axes_dims
@@ -356,7 +343,7 @@ class RopeEmbedder:
         self.freqs_cis = None
 
     @staticmethod
-    def precompute_freqs_cis(dim: List[int], end: List[int], theta: float = 256.0):
+    def precompute_freqs_cis(dim: list[int], end: list[int], theta: float = 256.0):
         with torch.device("cpu"):
             freqs_cis = []
             for i, (d, e) in enumerate(zip(dim, end)):
@@ -389,6 +376,8 @@ class RopeEmbedder:
 
 
 class ZImageTransformer2DModel(DiffusionModel):
+    _repeated_blocks = ["ZImageTransformerBlock"]
+
     @register_to_config
     def __init__(
         self,
@@ -443,6 +432,7 @@ class ZImageTransformer2DModel(DiffusionModel):
                     norm_eps,
                     qk_norm,
                     modulation=True,
+                    use_usp=True,
                 )
                 for layer_id in range(n_refiner_layers)
             ]
@@ -490,14 +480,13 @@ class ZImageTransformer2DModel(DiffusionModel):
             self.siglip_refiner = None
             self.siglip_pad_token = None
 
-        # Pad tokens forced on CPU for meta device compatibility
         with torch.device("cpu"):
             self.x_pad_token = nn.Parameter(torch.empty((1, dim)))
             self.cap_pad_token = nn.Parameter(torch.empty((1, dim)))
 
         self.layers = nn.ModuleList(
             [
-                ZImageTransformerBlock(layer_id, dim, n_heads, n_kv_heads, norm_eps, qk_norm)
+                ZImageTransformerBlock(layer_id, dim, n_heads, n_kv_heads, norm_eps, qk_norm, use_usp=True)
                 for layer_id in range(n_layers)
             ]
         )
@@ -510,12 +499,12 @@ class ZImageTransformer2DModel(DiffusionModel):
 
     def unpatchify(
         self,
-        x: List[torch.Tensor],
-        size: List[Tuple],
+        x: list[torch.Tensor],
+        size: list[tuple],
         patch_size,
         f_patch_size,
-        x_pos_offsets: Optional[List[Tuple[int, int]]] = None,
-    ) -> List[torch.Tensor]:
+        x_pos_offsets: list[tuple[int, int]] | None = None,
+    ) -> list[torch.Tensor]:
         pH = pW = patch_size
         pF = f_patch_size
         bsz = len(x)
@@ -580,10 +569,10 @@ class ZImageTransformer2DModel(DiffusionModel):
     def _pad_with_ids(
         self,
         feat: torch.Tensor,
-        pos_grid_size: Tuple,
-        pos_start: Tuple,
+        pos_grid_size: tuple,
+        pos_start: tuple,
         device: torch.device,
-        noise_mask_val: Optional[int] = None,
+        noise_mask_val: int | None = None,
     ):
         """Pad feature to SEQ_MULTI_OF, create position IDs and pad mask."""
         ori_len = len(feat)
@@ -615,7 +604,7 @@ class ZImageTransformer2DModel(DiffusionModel):
         return padded_feat, pos_ids, pad_mask, total_len, noise_mask
 
     def patchify_and_embed(
-        self, all_image: List[torch.Tensor], all_cap_feats: List[torch.Tensor], patch_size: int, f_patch_size: int
+        self, all_image: list[torch.Tensor], all_cap_feats: list[torch.Tensor], patch_size: int, f_patch_size: int
     ):
         """Patchify for basic mode: single image per batch item."""
         device = all_image[0].device
@@ -653,12 +642,12 @@ class ZImageTransformer2DModel(DiffusionModel):
 
     def patchify_and_embed_omni(
         self,
-        all_x: List[List[torch.Tensor]],
-        all_cap_feats: List[List[torch.Tensor]],
-        all_siglip_feats: List[List[torch.Tensor]],
+        all_x: list[list[torch.Tensor]],
+        all_cap_feats: list[list[torch.Tensor]],
+        all_siglip_feats: list[list[torch.Tensor]],
         patch_size: int,
         f_patch_size: int,
-        images_noise_mask: List[List[int]],
+        images_noise_mask: list[list[int]],
     ):
         """Patchify for omni mode: multiple images per batch item with noise masks."""
         bsz = len(all_x)
@@ -792,11 +781,11 @@ class ZImageTransformer2DModel(DiffusionModel):
 
     def _prepare_sequence(
         self,
-        feats: List[torch.Tensor],
-        pos_ids: List[torch.Tensor],
-        inner_pad_mask: List[torch.Tensor],
+        feats: list[torch.Tensor],
+        pos_ids: list[torch.Tensor],
+        inner_pad_mask: list[torch.Tensor],
         pad_token: torch.nn.Parameter,
-        noise_mask: Optional[List[List[int]]] = None,
+        noise_mask: list[list[int]] | None = None,
         device: torch.device = None,
     ):
         """Prepare sequence: apply pad token, RoPE embed, pad to batch, create attention mask."""
@@ -806,7 +795,8 @@ class ZImageTransformer2DModel(DiffusionModel):
 
         # Pad token
         feats_cat = torch.cat(feats, dim=0)
-        feats_cat[torch.cat(inner_pad_mask)] = pad_token
+        mask = torch.cat(inner_pad_mask).unsqueeze(-1)
+        feats_cat = torch.where(mask, pad_token, feats_cat)
         feats = list(feats_cat.split(item_seqlens, dim=0))
 
         # RoPE
@@ -836,16 +826,16 @@ class ZImageTransformer2DModel(DiffusionModel):
         self,
         x: torch.Tensor,
         x_freqs: torch.Tensor,
-        x_seqlens: List[int],
-        x_noise_mask: Optional[List[List[int]]],
+        x_seqlens: list[int],
+        x_noise_mask: list[list[int]] | None,
         cap: torch.Tensor,
         cap_freqs: torch.Tensor,
-        cap_seqlens: List[int],
-        cap_noise_mask: Optional[List[List[int]]],
-        siglip: Optional[torch.Tensor],
-        siglip_freqs: Optional[torch.Tensor],
-        siglip_seqlens: Optional[List[int]],
-        siglip_noise_mask: Optional[List[List[int]]],
+        cap_seqlens: list[int],
+        cap_noise_mask: list[list[int]] | None,
+        siglip: torch.Tensor | None,
+        siglip_freqs: torch.Tensor | None,
+        siglip_seqlens: list[int] | None,
+        siglip_noise_mask: list[list[int]] | None,
         omni_mode: bool,
         device: torch.device,
     ):
@@ -915,19 +905,41 @@ class ZImageTransformer2DModel(DiffusionModel):
 
     def forward(
         self,
-        x: Union[List[torch.Tensor], List[List[torch.Tensor]]],
-        t,
-        cap_feats: Union[List[torch.Tensor], List[List[torch.Tensor]]],
+        x: list[torch.Tensor, list[list[torch.Tensor]]],
+        t: torch.Tensor,
+        cap_feats: list[torch.Tensor, list[list[torch.Tensor]]],
         return_dict: bool = True,
-        controlnet_block_samples: Optional[Dict[int, torch.Tensor]] = None,
-        siglip_feats: Optional[List[List[torch.Tensor]]] = None,
-        image_noise_mask: Optional[List[List[int]]] = None,
+        controlnet_block_samples: dict[int, torch.Tensor] | None = None,
+        siglip_feats: list[list[torch.Tensor]] | None = None,
+        image_noise_mask: list[list[int]] | None = None,
         patch_size: int = 2,
         f_patch_size: int = 1,
     ):
         """
         Flow: patchify -> t_embed -> x_embed -> x_refine -> cap_embed -> cap_refine
               -> [siglip_embed -> siglip_refine] -> build_unified -> main_layers -> final_layer -> unpatchify
+
+        Args:
+            x (`list` of `torch.Tensor` or nested `list` of `torch.Tensor`):
+                Input latents. A flat list when running in standard mode, or a nested list when running in omni mode.
+            t (`torch.Tensor`):
+                Used to indicate denoising step.
+            cap_feats (`list` of `torch.Tensor` or nested `list` of `torch.Tensor`):
+                Conditional caption embeddings (embeddings computed from the input conditions such as prompts) to use.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether or not to return a [`~models.transformer_2d.Transformer2DModelOutput`] instead of a plain
+                tuple.
+            controlnet_block_samples (`dict` of `int` to `torch.Tensor`, *optional*):
+                A mapping from block index to tensor that if specified are added to the residuals of transformer
+                blocks.
+            siglip_feats (`list` of `list` of `torch.Tensor`, *optional*):
+                Optional SigLIP image features used as additional conditioning.
+            image_noise_mask (`list` of `list` of `int`, *optional*):
+                Per-image noise masks indicating noisy vs. clean tokens in omni mode.
+            patch_size (`int`, *optional*, defaults to 2):
+                Spatial patch size used to patchify the input latents.
+            f_patch_size (`int`, *optional*, defaults to 1):
+                Temporal patch size used to patchify the input latents.
         """
         assert patch_size in self.all_patch_size and f_patch_size in self.all_f_patch_size
         omni_mode = isinstance(x[0], list)
@@ -980,8 +992,11 @@ class ZImageTransformer2DModel(DiffusionModel):
             list(x.split(x_seqlens, dim=0)), x_pos_ids, x_pad_mask, self.x_pad_token, x_noise_mask, device
         )
 
+        x_seq_len = x.shape[1]
+        (x, x_freqs, x_noise_tensor) = sequence_parallel_shard((x, x_freqs, x_noise_tensor), seq_dims=(1, 1, 1))
         for layer in self.noise_refiner:
             x = layer(x, x_mask, x_freqs, adaln_input, x_noise_tensor, t_noisy, t_clean)
+        x, x_freqs = sequence_parallel_unshard((x, x_freqs), seq_dims=(1, 1), seq_lens=(x_seq_len, x_seq_len))
 
         # Cap embed & refine
         cap_seqlens = [len(ci) for ci in cap_feats]
@@ -1028,8 +1043,7 @@ class ZImageTransformer2DModel(DiffusionModel):
             device,
         )
 
-        # Sequence parallel shard before main transformer layers
-        original_unified_seq_len = unified.shape[1]
+        unified_seq_len = unified.shape[1]
         (unified, unified_freqs, unified_noise_tensor) = sequence_parallel_shard(
             (unified, unified_freqs, unified_noise_tensor), seq_dims=(1, 1, 1)
         )
@@ -1040,10 +1054,8 @@ class ZImageTransformer2DModel(DiffusionModel):
             if controlnet_block_samples is not None and layer_idx in controlnet_block_samples:
                 unified = unified + controlnet_block_samples[layer_idx]
 
-        # Sequence parallel unshard after main transformer layers
-        (unified,) = sequence_parallel_unshard((unified,), seq_dims=(1,), seq_lens=(original_unified_seq_len,))
+        (unified,) = sequence_parallel_unshard((unified,), seq_dims=(1,), seq_lens=(unified_seq_len,))
 
-        # Final layer
         unified = (
             self.all_final_layer[f"{patch_size}-{f_patch_size}"](
                 unified, noise_mask=unified_noise_tensor, c_noisy=t_noisy, c_clean=t_clean

@@ -697,6 +697,8 @@ class QwenImageTransformer2DModel(DiffusionModel):
             The dimensions to use for the rotary positional embeddings.
     """
 
+    _repeated_blocks = ["QwenImageTransformerBlock"]
+
     @register_to_config
     def __init__(
         self,

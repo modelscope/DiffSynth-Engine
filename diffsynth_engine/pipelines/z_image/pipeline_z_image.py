@@ -16,25 +16,23 @@
 
 import inspect
 import os
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable
 
 import torch
-from accelerate import init_empty_weights
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.models.autoencoders import AutoencoderKL
 from diffusers.pipelines.z_image.pipeline_output import ZImagePipelineOutput
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils.torch_utils import randn_tensor
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
+from transformers import AutoTokenizer, PreTrainedModel, Qwen3ForCausalLM
 
 from diffsynth_engine.configs.z_image import ZImagePipelineConfig
 from diffsynth_engine.distributed.parallel_state import get_cfg_group, model_parallel_is_initialized
 from diffsynth_engine.forward_context import set_forward_context
-from diffsynth_engine.layers.attention import get_attn_backend
 from diffsynth_engine.models.z_image import ZImageTransformer2DModel
 from diffsynth_engine.pipelines.base import Pipeline
+from diffsynth_engine.registry import get_attn_backend
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.load_utils import fix_state_dict_key, load_model_weights
 
 logger = logging.get_logger(__name__)
 
@@ -54,10 +52,10 @@ def calculate_shift(
 
 def retrieve_timesteps(
     scheduler,
-    num_inference_steps: Optional[int] = None,
-    device: Optional[Union[str, torch.device]] = None,
-    timesteps: Optional[List[int]] = None,
-    sigmas: Optional[List[float]] = None,
+    num_inference_steps: int | None = None,
+    device: str | torch.device | None = None,
+    timesteps: list[int] | None = None,
+    sigmas: list[float] | None = None,
     **kwargs,
 ):
     r"""
@@ -72,15 +70,15 @@ def retrieve_timesteps(
             must be `None`.
         device (`str` or `torch.device`, *optional*):
             The device to which the timesteps should be moved to. If `None`, the timesteps are not moved.
-        timesteps (`List[int]`, *optional*):
+        timesteps (`list[int]`, *optional*):
             Custom timesteps used to override the timestep spacing strategy of the scheduler. If `timesteps` is passed,
             `num_inference_steps` and `sigmas` must be `None`.
-        sigmas (`List[float]`, *optional*):
+        sigmas (`list[float]`, *optional*):
             Custom sigmas used to override the timestep spacing strategy of the scheduler. If `sigmas` is passed,
             `num_inference_steps` and `timesteps` must be `None`.
 
     Returns:
-        `Tuple[torch.Tensor, int]`: A tuple where the first element is the timestep schedule from the scheduler and the
+        `tuple[torch.Tensor, int]`: A tuple where the first element is the timestep schedule from the scheduler and the
         second element is the number of inference steps.
     """
     if timesteps is not None and sigmas is not None:
@@ -134,11 +132,7 @@ class ZImagePipeline(Pipeline):
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if self.vae is not None else 8
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor * 2)
 
-        head_dim = transformer.config.dim // transformer.config.n_heads
-        self.attn_backend = get_attn_backend(
-            head_size=head_dim,
-            attn_type=pipeline_config.attn_type,
-        )
+        self.attn_backend = get_attn_backend(pipeline_config.attn_type)
 
     @classmethod
     def from_pretrained(cls, model_path_or_config: str | ZImagePipelineConfig):
@@ -160,7 +154,7 @@ class ZImagePipeline(Pipeline):
             raise FileNotFoundError(f"Model path not found: {pipeline_config.model_path}")
 
         # Load transformer
-        transformer = cls.init_transformer(pipeline_config)
+        transformer = Pipeline.init_transformer(ZImageTransformer2DModel, pipeline_config)
 
         # Load scheduler
         scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
@@ -169,10 +163,15 @@ class ZImagePipeline(Pipeline):
         )
 
         # Load VAE
-        vae = cls.init_vae(pipeline_config)
+        vae = Pipeline.init_vae(AutoencoderKL, pipeline_config)
 
         # Load text encoder
-        text_encoder = cls.init_text_encoder(pipeline_config)
+        text_encoder = Pipeline.init_text_encoder(
+            Qwen3ForCausalLM,
+            pipeline_config,
+            key_mapping=getattr(Qwen3ForCausalLM, "_checkpoint_conversion_mapping", None),
+            strict=False,
+        )
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -190,86 +189,14 @@ class ZImagePipeline(Pipeline):
             transformer=transformer,
         )
 
-    @staticmethod
-    def init_transformer(pipeline_config: ZImagePipelineConfig, empty_weights: bool = False):
-        logger.info("Initializing transformer...")
-        with set_forward_context(attn_type=pipeline_config.attn_type):
-            if empty_weights:
-                with init_empty_weights():
-                    config_dict = ZImageTransformer2DModel.load_config(
-                        pipeline_config.model_path,
-                        subfolder="transformer",
-                        local_files_only=True,
-                    )
-                    model = ZImageTransformer2DModel.from_config(config_dict)
-            else:
-                model = ZImageTransformer2DModel.from_pretrained(
-                    pipeline_config.model_path,
-                    subfolder="transformer",
-                    device=pipeline_config.device,
-                    dtype=pipeline_config.model_dtype,
-                )
-        return model
-
-    @staticmethod
-    def init_text_encoder(pipeline_config: ZImagePipelineConfig, empty_weights: bool = False):
-        logger.info("Initializing text encoder...")
-        with init_empty_weights():
-            config = AutoConfig.from_pretrained(
-                pipeline_config.model_path,
-                subfolder="text_encoder",
-                local_files_only=True,
-            )
-            model = AutoModelForCausalLM.from_config(config)
-
-        if empty_weights:
-            return model
-
-        state_dict = load_model_weights(
-            pipeline_config.model_path,
-            subfolder="text_encoder",
-            device=pipeline_config.device,
-            dtype=pipeline_config.text_encoder_dtype,
-        )
-        if key_mapping := getattr(model, "_checkpoint_conversion_mapping", None):
-            state_dict = fix_state_dict_key(state_dict, key_mapping)
-        model.load_state_dict(state_dict, strict=False, assign=True)
-        model.tie_weights()
-        model.to(device=pipeline_config.device)
-        return model
-
-    @staticmethod
-    def init_vae(pipeline_config: ZImagePipelineConfig, empty_weights: bool = False):
-        logger.info("Initializing VAE...")
-        with init_empty_weights():
-            config_dict = AutoencoderKL.load_config(
-                pipeline_config.model_path,
-                subfolder="vae",
-                local_files_only=True,
-            )
-            model = AutoencoderKL.from_config(config_dict)
-
-        if empty_weights:
-            return model
-
-        state_dict = load_model_weights(
-            pipeline_config.model_path,
-            subfolder="vae",
-            device=pipeline_config.device,
-            dtype=pipeline_config.vae_dtype,
-        )
-        model.load_state_dict(state_dict, strict=True, assign=True)
-        model.to(device=pipeline_config.device)
-        return model
-
     def encode_prompt(
         self,
-        prompt: Union[str, List[str]],
-        device: Optional[torch.device] = None,
+        prompt: str | list[str],
+        device: torch.device | None = None,
         do_classifier_free_guidance: bool = True,
-        negative_prompt: Optional[Union[str, List[str]]] = None,
-        prompt_embeds: Optional[List[torch.FloatTensor]] = None,
-        negative_prompt_embeds: Optional[List[torch.FloatTensor]] = None,
+        negative_prompt: str | list[str] | None = None,
+        prompt_embeds: list[torch.FloatTensor] | None = None,
+        negative_prompt_embeds: torch.FloatTensor | None = None,
         max_sequence_length: int = 512,
     ):
         prompt = [prompt] if isinstance(prompt, str) else prompt
@@ -298,11 +225,11 @@ class ZImagePipeline(Pipeline):
 
     def _encode_prompt(
         self,
-        prompt: Union[str, List[str]],
-        device: Optional[torch.device] = None,
-        prompt_embeds: Optional[List[torch.FloatTensor]] = None,
+        prompt: str | list[str],
+        device: torch.device | None = None,
+        prompt_embeds: list[torch.FloatTensor] | None = None,
         max_sequence_length: int = 512,
-    ) -> List[torch.FloatTensor]:
+    ) -> list[torch.FloatTensor]:
         device = device or self.device
 
         if prompt_embeds is not None:
@@ -385,8 +312,8 @@ class ZImagePipeline(Pipeline):
         self,
         latents: torch.Tensor,
         timestep: torch.Tensor,
-        prompt_embeds: List[torch.FloatTensor],
-        negative_prompt_embeds: List[torch.FloatTensor],
+        prompt_embeds: list[torch.FloatTensor],
+        negative_prompt_embeds: list[torch.FloatTensor],
         attn_metadata,
         apply_cfg: bool,
         guidance_scale: float,
@@ -504,32 +431,32 @@ class ZImagePipeline(Pipeline):
     @torch.no_grad()
     def __call__(
         self,
-        prompt: Union[str, List[str]] = None,
-        height: Optional[int] = None,
-        width: Optional[int] = None,
+        prompt: str | list[str] = None,
+        height: int | None = None,
+        width: int | None = None,
         num_inference_steps: int = 50,
-        sigmas: Optional[List[float]] = None,
+        sigmas: list[float] | None = None,
         guidance_scale: float = 5.0,
         cfg_normalization: bool = False,
         cfg_truncation: float = 1.0,
-        negative_prompt: Optional[Union[str, List[str]]] = None,
-        num_images_per_prompt: Optional[int] = 1,
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        latents: Optional[torch.FloatTensor] = None,
-        prompt_embeds: Optional[List[torch.FloatTensor]] = None,
-        negative_prompt_embeds: Optional[List[torch.FloatTensor]] = None,
-        output_type: Optional[str] = "pil",
+        negative_prompt: str | list[str] | None = None,
+        num_images_per_prompt: int | None = 1,
+        generator: torch.Generator | list[torch.Generator] | None = None,
+        latents: torch.FloatTensor | None = None,
+        prompt_embeds: list[torch.FloatTensor] | None = None,
+        negative_prompt_embeds: list[torch.FloatTensor] | None = None,
+        output_type: str | None = "pil",
         return_dict: bool = True,
-        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
-        callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
-        callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        joint_attention_kwargs: dict[str, Any] | None = None,
+        callback_on_step_end: Callable[[int, int], None] | None = None,
+        callback_on_step_end_tensor_inputs: list[str] = ["latents"],
         max_sequence_length: int = 512,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
 
         Args:
-            prompt (`str` or `List[str]`, *optional*):
+            prompt (`str` or `list[str]`, *optional*):
                 The prompt or prompts to guide the image generation. If not defined, one has to pass `prompt_embeds`.
                 instead.
             height (`int`, *optional*, defaults to 1024):
@@ -539,7 +466,7 @@ class ZImagePipeline(Pipeline):
             num_inference_steps (`int`, *optional*, defaults to 50):
                 The number of denoising steps. More denoising steps usually lead to a higher quality image at the
                 expense of slower inference.
-            sigmas (`List[float]`, *optional*):
+            sigmas (`list[float]`, *optional*):
                 Custom sigmas to use for the denoising process with schedulers which support a `sigmas` argument in
                 their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is passed
                 will be used.
@@ -553,23 +480,23 @@ class ZImagePipeline(Pipeline):
                 Whether to apply configuration normalization.
             cfg_truncation (`float`, *optional*, defaults to 1.0):
                 The truncation value for configuration.
-            negative_prompt (`str` or `List[str]`, *optional*):
+            negative_prompt (`str` or `list[str]`, *optional*):
                 The prompt or prompts not to guide the image generation. If not defined, one has to pass
                 `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
                 less than `1`).
             num_images_per_prompt (`int`, *optional*, defaults to 1):
                 The number of images to generate per prompt.
-            generator (`torch.Generator` or `List[torch.Generator]`, *optional*):
+            generator (`torch.Generator` or `list[torch.Generator]`, *optional*):
                 One or a list of [torch generator(s)](https://pytorch.org/docs/stable/generated/torch.Generator.html)
                 to make generation deterministic.
             latents (`torch.FloatTensor`, *optional*):
                 Pre-generated noisy latents, sampled from a Gaussian distribution, to be used as inputs for image
                 generation. Can be used to tweak the same generation with different prompts. If not provided, a latents
                 tensor will be generated by sampling using the supplied random `generator`.
-            prompt_embeds (`List[torch.FloatTensor]`, *optional*):
+            prompt_embeds (`list[torch.FloatTensor]`, *optional*):
                 Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
                 provided, text embeddings will be generated from `prompt` input argument.
-            negative_prompt_embeds (`List[torch.FloatTensor]`, *optional*):
+            negative_prompt_embeds (`list[torch.FloatTensor]`, *optional*):
                 Pre-generated negative text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
                 weighting. If not provided, negative_prompt_embeds will be generated from `negative_prompt` input
                 argument.
