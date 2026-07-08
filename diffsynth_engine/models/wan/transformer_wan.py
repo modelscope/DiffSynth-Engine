@@ -101,7 +101,7 @@ class WanAttention(nn.Module):
             self.norm_added_k = nn.RMSNorm(dim_head * heads, eps=eps)
 
         forward_context = get_forward_context()
-        attn_cls = LocalAttention if cross_attention_dim_head is not None else USPAttention
+        attn_cls = USPAttention if cross_attention_dim_head is None else LocalAttention
         self.attn = attn_cls(
             num_heads=heads,
             head_size=dim_head,
@@ -436,6 +436,7 @@ class WanTransformer3DModel(DiffusionModel):
 
     _keep_in_fp32_modules = ["time_embedder", "scale_shift_table", "norm1", "norm2", "norm3"]
     _keys_to_ignore_on_load_unexpected = ["norm_added_q"]
+    _repeated_blocks = ["WanTransformerBlock"]
 
     @register_to_config
     def __init__(

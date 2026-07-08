@@ -545,6 +545,7 @@ class WanAnimateTransformer3DModel(DiffusionModel):
         "motion_synthesis_weight",
     ]
     _keys_to_ignore_on_load_unexpected = ["norm_added_q"]
+    _repeated_blocks = ["WanTransformerBlock"]
 
     @register_to_config
     def __init__(

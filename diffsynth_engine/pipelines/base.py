@@ -50,8 +50,13 @@ class Pipeline:
             return model
 
         if use_fsdp:
-            for block in model.transformer_blocks:
-                fully_shard(block)
+            repeated_blocks = getattr(model, "_repeated_blocks", None)
+            if not repeated_blocks:
+                raise ValueError(f"`_repeated_blocks` is not defined for {type(model).__name__}")
+
+            for submodule in model.modules():
+                if submodule.__class__.__name__ in repeated_blocks:
+                    fully_shard(submodule)
             fully_shard(model)
 
         load_device = "cpu" if use_fsdp else pipeline_config.device
@@ -115,14 +120,16 @@ class Pipeline:
             return model
 
         if use_fsdp:
-            if hasattr(model, "model") and hasattr(model.model, "language_model"):
-                layers = model.model.language_model.layers
-            elif hasattr(model, "encoder") and hasattr(model.encoder, "block"):
-                layers = model.encoder.block
-            else:
-                raise ValueError(f"Unsupported text encoder model for FSDP: {type(model).__name__}")
-            for layer in layers:
-                fully_shard(layer)
+            if hasattr(model, "tie_weights"):
+                model.tie_weights()
+
+            no_split_modules = getattr(model, "_no_split_modules", None)
+            if not no_split_modules:
+                raise ValueError(f"`_no_split_modules` is not defined for {type(model).__name__}")
+
+            for submodule in model.modules():
+                if submodule.__class__.__name__ in no_split_modules:
+                    fully_shard(submodule)
             fully_shard(model)
 
         load_device = "cpu" if use_fsdp else pipeline_config.device
@@ -149,6 +156,8 @@ class Pipeline:
             )
         else:
             model.load_state_dict(state_dict, strict=strict, assign=True)
+            if hasattr(model, "tie_weights"):
+                model.tie_weights()
             model.to(device=pipeline_config.device)
 
         del state_dict

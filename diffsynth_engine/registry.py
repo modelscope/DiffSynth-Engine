@@ -23,6 +23,7 @@ _PIPELINES: dict[str, str] = {
     "WanImageToVideoPipeline": "diffsynth_engine.pipelines.wan.pipeline_wan_i2v:WanImageToVideoPipeline",
     "WanTextToVideoPipeline": "diffsynth_engine.pipelines.wan.pipeline_wan_t2v:WanTextToVideoPipeline",
     "WanVACEPipeline": "diffsynth_engine.pipelines.wan.pipeline_wan_vace:WanVACEPipeline",
+    "ZImagePipeline": "diffsynth_engine.pipelines.z_image.pipeline_z_image:ZImagePipeline",
 }
 
 _ATTENTION_BACKENDS: dict[str, str] = {
