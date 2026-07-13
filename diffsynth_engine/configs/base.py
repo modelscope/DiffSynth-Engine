@@ -37,7 +37,7 @@ class PipelineConfig:
     vae_tile_stride: int | Tuple[int, int] = (192, 192)
 
     # attention
-    attn_type: AttentionType | str = AttentionType.SDPA
+    attn_type: AttentionType | str | None = None  # None = auto-detect
     attn_params: Optional[AttentionParams] = None
 
     # parallelism
@@ -56,7 +56,8 @@ class PipelineConfig:
         return cls(**filtered_dict)
 
     def __post_init__(self):
-        self.attn_type = str(self.attn_type)
+        if self.attn_type is not None:
+            self.attn_type = str(self.attn_type)
         init_parallel_config(self)
         validate_attn_config(self)
 
