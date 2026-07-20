@@ -342,7 +342,7 @@ class BasePipeline:
         for model_name in self.model_names:
             model = getattr(self, model_name)
             if model is not None:
-                self._offload_param_dict[model_name] = offload_model_to_dict(model)
+                self._offload_param_dict[model_name] = offload_model_to_dict(model, self.device)
         self.offload_mode = "cpu_offload"
 
     def _enable_sequential_cpu_offload(self):
@@ -376,8 +376,7 @@ class BasePipeline:
         if not self.offload_mode:
             return
         if self.offload_mode == "sequential_cpu_offload":
-            # fresh the cuda cache
-            empty_cache()
+            empty_cache(self.device)
             return
 
         # offload unnecessary models to cpu
@@ -395,8 +394,7 @@ class BasePipeline:
                 )
             if model is not None and (p := next(model.parameters(), None)) is not None and p.device.type != self.device:
                 model.to(self.device)
-        # fresh the cuda cache
-        empty_cache()
+        empty_cache(self.device)
 
     def model_lifecycle_finish(self, model_names: List[str] | None = None):
         if not self.offload_to_disk or self.offload_mode is None:
@@ -409,7 +407,7 @@ class BasePipeline:
             setattr(self, model_name, None)
             print(f"model {model_name} has been deleted from memory")
             logger.info(f"model {model_name} has been deleted from memory")
-            empty_cache()
+            empty_cache(self.device)
 
     def compile(self):
         raise NotImplementedError(f"{self.__class__.__name__} does not support compile")

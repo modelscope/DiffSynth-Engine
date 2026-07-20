@@ -36,9 +36,9 @@ from diffsynth_engine.utils.constants import (
 )
 from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.flag import NUNCHAKU_AVAILABLE
+from diffsynth_engine.platforms.runtime import get_runtime_adapter
 
 
 logger = logging.get_logger(__name__)
@@ -145,6 +145,7 @@ class QwenImagePipeline(BasePipeline):
             dtype=config.model_dtype,
         )
         self.config = config
+        self.runtime_adapter = get_runtime_adapter(config.device, "qwen_image")
         # qwen image
         self.prompt_template_encode = "<|im_start|>system\nDescribe the image by detailing the color, shape, size, texture, quantity, text, spatial relationships of the objects and background:<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
         self.prompt_template_encode_start_idx = 34
@@ -216,12 +217,17 @@ class QwenImagePipeline(BasePipeline):
         else:
             config = model_path_or_config
 
+        runtime_adapter = get_runtime_adapter(config.device, "qwen_image")
+        if runtime_adapter.platform.name == "ascend":
+            runtime_adapter.validate_config(config)
+
         logger.info(f"loading state dict from {config.model_path} ...")
         model_state_dict = cls.load_model_checkpoint(
             config.model_path, device="cpu", dtype=config.model_dtype, convert_dtype=False
         )
 
         config = cls._setup_nunchaku_config(model_state_dict, config)
+        get_runtime_adapter(config.device, "qwen_image").validate_config(config)
 
         # for svd quant model fp4/int4 linear layers, do not convert dtype here
         if not config.use_nunchaku:
@@ -263,6 +269,7 @@ class QwenImagePipeline(BasePipeline):
     @classmethod
     def from_state_dict(cls, state_dicts: QwenImageStateDicts, config: QwenImagePipelineConfig) -> "QwenImagePipeline":
         config = cls._setup_nunchaku_config(state_dicts.model, config)
+        get_runtime_adapter(config.device, "qwen_image").validate_config(config)
 
         if config.parallelism > 1:
             pipe = ParallelWrapper(
@@ -312,6 +319,7 @@ class QwenImagePipeline(BasePipeline):
                     device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     relative_l1_threshold=config.fbcache_relative_l1_threshold,
+                    use_zero_cond_t=config.use_zero_cond_t,
                 )
             elif config.use_nunchaku:
                 if not NUNCHAKU_AVAILABLE:
@@ -338,9 +346,6 @@ class QwenImagePipeline(BasePipeline):
                     dtype=config.model_dtype,
                     use_zero_cond_t=config.use_zero_cond_t,
                 )
-            if config.use_fp8_linear and not config.use_nunchaku:
-                enable_fp8_linear(dit)
-
         pipe = cls(
             config=config,
             tokenizer=tokenizer,
@@ -350,6 +355,7 @@ class QwenImagePipeline(BasePipeline):
             vae=vae,
         )
         pipe.eval()
+        pipe.dit = pipe.runtime_adapter.prepare_component("dit", pipe.dit, config)
 
         if config.offload_mode is not None:
             pipe.enable_cpu_offload(config.offload_mode, config.offload_to_disk)
@@ -376,9 +382,10 @@ class QwenImagePipeline(BasePipeline):
         self.update_component(self.vae, state_dicts.vae, self.config.device, self.config.vae_dtype)
 
     def compile(self):
-        self.dit.compile_repeated_blocks()
+        self.dit = self.runtime_adapter.compile_component("dit", self.dit)
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
+        self.runtime_adapter.validate_dynamic_weights(self.config)
         assert self.config.tp_degree is None or self.config.tp_degree == 1, (
             "load LoRA is not allowed when tensor parallel is enabled; "
             "set tp_degree=None or tp_degree=1 during pipeline initialization"
@@ -515,6 +522,8 @@ class QwenImagePipeline(BasePipeline):
         batch_cfg: bool = False,
     ):
         if cfg_scale <= 1.0 or negative_prompt_emb is None:
+            if hasattr(self.dit, "set_cache_stream"):
+                self.dit.set_cache_stream(0)
             return self.predict_noise(
                 latents,
                 image_latents,
@@ -529,6 +538,8 @@ class QwenImagePipeline(BasePipeline):
         if not batch_cfg:
             # cfg by predict noise one by one
             h, w = latents.shape[-2:]
+            if hasattr(self.dit, "set_cache_stream"):
+                self.dit.set_cache_stream(0)
             positive_noise_pred = self.predict_noise(
                 latents,
                 image_latents,
@@ -540,6 +551,8 @@ class QwenImagePipeline(BasePipeline):
                 entity_prompt_emb_masks=entity_prompt_emb_masks,
                 entity_masks=entity_masks,
             )
+            if hasattr(self.dit, "set_cache_stream"):
+                self.dit.set_cache_stream(1)
             negative_noise_pred = self.predict_noise(
                 latents,
                 image_latents,
@@ -558,6 +571,8 @@ class QwenImagePipeline(BasePipeline):
             return noise_pred
         else:
             # cfg by predict noise in one batch
+            if hasattr(self.dit, "set_cache_stream"):
+                self.dit.set_cache_stream(0)
             bs, _, h, w = latents.shape
             prompt_emb = pad_and_concat(prompt_emb, negative_prompt_emb)
             prompt_emb_mask = pad_and_concat(prompt_emb_mask, negative_prompt_emb_mask)
@@ -699,6 +714,8 @@ class QwenImagePipeline(BasePipeline):
 
         if not isinstance(controlnet_params, list):
             controlnet_params = [controlnet_params]
+        if controlnet_params:
+            self.runtime_adapter.validate_dynamic_weights(self.config)
 
         context_latents = None
         for param in controlnet_params:
@@ -757,8 +774,14 @@ class QwenImagePipeline(BasePipeline):
         self.model_lifecycle_finish(["encoder"])
 
         self.load_models_to_device(["dit"])
+        if hasattr(self.dit, "refresh_cache_status"):
+            cache_streams = (
+                2 if cfg_scale > 1.0 and negative_prompt_emb is not None and not self.config.batch_cfg else 1
+            )
+            self.dit.refresh_cache_status(len(timesteps), cache_streams)
         hide_progress = dist.is_initialized() and dist.get_rank() != 0
         for i, timestep in enumerate(tqdm(timesteps, disable=hide_progress)):
+            self.runtime_adapter.before_denoise_step(i)
             timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
             noise_pred = self.predict_noise_with_cfg(
                 latents=latents,

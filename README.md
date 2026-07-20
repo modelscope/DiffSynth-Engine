@@ -75,7 +75,8 @@ image = pipe(prompt="a girl, qipao")
 image.save("image.png")
 ```
 
-For more details, please refer to our tutorials ([English](./docs/tutorial.md), [中文](./docs/tutorial_zh.md)).
+For more details, please refer to our tutorials ([English](./docs/tutorial.md), [中文](./docs/tutorial_zh.md))
+and the [Ascend A5 / Ascend 950 guide](./docs/ascend.md).
 
 ## Showcase
 
