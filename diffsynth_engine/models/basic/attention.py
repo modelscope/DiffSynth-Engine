@@ -17,6 +17,12 @@ from diffsynth_engine.utils.flag import (
     AITER_AVAILABLE,
 )
 from diffsynth_engine.utils.platform import DTYPE_FP8
+from diffsynth_engine.models.basic.attention_backend import (
+    AttentionBackend,
+    AttentionRequest,
+    register_attention_backend,
+    resolve_attention_backend,
+)
 
 FA3_MAX_HEADDIM = 256
 
@@ -122,6 +128,228 @@ def eager_attn(q, k, v, attn_mask=None, scale=None):
     return out.transpose(1, 2)
 
 
+def _supports_head_dim_256(request: AttentionRequest, *, allow_mask: bool) -> tuple[bool, str | None]:
+    if request.q.shape[-1] > FA3_MAX_HEADDIM:
+        return False, f"head_dim={request.q.shape[-1]} exceeds the supported maximum {FA3_MAX_HEADDIM}"
+    if not allow_mask and request.attn_mask is not None:
+        return False, "attention masks are not supported"
+    return True, None
+
+
+def _run_fa4(request: AttentionRequest) -> torch.Tensor:
+    output = flash_attn4(request.q, request.k, request.v, softmax_scale=request.scale)
+    return output[0] if isinstance(output, tuple) else output
+
+
+def _run_fa3(request: AttentionRequest, *, fp8: bool = False) -> torch.Tensor:
+    if not fp8:
+        return flash_attn3(request.q, request.k, request.v, softmax_scale=request.scale)
+    origin_dtype = request.q.dtype
+    output = flash_attn3(
+        request.q.to(dtype=DTYPE_FP8),
+        request.k.to(dtype=DTYPE_FP8),
+        request.v.to(dtype=DTYPE_FP8),
+        softmax_scale=request.scale,
+    )
+    return output.to(dtype=origin_dtype)
+
+
+def _run_aiter(request: AttentionRequest, *, fp8: bool = False) -> torch.Tensor:
+    if not fp8:
+        return aiter_flash_attn(request.q, request.k, request.v, softmax_scale=request.scale)
+    origin_dtype = request.q.dtype
+    output = aiter_flash_attn_fp8(
+        request.q.to(dtype=DTYPE_FP8),
+        request.k.to(dtype=DTYPE_FP8),
+        request.v.to(dtype=DTYPE_FP8),
+        softmax_scale=request.scale,
+    )
+    return output.to(dtype=origin_dtype)
+
+
+def _run_mindie(request: AttentionRequest) -> torch.Tensor:
+    from mindiesd.layers.flash_attn.attention_forward import attention_forward
+
+    return attention_forward(
+        query=request.q,
+        key=request.k,
+        value=request.v,
+        attn_mask=request.attn_mask,
+        scale=request.scale,
+        fused=True,
+        head_first=False,
+    )
+
+
+def _mindie_available() -> bool:
+    from diffsynth_engine.platforms import AscendPlatform
+
+    return AscendPlatform.supports("mindie_attention")
+
+
+def _mindie_supports(request: AttentionRequest) -> tuple[bool, str | None]:
+    if request.q.ndim != 4 or request.k.ndim != 4 or request.v.ndim != 4:
+        return False, "MindIE attention requires 4D Q/K/V tensors"
+    return True, None
+
+
+def _register_builtin_attention_backends() -> None:
+    cuda = frozenset({"cuda"})
+    all_devices = None
+    register_attention_backend(
+        AttentionBackend(
+            "fa4",
+            _run_fa4,
+            cuda,
+            700,
+            lambda: FLASH_ATTN_4_AVAILABLE,
+            lambda r: _supports_head_dim_256(r, allow_mask=False),
+        )
+    )
+    register_attention_backend(
+        AttentionBackend(
+            "fa3",
+            _run_fa3,
+            cuda,
+            600,
+            lambda: FLASH_ATTN_3_AVAILABLE,
+            lambda r: _supports_head_dim_256(r, allow_mask=False),
+        )
+    )
+    register_attention_backend(
+        AttentionBackend(
+            "fa3_fp8",
+            lambda r: _run_fa3(r, fp8=True),
+            cuda,
+            0,
+            lambda: FLASH_ATTN_3_AVAILABLE,
+            lambda r: _supports_head_dim_256(r, allow_mask=False),
+            False,
+        )
+    )
+    register_attention_backend(
+        AttentionBackend(
+            "aiter",
+            _run_aiter,
+            cuda,
+            500,
+            lambda: AITER_AVAILABLE,
+            lambda r: _supports_head_dim_256(r, allow_mask=False),
+            auto_supports=lambda r: _supports_head_dim_256(r, allow_mask=True),
+        )
+    )
+    register_attention_backend(
+        AttentionBackend(
+            "aiter_fp8",
+            lambda r: _run_aiter(r, fp8=True),
+            cuda,
+            0,
+            lambda: AITER_AVAILABLE,
+            lambda r: _supports_head_dim_256(r, allow_mask=False),
+            False,
+        )
+    )
+    register_attention_backend(
+        AttentionBackend(
+            "xformers",
+            lambda r: xformers_attn(r.q, r.k, r.v, r.attn_mask, r.scale),
+            cuda,
+            400,
+            lambda: XFORMERS_AVAILABLE,
+        )
+    )
+    register_attention_backend(
+        AttentionBackend(
+            "sdpa",
+            lambda r: sdpa_attn(r.q, r.k, r.v, r.attn_mask, scale=r.scale),
+            all_devices,
+            300,
+            lambda: SDPA_AVAILABLE,
+        )
+    )
+    register_attention_backend(
+        AttentionBackend(
+            "fa2",
+            lambda r: flash_attn2(r.q, r.k, r.v, softmax_scale=r.scale),
+            cuda,
+            200,
+            lambda: FLASH_ATTN_2_AVAILABLE,
+        )
+    )
+    register_attention_backend(
+        AttentionBackend("eager", lambda r: eager_attn(r.q, r.k, r.v, r.attn_mask, r.scale), all_devices, 100)
+    )
+    register_attention_backend(
+        AttentionBackend(
+            "sage",
+            lambda r: sage_attn(r.q, r.k, r.v, r.attn_mask, r.scale),
+            cuda,
+            0,
+            lambda: SAGE_ATTN_AVAILABLE,
+            auto_select=False,
+        )
+    )
+    register_attention_backend(
+        AttentionBackend(
+            "sparge",
+            lambda r: sparge_attn(
+                r.q,
+                r.k,
+                r.v,
+                attn_mask=r.attn_mask,
+                scale=r.scale,
+                smooth_k=r.kwargs.get("smooth_k", True),
+                simthreshd1=r.kwargs.get("simthreshd1", 0.6),
+                cdfthreshd=r.kwargs.get("cdfthreshd", 0.98),
+                pvthreshd=r.kwargs.get("pvthreshd", 50),
+            ),
+            cuda,
+            0,
+            lambda: SPARGE_ATTN_AVAILABLE,
+            auto_select=False,
+        )
+    )
+    register_attention_backend(
+        AttentionBackend(
+            "vsa",
+            lambda r: video_sparse_attn(
+                r.q,
+                r.k,
+                r.v,
+                r.g,
+                sparsity=r.kwargs.get("sparsity"),
+                num_tiles=r.kwargs.get("num_tiles"),
+                total_seq_length=r.kwargs.get("total_seq_length"),
+                tile_partition_indices=r.kwargs.get("tile_partition_indices"),
+                reverse_tile_partition_indices=r.kwargs.get("reverse_tile_partition_indices"),
+                variable_block_sizes=r.kwargs.get("variable_block_sizes"),
+                non_pad_index=r.kwargs.get("non_pad_index"),
+            ),
+            cuda,
+            0,
+            lambda: VIDEO_SPARSE_ATTN_AVAILABLE,
+            auto_select=False,
+        )
+    )
+    register_attention_backend(
+        AttentionBackend(
+            "mindie",
+            _run_mindie,
+            frozenset({"npu"}),
+            800,
+            _mindie_available,
+            _mindie_supports,
+            unavailable_reason=(
+                "MindIE attention is unavailable; install a compatible MindIE-SD 3.x package "
+                "or use attn_impl='auto' to allow SDPA/eager fallback"
+            ),
+        )
+    )
+
+
+_register_builtin_attention_backends()
+
+
 def attention(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -137,147 +365,9 @@ def attention(
     k: [B, Lk, Nk, C1]
     v: [B, Lk, Nk, C2]
     """
-    assert attn_impl in [
-        None,
-        "auto",
-        "eager",
-        "fa2",
-        "fa3",
-        "fa3_fp8",
-        "fa4",
-        "aiter",
-        "aiter_fp8",
-        "xformers",
-        "sdpa",
-        "sage",
-        "sparge",
-        "vsa",
-    ]
-    flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
-    if attn_impl is None or attn_impl == "auto":
-        if FLASH_ATTN_4_AVAILABLE:
-            # FA4 also has the same max-head-256 limitation as FA3
-            if flash_attn3_compatible and attn_mask is None:
-                attn_out = flash_attn4(q, k, v, softmax_scale=scale)
-                if isinstance(attn_out, tuple):
-                    attn_out = attn_out[0]
-                return attn_out
-            else:
-                if not flash_attn3_compatible:
-                    logger.warning(
-                        f"head_dim={q.shape[-1]}, but flash_attn_4 only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
-                    )
-                else:
-                    logger.debug(
-                        "flash_attn_4 does not support attention mask, will use fallback attention implementation"
-                    )
-        if FLASH_ATTN_3_AVAILABLE:
-            if flash_attn3_compatible and attn_mask is None:
-                return flash_attn3(q, k, v, softmax_scale=scale)
-            else:
-                if not flash_attn3_compatible:
-                    logger.warning(
-                        f"head_dim={q.shape[-1]}, but flash_attn_3 only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
-                    )
-                else:
-                    logger.debug(
-                        "flash_attn_3 does not support attention mask, will use fallback attention implementation"
-                    )
-        if AITER_AVAILABLE:
-            if flash_attn3_compatible:
-                return aiter_flash_attn(q, k, v, softmax_scale=scale)
-            else:
-                logger.warning(
-                    f"head_dim={q.shape[-1]}, but aiter_flash_attn only supports head dimension at most {FA3_MAX_HEADDIM}, will use fallback attention implementation"
-                )
-        if XFORMERS_AVAILABLE:
-            return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
-        if SDPA_AVAILABLE:
-            return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
-        if FLASH_ATTN_2_AVAILABLE:
-            return flash_attn2(q, k, v, softmax_scale=scale)
-        return eager_attn(q, k, v, attn_mask=attn_mask, scale=scale)
-    else:
-        if attn_impl == "eager":
-            return eager_attn(q, k, v, attn_mask=attn_mask, scale=scale)
-        if attn_impl == "fa3" or attn_impl == "fa3_fp8":
-            if not flash_attn3_compatible:
-                raise RuntimeError(
-                    f"head_dim={q.shape[-1]}, but flash_attn_3 only supports head dimension at most {FA3_MAX_HEADDIM}"
-                )
-            if attn_mask is not None:
-                raise RuntimeError("flash_attn_3 does not support attention mask")
-            if attn_impl == "fa3":
-                return flash_attn3(q, k, v, softmax_scale=scale)
-            else:
-                origin_dtype = q.dtype
-                q = q.to(dtype=DTYPE_FP8)
-                k = k.to(dtype=DTYPE_FP8)
-                v = v.to(dtype=DTYPE_FP8)
-                out = flash_attn3(q, k, v, softmax_scale=scale)
-                return out.to(dtype=origin_dtype)
-        if attn_impl == "aiter" or attn_impl == "aiter_fp8":
-            if not flash_attn3_compatible:
-                raise RuntimeError(
-                    f"head_dim={q.shape[-1]}, but aiter_flash_attn only supports head dimension at most {FA3_MAX_HEADDIM}"
-                )
-            if attn_mask is not None:
-                raise RuntimeError("aiter_flash_attn does not support attention mask")
-            if attn_impl == "aiter":
-                return aiter_flash_attn(q, k, v, softmax_scale=scale)
-            else:
-                origin_dtype = q.dtype
-                q = q.to(dtype=DTYPE_FP8)
-                k = k.to(dtype=DTYPE_FP8)
-                v = v.to(dtype=DTYPE_FP8)
-                out = aiter_flash_attn_fp8(q, k, v, softmax_scale=scale)
-                return out.to(dtype=origin_dtype)
-        if attn_impl == "fa4":
-            if not flash_attn3_compatible:
-                raise RuntimeError(
-                    f"head_dim={q.shape[-1]}, but flash_attn_4 only supports head dimension at most {FA3_MAX_HEADDIM}"
-                )
-            if attn_mask is not None:
-                raise RuntimeError("flash_attn_4 does not support attention mask")
-            attn_out = flash_attn4(q, k, v, softmax_scale=scale)
-            if isinstance(attn_out, tuple):
-                attn_out = attn_out[0]
-            return attn_out
-        if attn_impl == "fa2":
-            return flash_attn2(q, k, v, softmax_scale=scale)
-        if attn_impl == "xformers":
-            return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
-        if attn_impl == "sdpa":
-            return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
-        if attn_impl == "sage":
-            return sage_attn(q, k, v, attn_mask=attn_mask, scale=scale)
-        if attn_impl == "sparge":
-            return sparge_attn(
-                q,
-                k,
-                v,
-                attn_mask=attn_mask,
-                scale=scale,
-                smooth_k=kwargs.get("smooth_k", True),
-                simthreshd1=kwargs.get("simthreshd1", 0.6),
-                cdfthreshd=kwargs.get("cdfthreshd", 0.98),
-                pvthreshd=kwargs.get("pvthreshd", 50),
-            )
-        if attn_impl == "vsa":
-            return video_sparse_attn(
-                q,
-                k,
-                v,
-                g,
-                sparsity=kwargs.get("sparsity"),
-                num_tiles=kwargs.get("num_tiles"),
-                total_seq_length=kwargs.get("total_seq_length"),
-                tile_partition_indices=kwargs.get("tile_partition_indices"),
-                reverse_tile_partition_indices=kwargs.get("reverse_tile_partition_indices"),
-                variable_block_sizes=kwargs.get("variable_block_sizes"),
-                non_pad_index=kwargs.get("non_pad_index"),
-            )
-        raise ValueError(f"Invalid attention implementation: {attn_impl}")
+    request = AttentionRequest(q=q, k=k, v=v, g=g, attn_mask=attn_mask, scale=scale, kwargs=kwargs)
+    backend = resolve_attention_backend(attn_impl or "auto", request)
+    return backend.forward(request)
 
 
 class Attention(nn.Module):
@@ -354,7 +444,10 @@ def long_context_attention(
         "sage",
         "sparge",
         "vsa",
+        "mindie",
     ]
+    if attn_impl == "mindie":
+        raise RuntimeError("MindIE long-context attention is not supported in the single-NPU release")
     assert attn_mask is None, "long context attention does not support attention mask"
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
     if attn_impl is None or attn_impl == "auto":

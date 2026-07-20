@@ -35,6 +35,7 @@ class AttnImpl(Enum):
     SAGE = "sage"  # Sage Attention
     SPARGE = "sparge"  # Sparge Attention
     VSA = "vsa"  # Video Sparse Attention
+    MINDIE = "mindie"  # MindIE-SD attention for Ascend NPU
 
 
 @dataclass
@@ -57,11 +58,27 @@ class AttentionConfig:
 
 
 @dataclass
+class QuantizationConfig:
+    backend: Literal["auto", "native", "nunchaku", "mindie"] = "auto"
+    linear: Literal["none", "fp8", "int4"] = "none"
+    attention: Literal["none", "fp8"] = "none"
+
+    def __post_init__(self):
+        if self.backend not in {"auto", "native", "nunchaku", "mindie"}:
+            raise ValueError(f"Unsupported quantization backend: {self.backend}")
+        if self.linear not in {"none", "fp8", "int4"}:
+            raise ValueError(f"Unsupported linear quantization mode: {self.linear}")
+        if self.attention not in {"none", "fp8"}:
+            raise ValueError(f"Unsupported attention quantization mode: {self.attention}")
+
+
+@dataclass
 class OptimizationConfig:
     use_fp8_linear: bool = False
     use_fbcache: bool = False
     fbcache_relative_l1_threshold: float = 0.05
     use_torch_compile: bool = False
+    quantization: Optional[QuantizationConfig] = None
 
 
 @dataclass

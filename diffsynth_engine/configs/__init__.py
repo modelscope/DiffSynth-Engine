@@ -24,6 +24,7 @@ from .pipeline import (
     AttnImpl,
     SpargeAttentionParams,
     VideoSparseAttentionParams,
+    QuantizationConfig,
     LoraConfig,
 )
 from .controlnet import (
@@ -59,6 +60,7 @@ __all__ = [
     "AttnImpl",
     "SpargeAttentionParams",
     "VideoSparseAttentionParams",
+    "QuantizationConfig",
     "LoraConfig",
     "ControlType",
     "ControlNetParams",

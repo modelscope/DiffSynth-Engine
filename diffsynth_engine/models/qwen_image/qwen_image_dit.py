@@ -189,6 +189,10 @@ class QwenDoubleStreamAttention(nn.Module):
 
         self.to_out = nn.Linear(dim_a, dim_a, device=device, dtype=dtype)
         self.to_add_out = nn.Linear(dim_b, dim_b, device=device, dtype=dtype)
+        self.attention_processor = None
+
+    def set_attention_processor(self, processor) -> None:
+        self.attention_processor = processor
 
     def forward(
         self,
@@ -224,7 +228,22 @@ class QwenDoubleStreamAttention(nn.Module):
         joint_v = torch.cat([txt_v, img_v], dim=1)
 
         attn_kwargs = attn_kwargs if attn_kwargs is not None else {}
-        joint_attn_out = attention_ops.attention(joint_q, joint_k, joint_v, attn_mask=attn_mask, **attn_kwargs)
+        if self.attention_processor is not None:
+            joint_attn_out = self.attention_processor(
+                joint_q,
+                joint_k,
+                joint_v,
+                attn_mask=attn_mask,
+                **attn_kwargs,
+            )
+        else:
+            joint_attn_out = attention_ops.attention(
+                joint_q,
+                joint_k,
+                joint_v,
+                attn_mask=attn_mask,
+                **attn_kwargs,
+            )
 
         joint_attn_out = rearrange(joint_attn_out, "b s h d -> b s (h d)").to(joint_q.dtype)
 
