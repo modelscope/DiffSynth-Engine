@@ -64,10 +64,7 @@ class DiffusionModel(nn.Module, ConfigMixin):
 
         model.load_state_dict(state_dict, strict=True, assign=True)
         model.to(device=device)
-
-        from diffsynth_engine.platform.npu import apply_mindie_sd_compile
-
-        return apply_mindie_sd_compile(model)
+        return model
 
 
 class AutoregressiveModel(nn.Module):
