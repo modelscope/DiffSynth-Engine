@@ -1,4 +1,5 @@
 import torch
+from functools import cache
 
 
 def _is_cuda() -> bool:
@@ -12,7 +13,7 @@ def _is_rocm() -> bool:
 def _is_mps() -> bool:
     return torch.backends.mps.is_available()
 
-
+@cache
 def is_npu_available() -> bool:
     try:
         import torch_npu
@@ -21,7 +22,7 @@ def is_npu_available() -> bool:
     except ImportError:
         return False
 
-
+@cache
 def is_mindie_sd_available() -> bool:
     try:
         import mindiesd  # noqa: F401

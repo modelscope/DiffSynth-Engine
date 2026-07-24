@@ -6,14 +6,25 @@ from diffsynth_engine.layers.attention.backends.abstract import (
     AttentionMetadata,
     AttentionType,
 )
+from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.platform import is_npu_available
 
+logger = logging.get_logger(__name__)
+
+try:
+    from mindiesd.layers.flash_attn.attention_forward import attention_forward
+
+    MINDIESD_ATTN_AVAILABLE = is_npu_available() 
+except ImportError:
+    MINDIESD_ATTN_AVAILABLE = False
 
 class MindieAttentionBackend(AttentionBackend):
     @staticmethod
     def check_availability() -> None:
-        if not is_npu_available():
-            raise RuntimeError("NPU is not available, cannot use MINDIE attention backend")
+        if not MINDIESD_ATTN_AVAILABLE:
+            error_msg = "MindiesdAttention backend is not available. Please visit https://gitcode.com/Ascend/MindIE-SD/blob/dev/docs/zh/features/core_layers.md and follow the installation instructions."
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
     @staticmethod
     def get_type() -> str:
@@ -49,8 +60,6 @@ class MindieAttentionImpl(AttentionImpl):
         attn_metadata: AttentionMetadata | None = None,
         **kwargs,
     ) -> torch.Tensor:
-        from mindiesd.layers.flash_attn.attention_forward import attention_forward
-
         return attention_forward(
             query=query,
             key=key,
