@@ -164,11 +164,16 @@ class Pipeline:
         return model
 
     @staticmethod
-    def init_vae(model_cls: Type[nn.Module], pipeline_config: PipelineConfig, empty_weights: bool = False):
+    def init_vae(
+        model_cls: Type[nn.Module],
+        pipeline_config: PipelineConfig,
+        empty_weights: bool = False,
+        subfolder: str = "vae",
+    ):
         with init_empty_weights():
             config = model_cls.load_config(
                 pipeline_config.model_path,
-                subfolder="vae",
+                subfolder=subfolder,
                 local_files_only=True,
             )
             model = model_cls.from_config(config)
@@ -178,7 +183,7 @@ class Pipeline:
 
         state_dict = load_model_weights(
             pipeline_config.model_path,
-            subfolder="vae",
+            subfolder=subfolder,
             device=pipeline_config.device,
             dtype=pipeline_config.vae_dtype,
         )
