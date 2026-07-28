@@ -2,7 +2,8 @@ import json
 import os
 import re
 import time
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 
@@ -14,6 +15,22 @@ from diffsynth_engine.utils.constants import (
     SAFETENSORS_INDEX_NAME,
     SAFETENSORS_WEIGHTS_NAME,
 )
+
+
+@dataclass(frozen=True)
+class TensorSlice:
+    dim: int
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
+class TensorSelection:
+    slices: Tuple[TensorSlice, ...]
+    contiguous: bool = True
+
+
+TensorSelectionPlan = Dict[str, TensorSelection]
 
 logger = logging.get_logger(__name__)
 
@@ -48,62 +65,96 @@ def load_safetensors(path: str, device: str = "cpu") -> Dict[str, Any]:
     return state_dict
 
 
+def apply_tensor_selection(
+    state_dict: Dict[str, Any],
+    tensor_selection_plan: TensorSelectionPlan,
+) -> Dict[str, Any]:
+    for key in list(state_dict.keys()):
+        selection = tensor_selection_plan.get(key)
+        if selection is None:
+            continue
+
+        value = state_dict[key]
+        if not isinstance(value, torch.Tensor):
+            continue
+
+        slices = [slice(None)] * value.dim()
+        for tensor_slice in selection.slices:
+            dim = tensor_slice.dim if tensor_slice.dim >= 0 else value.dim() + tensor_slice.dim
+            if dim < 0 or dim >= value.dim():
+                raise ValueError(
+                    f"Cannot slice '{key}' shape={tuple(value.shape)} along dim {tensor_slice.dim}: "
+                    f"tensor has {value.dim()} dimensions."
+                )
+            if tensor_slice.start < 0 or tensor_slice.end > value.shape[dim] or tensor_slice.start > tensor_slice.end:
+                raise ValueError(
+                    f"Invalid slice for '{key}' shape={tuple(value.shape)}: "
+                    f"dim={tensor_slice.dim}, start={tensor_slice.start}, end={tensor_slice.end}."
+                )
+            slices[dim] = slice(tensor_slice.start, tensor_slice.end)
+
+        selected = value[tuple(slices)]
+        state_dict[key] = selected.contiguous() if selection.contiguous else selected
+
+    return state_dict
+
+
+def _list_shard_files(path: str) -> list[str]:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Model path not found: {path}")
+
+    diffusion_index = os.path.join(path, DIFFUSION_SAFETENSORS_INDEX_NAME)
+    diffusion_weights = os.path.join(path, DIFFUSION_SAFETENSORS_WEIGHTS_NAME)
+    generic_index = os.path.join(path, SAFETENSORS_INDEX_NAME)
+    generic_weights = os.path.join(path, SAFETENSORS_WEIGHTS_NAME)
+
+    if os.path.exists(diffusion_index):
+        index_file = diffusion_index
+    elif os.path.exists(diffusion_weights):
+        return [diffusion_weights]
+    elif os.path.exists(generic_index):
+        index_file = generic_index
+    elif os.path.exists(generic_weights):
+        return [generic_weights]
+    else:
+        raise FileNotFoundError(f"Safetensors index or weights file not found in {path}")
+
+    with open(index_file, "r", encoding="utf-8") as file:
+        index_dict = json.load(file)
+    shard_names = sorted(set(index_dict["weight_map"].values()))
+    if not shard_names:
+        raise ValueError(f"Weight index {index_file} contains an empty weight_map")
+    return [os.path.join(path, name) for name in shard_names]
+
+
 def load_model_weights(
     model_path: str,
     subfolder: Optional[str] = None,
     device: Optional[str] = None,
     dtype: Optional[torch.dtype] = None,
     broadcast_from_rank0: bool = True,
+    tensor_selection_plan: Optional[TensorSelectionPlan] = None,
 ) -> Dict[str, Any]:
     world_group = get_world_group() if is_world_group_initialized() else None
     is_rank_zero = world_group is None or get_global_rank() == 0
 
-    # rank 0 reads all shards
-    state_dict = {}
-    if is_rank_zero:
-        if subfolder is not None:
-            model_path = os.path.join(model_path, subfolder)
+    resolved_path = os.path.join(model_path, subfolder) if subfolder is not None else model_path
+    shard_files = _list_shard_files(resolved_path)
 
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model path not found: {model_path}")
+    state_dict: Dict[str, Any] = {}
+    for shard_file in shard_files:
+        shard_dict = load_safetensors(shard_file) if is_rank_zero else {}
 
-        _diffusion_index_file = os.path.join(model_path, DIFFUSION_SAFETENSORS_INDEX_NAME)
-        _diffusion_weights_file = os.path.join(model_path, DIFFUSION_SAFETENSORS_WEIGHTS_NAME)
-        _index_file = os.path.join(model_path, SAFETENSORS_INDEX_NAME)
-        _weights_file = os.path.join(model_path, SAFETENSORS_WEIGHTS_NAME)
+        if world_group is not None and broadcast_from_rank0:
+            shard_dict = world_group.broadcast_tensor_dict(shard_dict, src=0)
 
-        index_file, weights_file = None, None
+        if tensor_selection_plan is not None:
+            shard_dict = apply_tensor_selection(shard_dict, tensor_selection_plan)
 
-        if os.path.exists(_diffusion_index_file):
-            index_file = _diffusion_index_file
-        elif os.path.exists(_diffusion_weights_file):
-            weights_file = _diffusion_weights_file
-        elif os.path.exists(_index_file):
-            index_file = _index_file
-        elif os.path.exists(_weights_file):
-            weights_file = _weights_file
-        else:
-            raise FileNotFoundError(f"Safetensors index or weights file not found in {model_path}")
-
-        if index_file is not None:
-            with open(index_file, "r", encoding="utf-8") as f:
-                index_dict = json.load(f)
-            weight_map = index_dict["weight_map"]
-            shard_files = sorted(set(weight_map.values()))
-            for shard_file in shard_files:
-                path = os.path.join(model_path, shard_file)
-                shard_dict = load_safetensors(path)
-                for k, v in shard_dict.items():
-                    shard_dict[k] = v.to(device=device, dtype=dtype, non_blocking=True)
-                state_dict.update(shard_dict)
-        else:
-            state_dict = load_safetensors(weights_file)
-            for k, v in state_dict.items():
-                state_dict[k] = v.to(device=device, dtype=dtype, non_blocking=True)
-
-    # rank 0 broadcasts full state dict to all other ranks
-    if broadcast_from_rank0 and world_group is not None:
-        state_dict = world_group.broadcast_tensor_dict(state_dict, src=0)
+        for key, value in shard_dict.items():
+            if isinstance(value, torch.Tensor):
+                shard_dict[key] = value.to(device=device, dtype=dtype, non_blocking=True)
+        state_dict.update(shard_dict)
 
     return state_dict
 

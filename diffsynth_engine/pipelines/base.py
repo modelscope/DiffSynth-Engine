@@ -8,8 +8,16 @@ from torch.distributed.checkpoint.state_dict import StateDictOptions, set_model_
 from tqdm import tqdm
 
 from diffsynth_engine.configs import PipelineConfig
-from diffsynth_engine.distributed.parallel_state import get_global_rank, is_world_group_initialized
+from diffsynth_engine.distributed.parallel_state import (
+    get_global_rank,
+    get_tensor_model_parallel_world_size,
+    get_ulysses_parallel_world_size,
+    is_sp_group_initialized,
+    is_tp_group_initialized,
+    is_world_group_initialized,
+)
 from diffsynth_engine.forward_context import set_forward_context
+from diffsynth_engine.layers.tensor_parallel import derive_tp_model_weight_load_plan
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.load_utils import fix_state_dict_key, load_model_weights
 
@@ -29,7 +37,26 @@ class Pipeline:
         raise NotImplementedError()
 
     @staticmethod
+    def compile_transformer_blocks(model: nn.Module) -> nn.Module:
+        repeated_blocks = getattr(model, "_repeated_blocks", None)
+        if not repeated_blocks:
+            raise ValueError(f"`_repeated_blocks` is not defined for {type(model).__name__}")
+
+        has_compiled_region = False
+        for submodule in model.modules():
+            if submodule.__class__.__name__ in repeated_blocks:
+                submodule.compile(dynamic=True, fullgraph=False)
+                has_compiled_region = True
+
+        if not has_compiled_region:
+            raise ValueError(
+                f"None of the repeated block classes {repeated_blocks} were found in {type(model).__name__}"
+            )
+        return model
+
+    @classmethod
     def init_transformer(
+        cls,
         model_cls: Type[nn.Module],
         pipeline_config: PipelineConfig,
         empty_weights: bool = False,
@@ -59,6 +86,31 @@ class Pipeline:
                     fully_shard(submodule)
             fully_shard(model)
 
+        tensor_selection_plan = None
+        tp_size = get_tensor_model_parallel_world_size() if is_tp_group_initialized() else 1
+        if tp_size > 1:
+            tensor_selection_plan = derive_tp_model_weight_load_plan(model)
+            if not tensor_selection_plan:
+                raise RuntimeError(
+                    f"Tensor parallel world size is {tp_size}, but {model_cls.__name__} has no tensor-parallel submodules; "
+                    "the model is not TP-aware."
+                )
+
+            num_heads = getattr(model.config, "num_attention_heads", None)
+            if num_heads is not None and num_heads % tp_size != 0:
+                raise ValueError(
+                    f"num_attention_heads ({num_heads}) must be divisible by tp_degree ({tp_size})"
+                )
+            if num_heads is not None and is_sp_group_initialized():
+                ulysses_size = get_ulysses_parallel_world_size()
+                heads_per_tp_partition = num_heads // tp_size
+                if ulysses_size > 1 and heads_per_tp_partition % ulysses_size != 0:
+                    raise ValueError(
+                        f"With tp_degree={tp_size} and sp_ulysses_degree={ulysses_size}, "
+                        f"heads_per_tp_partition ({heads_per_tp_partition}) must be divisible by "
+                        "sp_ulysses_degree."
+                    )
+
         load_device = "cpu" if use_fsdp else pipeline_config.device
         model_dtype = pipeline_config.model_dtype
         keep_in_fp32_modules = getattr(model_cls, "_keep_in_fp32_modules", None)
@@ -70,6 +122,7 @@ class Pipeline:
                 device=load_device,
                 dtype=None,
                 broadcast_from_rank0=not use_fsdp,
+                tensor_selection_plan=tensor_selection_plan,
             )
             for k, v in state_dict.items():
                 if any(m in k.split(".") for m in keep_in_fp32_modules):
@@ -83,6 +136,7 @@ class Pipeline:
                 device=load_device,
                 dtype=model_dtype,
                 broadcast_from_rank0=not use_fsdp,
+                tensor_selection_plan=tensor_selection_plan,
             )
 
         if use_fsdp:
@@ -96,6 +150,8 @@ class Pipeline:
             model.to(device=pipeline_config.device)
 
         del state_dict
+        if pipeline_config.use_torch_compile:
+            model = cls.compile_transformer_blocks(model)
         return model
 
     @staticmethod

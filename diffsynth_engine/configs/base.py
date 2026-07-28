@@ -40,6 +40,9 @@ class PipelineConfig:
     attn_type: AttentionType | str = AttentionType.SDPA
     attn_params: Optional[AttentionParams] = None
 
+    # optimization
+    use_torch_compile: bool = False
+
     # parallelism
     parallelism: int = 1
     use_cfg_parallel: bool = False
@@ -62,43 +65,58 @@ class PipelineConfig:
 
 
 def init_parallel_config(config: PipelineConfig):
-    assert config.parallelism in (1, 2, 4, 8), "parallelism must be 1, 2, 4 or 8"
+    if config.parallelism <= 0:
+        raise ValueError(f"parallelism must be a positive integer, got {config.parallelism}")
 
     cfg_degree = 2 if config.use_cfg_parallel else 1
 
-    if config.tp_degree is not None:
-        assert config.sp_ulysses_degree is None and config.sp_ring_degree is None, (
-            "not allowed to enable sequence parallel and tensor parallel together; "
-            "either set sp_ulysses_degree=None, sp_ring_degree=None or set tp_degree=None during pipeline initialization"
+    if config.tp_degree is not None and config.tp_degree <= 0:
+        raise ValueError(f"tp_degree must be None or a positive integer, got {config.tp_degree}")
+    if config.sp_ulysses_degree is not None and config.sp_ulysses_degree <= 0:
+        raise ValueError(f"sp_ulysses_degree must be None or a positive integer, got {config.sp_ulysses_degree}")
+    if config.sp_ring_degree is not None and config.sp_ring_degree <= 0:
+        raise ValueError(f"sp_ring_degree must be None or a positive integer, got {config.sp_ring_degree}")
+    if config.use_cfg_parallel and config.parallelism < 2:
+        raise ValueError(
+            f"use_cfg_parallel=True requires parallelism >= 2, got parallelism={config.parallelism}"
         )
-        assert config.use_fsdp is False, (
-            "not allowed to enable fully sharded data parallel and tensor parallel together; "
-            "either set use_fsdp=False or set tp_degree=None during pipeline initialization"
-        )
-        config.sp_ulysses_degree = 1
-        config.sp_ring_degree = 1
-    elif config.sp_ulysses_degree is None and config.sp_ring_degree is None:
-        # use ulysses if not specified
-        config.sp_ulysses_degree = config.parallelism // cfg_degree
-        config.sp_ring_degree = 1
-        config.tp_degree = 1
-    elif config.sp_ulysses_degree is not None and config.sp_ring_degree is not None:
-        config.tp_degree = 1
-    else:
-        raise ValueError("sp_ulysses_degree and sp_ring_degree must be specified together")
 
-    assert config.parallelism == cfg_degree * config.tp_degree * config.sp_ulysses_degree * config.sp_ring_degree, (
-        f"parallelism ({config.parallelism}) must be equal to cfg_degree ({cfg_degree}) * "
-        f"tp_degree ({config.tp_degree}) * "
-        f"sp_ulysses_degree ({config.sp_ulysses_degree}) * "
-        f"sp_ring_degree ({config.sp_ring_degree})"
+    config.tp_degree = config.tp_degree or 1
+    config.sp_ring_degree = config.sp_ring_degree or 1
+    config.sp_ulysses_degree = config.sp_ulysses_degree or (
+        config.parallelism // (cfg_degree * config.tp_degree * config.sp_ring_degree)
     )
+
+    product = cfg_degree * config.tp_degree * config.sp_ulysses_degree * config.sp_ring_degree
+    if product != config.parallelism:
+        raise ValueError(
+            f"parallelism ({config.parallelism}) must equal cfg_degree({cfg_degree}) * "
+            f"tp_degree({config.tp_degree}) * sp_ulysses_degree({config.sp_ulysses_degree}) * "
+            f"sp_ring_degree({config.sp_ring_degree}) = {product}"
+        )
+
+    if config.tp_degree > 1 and config.use_fsdp:
+        raise ValueError("TP and FSDP cannot be enabled together; set use_fsdp=False or tp_degree=None.")
 
     if config.use_vae_parallel:
         assert config.parallelism > 1, "use_vae_parallel requires parallelism > 1"
         if not config.vae_tiled:
             config.vae_tiled = True
             logger.warning("setting vae_tiled to True since use_vae_parallel is enabled")
+
+    if config.tp_degree > 1:
+        logger.info(
+            f"Tensor parallel enabled with tp_degree={config.tp_degree}. "
+            "The model attention heads and sharded MLP dimensions must be divisible by tp_degree."
+        )
+    if config.tp_degree > 1 and config.sp_ulysses_degree > 1:
+        logger.info(
+            f"TP+SP enabled with tp_degree={config.tp_degree} and "
+            f"sp_ulysses_degree={config.sp_ulysses_degree}."
+        )
+
+    if config.use_torch_compile and config.use_fsdp:
+        logger.warning("torch.compile + FSDP may produce graph breaks")
 
 
 def validate_attn_config(config: PipelineConfig):

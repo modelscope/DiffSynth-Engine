@@ -24,9 +24,19 @@ from diffusers.models.embeddings import PixArtAlphaTextProjection, TimestepEmbed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.normalization import FP32LayerNorm
 
+from diffsynth_engine.distributed.parallel_state import (
+    get_tensor_model_parallel_world_size,
+    is_tp_group_initialized,
+)
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
 from diffsynth_engine.layers.attention import LocalAttention, USPAttention
+from diffsynth_engine.layers.tensor_parallel import (
+    ColumnParallelLinear,
+    RowParallelLinear,
+    TensorParallelRMSNorm,
+    TPFeedForward,
+)
 from diffsynth_engine.models.base import DiffusionModel
 from diffsynth_engine.utils import logging
 
@@ -76,34 +86,42 @@ class WanAttention(nn.Module):
     ):
         super().__init__()
 
+        tp_size = get_tensor_model_parallel_world_size() if is_tp_group_initialized() else 1
+        if heads % tp_size != 0:
+            raise ValueError(f"heads ({heads}) must be divisible by tp_size ({tp_size})")
+
         self.inner_dim = dim_head * heads
-        self.heads = heads
+        self.heads = heads // tp_size
         self.added_kv_proj_dim = added_kv_proj_dim
         self.cross_attention_dim_head = cross_attention_dim_head
         self.kv_inner_dim = self.inner_dim if cross_attention_dim_head is None else cross_attention_dim_head * heads
 
-        self.to_q = nn.Linear(dim, self.inner_dim, bias=True)
-        self.to_k = nn.Linear(dim, self.kv_inner_dim, bias=True)
-        self.to_v = nn.Linear(dim, self.kv_inner_dim, bias=True)
+        self.to_q = ColumnParallelLinear(dim, self.inner_dim, bias=True, gather_output=False)
+        self.to_k = ColumnParallelLinear(dim, self.kv_inner_dim, bias=True, gather_output=False)
+        self.to_v = ColumnParallelLinear(dim, self.kv_inner_dim, bias=True, gather_output=False)
         self.to_out = nn.ModuleList(
             [
-                nn.Linear(self.inner_dim, dim, bias=True),
+                RowParallelLinear(self.inner_dim, dim, bias=True, input_is_parallel=True),
                 nn.Dropout(dropout),
             ]
         )
-        self.norm_q = nn.RMSNorm(dim_head * heads, eps=eps, elementwise_affine=True)
-        self.norm_k = nn.RMSNorm(dim_head * heads, eps=eps, elementwise_affine=True)
+        self.norm_q = TensorParallelRMSNorm(self.inner_dim, eps=eps, elementwise_affine=True)
+        self.norm_k = TensorParallelRMSNorm(self.kv_inner_dim, eps=eps, elementwise_affine=True)
 
         self.add_k_proj = self.add_v_proj = None
         if added_kv_proj_dim is not None:
-            self.add_k_proj = nn.Linear(added_kv_proj_dim, self.inner_dim, bias=True)
-            self.add_v_proj = nn.Linear(added_kv_proj_dim, self.inner_dim, bias=True)
-            self.norm_added_k = nn.RMSNorm(dim_head * heads, eps=eps)
+            self.add_k_proj = ColumnParallelLinear(
+                added_kv_proj_dim, self.inner_dim, bias=True, gather_output=False
+            )
+            self.add_v_proj = ColumnParallelLinear(
+                added_kv_proj_dim, self.inner_dim, bias=True, gather_output=False
+            )
+            self.norm_added_k = TensorParallelRMSNorm(self.inner_dim, eps=eps)
 
         forward_context = get_forward_context()
         attn_cls = USPAttention if cross_attention_dim_head is None else LocalAttention
         self.attn = attn_cls(
-            num_heads=heads,
+            num_heads=self.heads,
             head_size=dim_head,
             attn_type=forward_context.attn_type,
         )
@@ -345,7 +363,7 @@ class WanTransformerBlock(nn.Module):
         self.norm2 = FP32LayerNorm(dim, eps, elementwise_affine=True) if cross_attn_norm else nn.Identity()
 
         # 3. Feed-forward
-        self.ffn = FeedForward(dim, inner_dim=ffn_dim, activation_fn="gelu-approximate")
+        self.ffn = TPFeedForward(dim, inner_dim=ffn_dim, activation_fn="gelu-approximate")
         self.norm3 = FP32LayerNorm(dim, eps, elementwise_affine=False)
 
         self.scale_shift_table = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
@@ -529,7 +547,7 @@ class WanTransformer3DModel(DiffusionModel):
         rotary_emb = self.rope(hidden_states)
 
         hidden_states = self.patch_embedding(hidden_states)
-        hidden_states = hidden_states.flatten(2).transpose(1, 2)
+        hidden_states = hidden_states.flatten(2).transpose(1, 2).contiguous()
 
         original_seq_len = hidden_states.shape[1]
 

@@ -110,14 +110,21 @@ def parse_cli_args() -> Dict[str, Any]:
         help="Sparge attention topk parameter (default: 0.5)",
     )
 
+    # Optimization configuration group
+    optimization_group = parser.add_argument_group("Optimization Configuration")
+    optimization_group.add_argument(
+        "--use-torch-compile",
+        action="store_true",
+        help="Compile repeated transformer blocks with torch.compile",
+    )
+
     # Parallelism configuration group
     parallel_group = parser.add_argument_group("Parallelism Configuration")
     parallel_group.add_argument(
         "--parallelism",
         type=int,
         default=1,
-        choices=[1, 2, 4, 8],
-        help="Parallelism degree (default: 1, choices: 1, 2, 4, 8)",
+        help="Total number of inference workers (default: 1)",
     )
     parallel_group.add_argument(
         "--use-cfg-parallel",
@@ -174,6 +181,9 @@ def parse_cli_args() -> Dict[str, Any]:
     attn_type = args.attn_type.lower()
     args_dict["attn_type"] = attn_type
     args_dict["attn_params"] = _parse_attention_params(attn_type, args.sparge_topk)
+
+    # Optimization configuration
+    args_dict["use_torch_compile"] = args.use_torch_compile
 
     # Parallelism configuration
     args_dict["parallelism"] = args.parallelism

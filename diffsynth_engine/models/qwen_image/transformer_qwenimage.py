@@ -22,14 +22,18 @@ import numpy as np
 import torch
 import torch.nn as nn
 from diffusers.configuration_utils import register_to_config
-from diffusers.models.attention import FeedForward
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
 
+from diffsynth_engine.distributed.parallel_state import (
+    get_tensor_model_parallel_world_size,
+    is_tp_group_initialized,
+)
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
 from diffsynth_engine.layers.attention import USPAttention
+from diffsynth_engine.layers.tensor_parallel import ColumnParallelLinear, RowParallelLinear, TPFeedForward
 from diffsynth_engine.models.base import DiffusionModel
 from diffsynth_engine.utils import logging
 
@@ -415,21 +419,30 @@ class QwenDoubleStreamAttention(nn.Module):
         self.dim = dim
         self.num_attention_heads = num_attention_heads
         self.attention_head_dim = attention_head_dim
-        self.heads = num_attention_heads
+        tp_size = get_tensor_model_parallel_world_size() if is_tp_group_initialized() else 1
+        if num_attention_heads % tp_size != 0:
+            raise ValueError(
+                f"num_attention_heads ({num_attention_heads}) must be divisible by tp_size ({tp_size})"
+            )
+        self.heads = num_attention_heads // tp_size
 
         # Image stream projections
-        self.to_q = nn.Linear(dim, num_attention_heads * attention_head_dim, bias=True)
-        self.to_k = nn.Linear(dim, num_attention_heads * attention_head_dim, bias=True)
-        self.to_v = nn.Linear(dim, num_attention_heads * attention_head_dim, bias=True)
+        self.to_q = ColumnParallelLinear(dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False)
+        self.to_k = ColumnParallelLinear(dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False)
+        self.to_v = ColumnParallelLinear(dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False)
         self.to_out = nn.ModuleList([])
-        self.to_out.append(nn.Linear(num_attention_heads * attention_head_dim, dim, bias=True))
+        self.to_out.append(
+            RowParallelLinear(num_attention_heads * attention_head_dim, dim, bias=True, input_is_parallel=True)
+        )
         self.to_out.append(nn.Dropout(dropout))
 
         # Text stream projections
-        self.add_q_proj = nn.Linear(dim, num_attention_heads * attention_head_dim, bias=True)
-        self.add_k_proj = nn.Linear(dim, num_attention_heads * attention_head_dim, bias=True)
-        self.add_v_proj = nn.Linear(dim, num_attention_heads * attention_head_dim, bias=True)
-        self.to_add_out = nn.Linear(num_attention_heads * attention_head_dim, dim, bias=True)
+        self.add_q_proj = ColumnParallelLinear(dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False)
+        self.add_k_proj = ColumnParallelLinear(dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False)
+        self.add_v_proj = ColumnParallelLinear(dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False)
+        self.to_add_out = RowParallelLinear(
+            num_attention_heads * attention_head_dim, dim, bias=True, input_is_parallel=True
+        )
 
         # QK normalization
         if qk_norm == "rms_norm":
@@ -446,7 +459,7 @@ class QwenDoubleStreamAttention(nn.Module):
         # USPAttention for joint attention computation
         forward_context = get_forward_context()
         self.usp_attn = USPAttention(
-            num_heads=num_attention_heads,
+            num_heads=self.heads,
             head_size=attention_head_dim,
             attn_type=forward_context.attn_type,
         )
@@ -553,7 +566,7 @@ class QwenImageTransformerBlock(nn.Module):
             eps=eps,
         )
         self.img_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
-        self.img_mlp = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
+        self.img_mlp = TPFeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
 
         # Text processing modules
         self.txt_mod = nn.Sequential(
@@ -563,7 +576,7 @@ class QwenImageTransformerBlock(nn.Module):
         self.txt_norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
         # Text doesn't need separate attention - it's handled by img_attn joint computation
         self.txt_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
-        self.txt_mlp = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
+        self.txt_mlp = TPFeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
 
         self.zero_cond_t = zero_cond_t
 
