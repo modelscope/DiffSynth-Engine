@@ -35,6 +35,7 @@ class AttnImpl(Enum):
     SAGE = "sage"  # Sage Attention
     SPARGE = "sparge"  # Sparge Attention
     VSA = "vsa"  # Video Sparse Attention
+    MINDIE = "mindie"  # Mindie Attention
 
 
 @dataclass
