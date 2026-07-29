@@ -22,16 +22,18 @@ class Worker:
         local_rank: int,
         rank: int,
         world_size: int,
+        master_addr: str,
         master_port: int,
         pipeline_config: PipelineConfig,
     ):
         self.local_rank = local_rank
         self.rank = rank
         self.world_size = world_size
+        self.master_addr = master_addr
         self.master_port = master_port
         self.pipeline_config = pipeline_config
 
-        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_ADDR"] = master_addr
         os.environ["MASTER_PORT"] = str(master_port)
         os.environ["LOCAL_RANK"] = str(local_rank)
         os.environ["RANK"] = str(rank)
@@ -81,6 +83,7 @@ def run_worker_loop(
     local_rank: int,
     rank: int,
     world_size: int,
+    master_addr: str,
     master_port: int,
     conn: mp.connection.Connection,
     pipeline_config: PipelineConfig,
@@ -90,6 +93,7 @@ def run_worker_loop(
             local_rank=local_rank,
             rank=rank,
             world_size=world_size,
+            master_addr=master_addr,
             master_port=master_port,
             pipeline_config=pipeline_config,
         )

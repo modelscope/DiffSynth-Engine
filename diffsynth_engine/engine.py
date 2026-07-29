@@ -20,10 +20,13 @@ class DiffSynthEngine:
     def from_pretrained(cls, model_path_or_config: str | PipelineConfig, **kwargs):
         pipeline_config = _resolve_pipeline_config(model_path_or_config)
         num_workers = pipeline_config.parallelism
+        master_addr = kwargs.get("master_addr", "localhost")
         master_port = kwargs.get("master_port", 29500)
+        nnodes = kwargs.get("nnodes", 1)
+        node_rank = kwargs.get("node_rank", 0)
 
         if num_workers > 1:
-            return DistributedEngine(pipeline_config, num_workers, master_port)
+            return DistributedEngine(pipeline_config, num_workers, master_addr, master_port, nnodes, node_rank)
         return LocalEngine(pipeline_config)
 
     def generate(self, **kwargs):
@@ -210,8 +213,30 @@ class LocalEngine(DiffSynthEngine):
 
 
 class DistributedEngine(DiffSynthEngine):
-    def __init__(self, pipeline_config: PipelineConfig, num_workers: int, master_port: int):
-        logger.info(f"Initializing {num_workers} workers...")
+    def __init__(
+        self,
+        pipeline_config: PipelineConfig,
+        num_workers: int,
+        master_addr: str = "localhost",
+        master_port: int = 29500,
+        nnodes: int = 1,
+        node_rank: int = 0,
+    ):
+        if nnodes <= 0:
+            raise ValueError(f"nnodes must be positive, got {nnodes}")
+        if not 0 <= node_rank < nnodes:
+            raise ValueError(f"node_rank must be in [0, {nnodes}), got {node_rank}")
+        if num_workers % nnodes != 0:
+            raise ValueError(f"num_workers ({num_workers}) must be a multiple of nnodes ({nnodes})")
+
+        nproc_per_node = num_workers // nnodes
+        rank_offset = node_rank * nproc_per_node
+        self.node_rank = node_rank
+
+        logger.info(
+            f"Initializing {nproc_per_node} workers on node {node_rank} "
+            f"(world_size={num_workers}, master={master_addr}:{master_port})..."
+        )
 
         set_device(0)
 
@@ -219,20 +244,22 @@ class DistributedEngine(DiffSynthEngine):
         self.conns = []
 
         ctx = mp.get_context("spawn")
-        for rank in range(num_workers):
+        for local_rank in range(nproc_per_node):
+            global_rank = rank_offset + local_rank
             conn_main, conn_worker = ctx.Pipe(duplex=True)
 
             process = ctx.Process(
                 target=run_worker_loop,
                 args=(
-                    rank,  # local_rank
-                    rank,  # rank
+                    local_rank,  # local_rank
+                    global_rank,  # rank
                     num_workers,  # world_size
+                    master_addr,  # master_addr
                     master_port,  # master_port
                     conn_worker,  # conn
                     pipeline_config,  # pipeline_config
                 ),
-                name=f"diffsynth-worker-{rank}",
+                name=f"diffsynth-worker-{global_rank}",
                 daemon=True,
             )
             process.start()
@@ -240,11 +267,12 @@ class DistributedEngine(DiffSynthEngine):
             self.workers.append(process)
             self.conns.append(conn_main)
 
-        for rank, conn in enumerate(self.conns):
+        for i, conn in enumerate(self.conns):
             result = conn.recv()
             if result["status"] != "ready":
-                raise RuntimeError(f"Worker {rank} failed to start: {result.get('error', 'Unknown error')}")
-        logger.info("All workers are ready")
+                global_rank = rank_offset + i
+                raise RuntimeError(f"Worker {global_rank} failed to start: {result.get('error', 'Unknown error')}")
+        logger.info(f"All workers on node {node_rank} are ready")
 
     def _dispatch(self, method: str, output_rank: int | None = 0, **kwargs):
         self.conns[0].send(
