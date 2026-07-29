@@ -15,6 +15,7 @@ from diffsynth_engine.utils.flag import (
     SPARGE_ATTN_AVAILABLE,
     VIDEO_SPARSE_ATTN_AVAILABLE,
     AITER_AVAILABLE,
+    MINDIE_AVAILABLE,
 )
 from diffsynth_engine.utils.platform import DTYPE_FP8
 
@@ -107,6 +108,16 @@ if VIDEO_SPARSE_ATTN_AVAILABLE:
         distributed_video_sparse_attn,
     )
 
+if MINDIE_AVAILABLE:
+    from mindiesd.layers.flash_attn.attention_forward import attention_forward
+
+    def mindie_attn(q, k, v, attn_mask=None, scale=None):
+        return attention_forward(
+            query=q, key=k, value=v,
+            attn_mask=attn_mask, scale=scale,
+            fused=True, head_first=False,
+        )
+
 
 def eager_attn(q, k, v, attn_mask=None, scale=None):
     q = q.transpose(1, 2)
@@ -152,6 +163,7 @@ def attention(
         "sage",
         "sparge",
         "vsa",
+        "mindie",
     ]
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
     if attn_impl is None or attn_impl == "auto":
@@ -192,6 +204,8 @@ def attention(
                 )
         if XFORMERS_AVAILABLE:
             return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
+        if MINDIE_AVAILABLE:
+            return mindie_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         if SDPA_AVAILABLE:
             return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         if FLASH_ATTN_2_AVAILABLE:
@@ -263,6 +277,8 @@ def attention(
                 cdfthreshd=kwargs.get("cdfthreshd", 0.98),
                 pvthreshd=kwargs.get("pvthreshd", 50),
             )
+        if attn_impl == "mindie":
+            return mindie_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         if attn_impl == "vsa":
             return video_sparse_attn(
                 q,
@@ -354,7 +370,10 @@ def long_context_attention(
         "sage",
         "sparge",
         "vsa",
+        "mindie",
     ]
+    if attn_impl == "mindie":
+        raise RuntimeError("mindie long-context attention is not supported yet")
     assert attn_mask is None, "long context attention does not support attention mask"
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
     if attn_impl is None or attn_impl == "auto":

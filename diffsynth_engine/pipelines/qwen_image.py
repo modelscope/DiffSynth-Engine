@@ -376,7 +376,9 @@ class QwenImagePipeline(BasePipeline):
         self.update_component(self.vae, state_dicts.vae, self.config.device, self.config.vae_dtype)
 
     def compile(self):
-        self.dit.compile_repeated_blocks()
+        from diffsynth_engine.platforms import resolve_platform
+        platform_cls = resolve_platform(self.config.device)
+        self.dit.compile_repeated_blocks(**platform_cls.compile_kwargs())
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.config.tp_degree is None or self.config.tp_degree == 1, (
