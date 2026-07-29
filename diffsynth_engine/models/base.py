@@ -5,11 +5,6 @@ import torch.nn as nn
 from accelerate import init_empty_weights
 from diffusers.configuration_utils import ConfigMixin
 
-from diffsynth_engine.distributed.parallel_state import (
-    get_tensor_model_parallel_world_size,
-    is_tp_group_initialized,
-)
-from diffsynth_engine.layers.tensor_parallel import derive_tp_model_weight_load_plan
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.constants import CONFIG_NAME
 from diffsynth_engine.utils.load_utils import load_model_weights
@@ -45,16 +40,6 @@ class DiffusionModel(nn.Module, ConfigMixin):
         with init_empty_weights():
             model = cls.from_config(config_dict)
 
-        tensor_selection_plan = None
-        tp_size = get_tensor_model_parallel_world_size() if is_tp_group_initialized() else 1
-        if tp_size > 1:
-            tensor_selection_plan = derive_tp_model_weight_load_plan(model)
-            if not tensor_selection_plan:
-                raise RuntimeError(
-                    f"Tensor parallel world size is {tp_size}, but {cls.__name__} has no tensor-parallel submodules; "
-                    "the model is not TP-aware."
-                )
-
         # avoid precision loss
         if dtype is not None and dtype != torch.float32 and cls._keep_in_fp32_modules:
             state_dict = load_model_weights(
@@ -62,7 +47,6 @@ class DiffusionModel(nn.Module, ConfigMixin):
                 subfolder,
                 device,
                 dtype=None,
-                tensor_selection_plan=tensor_selection_plan,
             )
             for k, v in state_dict.items():
                 if any(m in k.split(".") for m in cls._keep_in_fp32_modules):
@@ -75,7 +59,6 @@ class DiffusionModel(nn.Module, ConfigMixin):
                 subfolder,
                 device,
                 dtype,
-                tensor_selection_plan=tensor_selection_plan,
             )
 
         # drop unexpected keys

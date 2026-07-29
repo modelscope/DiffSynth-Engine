@@ -110,12 +110,8 @@ class WanAttention(nn.Module):
 
         self.add_k_proj = self.add_v_proj = None
         if added_kv_proj_dim is not None:
-            self.add_k_proj = ColumnParallelLinear(
-                added_kv_proj_dim, self.inner_dim, bias=True, gather_output=False
-            )
-            self.add_v_proj = ColumnParallelLinear(
-                added_kv_proj_dim, self.inner_dim, bias=True, gather_output=False
-            )
+            self.add_k_proj = ColumnParallelLinear(added_kv_proj_dim, self.inner_dim, bias=True, gather_output=False)
+            self.add_v_proj = ColumnParallelLinear(added_kv_proj_dim, self.inner_dim, bias=True, gather_output=False)
             self.norm_added_k = TensorParallelRMSNorm(self.inner_dim, eps=eps)
 
         forward_context = get_forward_context()

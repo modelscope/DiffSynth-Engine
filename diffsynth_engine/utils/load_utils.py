@@ -2,12 +2,20 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import torch
+import torch.nn as nn
 
-from diffsynth_engine.distributed.parallel_state import get_global_rank, get_world_group, is_world_group_initialized
+from diffsynth_engine.distributed.parallel_state import (
+    get_global_rank,
+    get_tensor_model_parallel_world_size,
+    get_world_group,
+    is_tp_group_initialized,
+    is_world_group_initialized,
+)
+from diffsynth_engine.layers.tensor_parallel.linear import ColumnParallelLinear, RowParallelLinear
+from diffsynth_engine.layers.tensor_parallel.norm import TensorParallelRMSNorm
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.constants import (
     DIFFUSION_SAFETENSORS_INDEX_NAME,
@@ -15,22 +23,6 @@ from diffsynth_engine.utils.constants import (
     SAFETENSORS_INDEX_NAME,
     SAFETENSORS_WEIGHTS_NAME,
 )
-
-
-@dataclass(frozen=True)
-class TensorSlice:
-    dim: int
-    start: int
-    end: int
-
-
-@dataclass(frozen=True)
-class TensorSelection:
-    slices: Tuple[TensorSlice, ...]
-    contiguous: bool = True
-
-
-TensorSelectionPlan = Dict[str, TensorSelection]
 
 logger = logging.get_logger(__name__)
 
@@ -65,40 +57,6 @@ def load_safetensors(path: str, device: str = "cpu") -> Dict[str, Any]:
     return state_dict
 
 
-def apply_tensor_selection(
-    state_dict: Dict[str, Any],
-    tensor_selection_plan: TensorSelectionPlan,
-) -> Dict[str, Any]:
-    for key in list(state_dict.keys()):
-        selection = tensor_selection_plan.get(key)
-        if selection is None:
-            continue
-
-        value = state_dict[key]
-        if not isinstance(value, torch.Tensor):
-            continue
-
-        slices = [slice(None)] * value.dim()
-        for tensor_slice in selection.slices:
-            dim = tensor_slice.dim if tensor_slice.dim >= 0 else value.dim() + tensor_slice.dim
-            if dim < 0 or dim >= value.dim():
-                raise ValueError(
-                    f"Cannot slice '{key}' shape={tuple(value.shape)} along dim {tensor_slice.dim}: "
-                    f"tensor has {value.dim()} dimensions."
-                )
-            if tensor_slice.start < 0 or tensor_slice.end > value.shape[dim] or tensor_slice.start > tensor_slice.end:
-                raise ValueError(
-                    f"Invalid slice for '{key}' shape={tuple(value.shape)}: "
-                    f"dim={tensor_slice.dim}, start={tensor_slice.start}, end={tensor_slice.end}."
-                )
-            slices[dim] = slice(tensor_slice.start, tensor_slice.end)
-
-        selected = value[tuple(slices)]
-        state_dict[key] = selected.contiguous() if selection.contiguous else selected
-
-    return state_dict
-
-
 def _list_shard_files(path: str) -> list[str]:
     if not os.path.exists(path):
         raise FileNotFoundError(f"Model path not found: {path}")
@@ -121,10 +79,64 @@ def _list_shard_files(path: str) -> list[str]:
 
     with open(index_file, "r", encoding="utf-8") as file:
         index_dict = json.load(file)
-    shard_names = sorted(set(index_dict["weight_map"].values()))
-    if not shard_names:
+    shard_files = sorted(set(index_dict["weight_map"].values()))
+    if not shard_files:
         raise ValueError(f"Weight index {index_file} contains an empty weight_map")
-    return [os.path.join(path, name) for name in shard_names]
+    return [os.path.join(path, name) for name in shard_files]
+
+
+# tensor parallel
+
+
+def _slice_tensor(
+    tensor: torch.Tensor,
+    name: str,
+    span: tuple[int, int, int],
+) -> torch.Tensor:
+    dim, start, length = span
+    if dim < 0 or dim >= tensor.dim():
+        raise ValueError(f"Cannot shard '{name}' shape={tuple(tensor.shape)} along dim {dim}.")
+    if start < 0 or length < 0 or start + length > tensor.shape[dim]:
+        raise ValueError(
+            f"Invalid shard for '{name}' shape={tuple(tensor.shape)}: dim={dim}, start={start}, length={length}."
+        )
+
+    return tensor.narrow(dim, start, length).contiguous()
+
+
+def _slice_tensor_parallel_weights(
+    model: nn.Module,
+    state_dict: Dict[str, Any],
+) -> Dict[str, Any]:
+    tp_size = get_tensor_model_parallel_world_size() if is_tp_group_initialized() else 1
+    if tp_size <= 1:
+        return state_dict
+
+    spans: Dict[str, tuple[int, int, int]] = {}
+    for name, module in model.named_modules():
+        prefix = f"{name}." if name else ""
+
+        if isinstance(module, ColumnParallelLinear) and module.tp_size > 1:
+            start = module.tp_rank * module.out_features_per_partition
+            length = module.out_features_per_partition
+            spans[f"{prefix}weight"] = (0, start, length)
+            if module.bias is not None:
+                spans[f"{prefix}bias"] = (0, start, length)
+        elif isinstance(module, RowParallelLinear) and module.tp_size > 1:
+            start = module.tp_rank * module.in_features_per_partition
+            length = module.in_features_per_partition
+            spans[f"{prefix}weight"] = (1, start, length)
+        elif isinstance(module, TensorParallelRMSNorm) and module.tp_size > 1 and module.weight is not None:
+            start = module.tp_rank * module.hidden_size_per_partition
+            length = module.hidden_size_per_partition
+            spans[f"{prefix}weight"] = (0, start, length)
+
+    for name, tensor in state_dict.items():
+        span = spans.get(name)
+        if span is not None:
+            state_dict[name] = _slice_tensor(tensor, name, span)
+
+    return state_dict
 
 
 def load_model_weights(
@@ -133,27 +145,50 @@ def load_model_weights(
     device: Optional[str] = None,
     dtype: Optional[torch.dtype] = None,
     broadcast_from_rank0: bool = True,
-    tensor_selection_plan: Optional[TensorSelectionPlan] = None,
 ) -> Dict[str, Any]:
     world_group = get_world_group() if is_world_group_initialized() else None
     is_rank_zero = world_group is None or get_global_rank() == 0
-
-    resolved_path = os.path.join(model_path, subfolder) if subfolder is not None else model_path
-    shard_files = _list_shard_files(resolved_path)
+    model_path = os.path.join(model_path, subfolder) if subfolder is not None else model_path
 
     state_dict: Dict[str, Any] = {}
-    for shard_file in shard_files:
-        shard_dict = load_safetensors(shard_file) if is_rank_zero else {}
+    for shard_file in _list_shard_files(model_path):
+        shard_dict = load_safetensors(shard_file, device=device or "cpu") if is_rank_zero else {}
 
         if world_group is not None and broadcast_from_rank0:
             shard_dict = world_group.broadcast_tensor_dict(shard_dict, src=0)
 
-        if tensor_selection_plan is not None:
-            shard_dict = apply_tensor_selection(shard_dict, tensor_selection_plan)
+        for name, tensor in shard_dict.items():
+            if isinstance(tensor, torch.Tensor):
+                shard_dict[name] = tensor.to(dtype=dtype, non_blocking=True)
+        state_dict.update(shard_dict)
 
-        for key, value in shard_dict.items():
-            if isinstance(value, torch.Tensor):
-                shard_dict[key] = value.to(device=device, dtype=dtype, non_blocking=True)
+    return state_dict
+
+
+def prepare_model_weights(
+    model: nn.Module,
+    model_path: str,
+    subfolder: Optional[str] = None,
+    device: Optional[str] = None,
+    dtype: Optional[torch.dtype] = None,
+    broadcast_from_rank0: bool = True,
+) -> Dict[str, Any]:
+    world_group = get_world_group() if is_world_group_initialized() else None
+    is_rank_zero = world_group is None or get_global_rank() == 0
+    model_path = os.path.join(model_path, subfolder) if subfolder is not None else model_path
+
+    state_dict: Dict[str, Any] = {}
+    for shard_file in _list_shard_files(model_path):
+        shard_dict = load_safetensors(shard_file, device=device or "cpu") if is_rank_zero else {}
+
+        if world_group is not None and broadcast_from_rank0:
+            shard_dict = world_group.broadcast_tensor_dict(shard_dict, src=0)
+
+        shard_dict = _slice_tensor_parallel_weights(model, shard_dict)
+
+        for name, tensor in shard_dict.items():
+            if isinstance(tensor, torch.Tensor):
+                shard_dict[name] = tensor.to(dtype=dtype, non_blocking=True)
         state_dict.update(shard_dict)
 
     return state_dict

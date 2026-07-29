@@ -17,9 +17,8 @@ from diffsynth_engine.distributed.parallel_state import (
     is_world_group_initialized,
 )
 from diffsynth_engine.forward_context import set_forward_context
-from diffsynth_engine.layers.tensor_parallel import derive_tp_model_weight_load_plan
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.load_utils import fix_state_dict_key, load_model_weights
+from diffsynth_engine.utils.load_utils import fix_state_dict_key, load_model_weights, prepare_model_weights
 
 logger = logging.get_logger(__name__)
 
@@ -45,7 +44,7 @@ class Pipeline:
         has_compiled_region = False
         for submodule in model.modules():
             if submodule.__class__.__name__ in repeated_blocks:
-                submodule.compile(dynamic=True, fullgraph=False)
+                submodule.compile()
                 has_compiled_region = True
 
         if not has_compiled_region:
@@ -86,21 +85,11 @@ class Pipeline:
                     fully_shard(submodule)
             fully_shard(model)
 
-        tensor_selection_plan = None
         tp_size = get_tensor_model_parallel_world_size() if is_tp_group_initialized() else 1
         if tp_size > 1:
-            tensor_selection_plan = derive_tp_model_weight_load_plan(model)
-            if not tensor_selection_plan:
-                raise RuntimeError(
-                    f"Tensor parallel world size is {tp_size}, but {model_cls.__name__} has no tensor-parallel submodules; "
-                    "the model is not TP-aware."
-                )
-
             num_heads = getattr(model.config, "num_attention_heads", None)
             if num_heads is not None and num_heads % tp_size != 0:
-                raise ValueError(
-                    f"num_attention_heads ({num_heads}) must be divisible by tp_degree ({tp_size})"
-                )
+                raise ValueError(f"num_attention_heads ({num_heads}) must be divisible by tp_degree ({tp_size})")
             if num_heads is not None and is_sp_group_initialized():
                 ulysses_size = get_ulysses_parallel_world_size()
                 heads_per_tp_partition = num_heads // tp_size
@@ -114,30 +103,24 @@ class Pipeline:
         load_device = "cpu" if use_fsdp else pipeline_config.device
         model_dtype = pipeline_config.model_dtype
         keep_in_fp32_modules = getattr(model_cls, "_keep_in_fp32_modules", None)
-        if model_dtype is not None and model_dtype != torch.float32 and keep_in_fp32_modules:
+        keep_in_fp32 = bool(model_dtype is not None and model_dtype != torch.float32 and keep_in_fp32_modules)
+        load_dtype = None if keep_in_fp32 else model_dtype
+        state_dict = prepare_model_weights(
+            model,
+            pipeline_config.model_path,
+            subfolder=subfolder,
+            device=load_device,
+            dtype=load_dtype,
+            broadcast_from_rank0=not use_fsdp,
+        )
+
+        if keep_in_fp32:
             # avoid precision loss: keep modules (time embedder, modulation, norms) in fp32
-            state_dict = load_model_weights(
-                pipeline_config.model_path,
-                subfolder=subfolder,
-                device=load_device,
-                dtype=None,
-                broadcast_from_rank0=not use_fsdp,
-                tensor_selection_plan=tensor_selection_plan,
-            )
             for k, v in state_dict.items():
                 if any(m in k.split(".") for m in keep_in_fp32_modules):
                     state_dict[k] = v.to(dtype=torch.float32)
                 else:
                     state_dict[k] = v.to(dtype=model_dtype)
-        else:
-            state_dict = load_model_weights(
-                pipeline_config.model_path,
-                subfolder=subfolder,
-                device=load_device,
-                dtype=model_dtype,
-                broadcast_from_rank0=not use_fsdp,
-                tensor_selection_plan=tensor_selection_plan,
-            )
 
         if use_fsdp:
             set_model_state_dict(

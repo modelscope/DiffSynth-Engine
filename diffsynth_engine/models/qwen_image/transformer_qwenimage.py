@@ -421,9 +421,7 @@ class QwenDoubleStreamAttention(nn.Module):
         self.attention_head_dim = attention_head_dim
         tp_size = get_tensor_model_parallel_world_size() if is_tp_group_initialized() else 1
         if num_attention_heads % tp_size != 0:
-            raise ValueError(
-                f"num_attention_heads ({num_attention_heads}) must be divisible by tp_size ({tp_size})"
-            )
+            raise ValueError(f"num_attention_heads ({num_attention_heads}) must be divisible by tp_size ({tp_size})")
         self.heads = num_attention_heads // tp_size
 
         # Image stream projections
@@ -437,9 +435,15 @@ class QwenDoubleStreamAttention(nn.Module):
         self.to_out.append(nn.Dropout(dropout))
 
         # Text stream projections
-        self.add_q_proj = ColumnParallelLinear(dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False)
-        self.add_k_proj = ColumnParallelLinear(dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False)
-        self.add_v_proj = ColumnParallelLinear(dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False)
+        self.add_q_proj = ColumnParallelLinear(
+            dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False
+        )
+        self.add_k_proj = ColumnParallelLinear(
+            dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False
+        )
+        self.add_v_proj = ColumnParallelLinear(
+            dim, num_attention_heads * attention_head_dim, bias=True, gather_output=False
+        )
         self.to_add_out = RowParallelLinear(
             num_attention_heads * attention_head_dim, dim, bias=True, input_is_parallel=True
         )
