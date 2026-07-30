@@ -59,5 +59,41 @@ class TestQwenImageEditPlusPipeline(ImageTestCase):
         self.assertImageEqualAndSaveFailed(image, "qwen_image/qwen_image_edit_plus_multi_2511.png", threshold=0.97)
 
 
+class TestQwenImageEditPlusPipelineTP(ImageTestCase):
+    @classmethod
+    def setUpClass(cls):
+        model_path = fetch_model("Qwen/Qwen-Image-Edit-2511")
+        config = QwenImagePipelineConfig(
+            model_path=model_path,
+            parallelism=4,
+            tp_degree=4,
+            sp_ulysses_degree=1,
+            sp_ring_degree=1,
+        )
+        cls.engine = DiffSynthEngine.from_pretrained(config)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.engine.shutdown()
+        del cls.engine
+        torch.cuda.empty_cache()
+
+    def test_single_image_edit_tp(self):
+        input_image = self.get_input_image("qwen_image_edit_input.png")
+        prompt = "Replace '通义千问' with '呜哩AI'"
+        negative_prompt = " "
+
+        output = self.engine.generate(
+            image=input_image,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            true_cfg_scale=4.0,
+            num_inference_steps=50,
+            generator=torch.Generator(device="cpu").manual_seed(42),
+        )
+        image = output.images[0]
+        self.assertImageEqualAndSaveFailed(image, "qwen_image/qwen_image_edit_plus_single_2511.png", threshold=0.99)
+
+
 if __name__ == "__main__":
     unittest.main()
