@@ -19,11 +19,11 @@ import math
 import torch
 import torch.nn as nn
 from diffusers.configuration_utils import register_to_config
-from diffusers.models.attention import FeedForward
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.normalization import FP32LayerNorm
 
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
+from diffsynth_engine.layers.tensor_parallel import TPFeedForward
 from diffsynth_engine.models.base import DiffusionModel
 from diffsynth_engine.models.wan.transformer_wan import (
     WanAttention,
@@ -78,7 +78,7 @@ class WanVACETransformerBlock(nn.Module):
         self.norm2 = FP32LayerNorm(dim, eps, elementwise_affine=True) if cross_attn_norm else nn.Identity()
 
         # 4. Feed-forward
-        self.ffn = FeedForward(dim, inner_dim=ffn_dim, activation_fn="gelu-approximate")
+        self.ffn = TPFeedForward(dim, inner_dim=ffn_dim, activation_fn="gelu-approximate")
         self.norm3 = FP32LayerNorm(dim, eps, elementwise_affine=False)
 
         # 5. Output projection
@@ -316,10 +316,10 @@ class WanVACETransformer3DModel(DiffusionModel):
 
         # 2. Patch embedding
         hidden_states = self.patch_embedding(hidden_states)
-        hidden_states = hidden_states.flatten(2).transpose(1, 2)
+        hidden_states = hidden_states.flatten(2).transpose(1, 2).contiguous()
 
         control_hidden_states = self.vace_patch_embedding(control_hidden_states)
-        control_hidden_states = control_hidden_states.flatten(2).transpose(1, 2)
+        control_hidden_states = control_hidden_states.flatten(2).transpose(1, 2).contiguous()
         control_hidden_states_padding = control_hidden_states.new_zeros(
             batch_size, hidden_states.size(1) - control_hidden_states.size(1), control_hidden_states.size(2)
         )

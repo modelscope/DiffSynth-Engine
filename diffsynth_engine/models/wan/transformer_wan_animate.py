@@ -23,9 +23,14 @@ from diffusers.configuration_utils import register_to_config
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.normalization import FP32LayerNorm
 
+from diffsynth_engine.distributed.parallel_state import (
+    get_tensor_model_parallel_world_size,
+    is_tp_group_initialized,
+)
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
 from diffsynth_engine.layers.attention import LocalAttention
+from diffsynth_engine.layers.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 from diffsynth_engine.models.base import DiffusionModel
 from diffsynth_engine.models.wan.transformer_wan import (
     WanRotaryPosEmbed,
@@ -400,8 +405,12 @@ class WanAnimateFaceBlockCrossAttention(nn.Module):
         cross_attention_dim_head: int | None = None,
     ):
         super().__init__()
+        tp_size = get_tensor_model_parallel_world_size() if is_tp_group_initialized() else 1
+        if heads % tp_size != 0:
+            raise ValueError(f"heads ({heads}) must be divisible by tp_size ({tp_size})")
+
         self.inner_dim = dim_head * heads
-        self.heads = heads
+        self.heads = heads // tp_size
         self.cross_attention_dim_head = cross_attention_dim_head
         self.kv_inner_dim = self.inner_dim if cross_attention_dim_head is None else cross_attention_dim_head * heads
 
@@ -411,10 +420,10 @@ class WanAnimateFaceBlockCrossAttention(nn.Module):
         self.pre_norm_kv = nn.LayerNorm(dim, eps, elementwise_affine=False)
 
         # 2. QKV and Output Projections
-        self.to_q = nn.Linear(dim, self.inner_dim, bias=True)
-        self.to_k = nn.Linear(dim, self.kv_inner_dim, bias=True)
-        self.to_v = nn.Linear(dim, self.kv_inner_dim, bias=True)
-        self.to_out = nn.Linear(self.inner_dim, dim, bias=True)
+        self.to_q = ColumnParallelLinear(dim, self.inner_dim, bias=True, gather_output=False)
+        self.to_k = ColumnParallelLinear(dim, self.kv_inner_dim, bias=True, gather_output=False)
+        self.to_v = ColumnParallelLinear(dim, self.kv_inner_dim, bias=True, gather_output=False)
+        self.to_out = RowParallelLinear(self.inner_dim, dim, bias=True, input_is_parallel=True)
 
         # 3. QK Norm
         # NOTE: this is applied after the reshape, so only over dim_head rather than dim_head * heads
@@ -424,7 +433,7 @@ class WanAnimateFaceBlockCrossAttention(nn.Module):
         # 4. Attention
         forward_context = get_forward_context()
         self.attn = LocalAttention(
-            num_heads=heads,
+            num_heads=self.heads,
             head_size=dim_head,
             attn_type=forward_context.attn_type,
         )

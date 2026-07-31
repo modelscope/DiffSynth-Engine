@@ -42,14 +42,24 @@ class DiffusionModel(nn.Module, ConfigMixin):
 
         # avoid precision loss
         if dtype is not None and dtype != torch.float32 and cls._keep_in_fp32_modules:
-            state_dict = load_model_weights(model_path, subfolder, device, dtype=None)
+            state_dict = load_model_weights(
+                model_path,
+                subfolder,
+                device,
+                dtype=None,
+            )
             for k, v in state_dict.items():
                 if any(m in k.split(".") for m in cls._keep_in_fp32_modules):
                     state_dict[k] = v.to(dtype=torch.float32)
                 else:
                     state_dict[k] = v.to(dtype=dtype)
         else:
-            state_dict = load_model_weights(model_path, subfolder, device, dtype)
+            state_dict = load_model_weights(
+                model_path,
+                subfolder,
+                device,
+                dtype,
+            )
 
         # drop unexpected keys
         if cls._keys_to_ignore_on_load_unexpected:

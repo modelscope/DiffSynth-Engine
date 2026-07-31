@@ -8,10 +8,17 @@ from torch.distributed.checkpoint.state_dict import StateDictOptions, set_model_
 from tqdm import tqdm
 
 from diffsynth_engine.configs import PipelineConfig
-from diffsynth_engine.distributed.parallel_state import get_global_rank, is_world_group_initialized
+from diffsynth_engine.distributed.parallel_state import (
+    get_global_rank,
+    get_tensor_model_parallel_world_size,
+    get_ulysses_parallel_world_size,
+    is_sp_group_initialized,
+    is_tp_group_initialized,
+    is_world_group_initialized,
+)
 from diffsynth_engine.forward_context import set_forward_context
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.load_utils import fix_state_dict_key, load_model_weights
+from diffsynth_engine.utils.load_utils import fix_state_dict_key, load_model_weights, prepare_model_weights
 
 logger = logging.get_logger(__name__)
 
@@ -29,7 +36,26 @@ class Pipeline:
         raise NotImplementedError()
 
     @staticmethod
+    def compile_transformer_blocks(model: nn.Module) -> nn.Module:
+        repeated_blocks = getattr(model, "_repeated_blocks", None)
+        if not repeated_blocks:
+            raise ValueError(f"`_repeated_blocks` is not defined for {type(model).__name__}")
+
+        has_compiled_region = False
+        for submodule in model.modules():
+            if submodule.__class__.__name__ in repeated_blocks:
+                submodule.compile()
+                has_compiled_region = True
+
+        if not has_compiled_region:
+            raise ValueError(
+                f"None of the repeated block classes {repeated_blocks} were found in {type(model).__name__}"
+            )
+        return model
+
+    @classmethod
     def init_transformer(
+        cls,
         model_cls: Type[nn.Module],
         pipeline_config: PipelineConfig,
         empty_weights: bool = False,
@@ -59,31 +85,42 @@ class Pipeline:
                     fully_shard(submodule)
             fully_shard(model)
 
+        tp_size = get_tensor_model_parallel_world_size() if is_tp_group_initialized() else 1
+        if tp_size > 1:
+            num_heads = getattr(model.config, "num_attention_heads", None)
+            if num_heads is not None and num_heads % tp_size != 0:
+                raise ValueError(f"num_attention_heads ({num_heads}) must be divisible by tp_degree ({tp_size})")
+            if num_heads is not None and is_sp_group_initialized():
+                ulysses_size = get_ulysses_parallel_world_size()
+                heads_per_tp_partition = num_heads // tp_size
+                if ulysses_size > 1 and heads_per_tp_partition % ulysses_size != 0:
+                    raise ValueError(
+                        f"With tp_degree={tp_size} and sp_ulysses_degree={ulysses_size}, "
+                        f"heads_per_tp_partition ({heads_per_tp_partition}) must be divisible by "
+                        "sp_ulysses_degree."
+                    )
+
         load_device = "cpu" if use_fsdp else pipeline_config.device
         model_dtype = pipeline_config.model_dtype
         keep_in_fp32_modules = getattr(model_cls, "_keep_in_fp32_modules", None)
-        if model_dtype is not None and model_dtype != torch.float32 and keep_in_fp32_modules:
+        keep_in_fp32 = bool(model_dtype is not None and model_dtype != torch.float32 and keep_in_fp32_modules)
+        load_dtype = None if keep_in_fp32 else model_dtype
+        state_dict = prepare_model_weights(
+            model,
+            pipeline_config.model_path,
+            subfolder=subfolder,
+            device=load_device,
+            dtype=load_dtype,
+            broadcast_from_rank0=not use_fsdp,
+        )
+
+        if keep_in_fp32:
             # avoid precision loss: keep modules (time embedder, modulation, norms) in fp32
-            state_dict = load_model_weights(
-                pipeline_config.model_path,
-                subfolder=subfolder,
-                device=load_device,
-                dtype=None,
-                broadcast_from_rank0=not use_fsdp,
-            )
             for k, v in state_dict.items():
                 if any(m in k.split(".") for m in keep_in_fp32_modules):
                     state_dict[k] = v.to(dtype=torch.float32)
                 else:
                     state_dict[k] = v.to(dtype=model_dtype)
-        else:
-            state_dict = load_model_weights(
-                pipeline_config.model_path,
-                subfolder=subfolder,
-                device=load_device,
-                dtype=model_dtype,
-                broadcast_from_rank0=not use_fsdp,
-            )
 
         if use_fsdp:
             set_model_state_dict(
@@ -96,6 +133,8 @@ class Pipeline:
             model.to(device=pipeline_config.device)
 
         del state_dict
+        if pipeline_config.use_torch_compile:
+            model = cls.compile_transformer_blocks(model)
         return model
 
     @staticmethod
