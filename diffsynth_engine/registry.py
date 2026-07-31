@@ -7,6 +7,7 @@ from diffsynth_engine.plugins import load_general_plugins
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.constants import MODEL_INDEX_NAME
 from diffsynth_engine.utils.import_utils import LazyImport
+from diffsynth_engine.utils.platform import is_mindie_sd_available
 
 if TYPE_CHECKING:
     from diffsynth_engine.layers.attention.backends.abstract import AttentionBackend
@@ -37,6 +38,7 @@ _ATTENTION_BACKENDS: dict[str, str] = {
     "sage3": "diffsynth_engine.layers.attention.backends.sage_attn_3:SageAttention3Backend",
     "sdpa": "diffsynth_engine.layers.attention.backends.sdpa:SDPABackend",
     "sparge": "diffsynth_engine.layers.attention.backends.sparge_attn:SpargeAttentionBackend",
+    "mindie": "diffsynth_engine.layers.attention.backends.mindie_attn:MindieAttentionBackend",
 }
 
 PIPELINE_REGISTRY: dict[str, LazyImport] = {}
@@ -118,7 +120,7 @@ def get_attn_backend(attn_type: str | None = None) -> type["AttentionBackend"]:
         _attention_backend_registry_initialized = True
 
     if attn_type is None:
-        attn_type = "sdpa"
+        attn_type = "mindie" if is_mindie_sd_available() else "sdpa"
     if attn_type not in ATTENTION_BACKEND_REGISTRY:
         available_backends = sorted(ATTENTION_BACKEND_REGISTRY)
         raise ValueError(f"Attention backend {attn_type!r} not found. Available backends: {available_backends}")

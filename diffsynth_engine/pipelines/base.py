@@ -96,7 +96,12 @@ class Pipeline:
             model.to(device=pipeline_config.device)
 
         del state_dict
-        return model
+
+        # Pipeline loads via from_config + load_state_dict, so compile must be
+        # applied here (DiffusionModel.from_pretrained is no longer on this path).
+        from diffsynth_engine.platform.npu import apply_mindie_sd_compile
+
+        return apply_mindie_sd_compile(model)
 
     @staticmethod
     def init_text_encoder(

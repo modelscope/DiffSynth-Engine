@@ -18,7 +18,7 @@ def _parse_tuple(value: str) -> Tuple[int, int] | int:
 
 
 def _parse_attention_params(
-    attn_type: str,
+    attn_type: str | None,
     sparge_topk: float | None = None,
 ) -> AttentionParams | None:
     """Parse attention parameters based on attention type"""
@@ -100,8 +100,8 @@ def parse_cli_args() -> Dict[str, Any]:
     attn_group.add_argument(
         "--attn-type",
         type=str,
-        default="sdpa",
-        help="Attention type (default: sdpa)",
+        default=None,
+        help="Attention type (default: auto, SDPA on GPU, mindie on NPU)",
     )
     attn_group.add_argument(
         "--sparge-topk",
@@ -171,7 +171,7 @@ def parse_cli_args() -> Dict[str, Any]:
     args_dict["vae_tile_stride"] = _parse_tuple(args.vae_tile_stride)
 
     # Attention configuration
-    attn_type = args.attn_type.lower()
+    attn_type = args.attn_type.lower() if args.attn_type is not None else None
     args_dict["attn_type"] = attn_type
     args_dict["attn_params"] = _parse_attention_params(attn_type, args.sparge_topk)
 

@@ -6,6 +6,7 @@ import torch
 from diffsynth_engine.layers.attention import AttentionType
 from diffsynth_engine.registry import get_attn_backend
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.platform import get_device_type, is_mindie_sd_available
 
 logger = logging.get_logger(__name__)
 
@@ -27,8 +28,7 @@ class PipelineConfig:
     model_dtype: torch.dtype = torch.bfloat16
     text_encoder_dtype: torch.dtype = torch.bfloat16
     vae_dtype: torch.dtype = torch.float32
-    device: str | torch.device = "cuda"
-
+    device: str | torch.device = "auto"
     pipeline_class_name: str | None = None
 
     # vae
@@ -37,7 +37,7 @@ class PipelineConfig:
     vae_tile_stride: int | Tuple[int, int] = (192, 192)
 
     # attention
-    attn_type: AttentionType | str = AttentionType.SDPA
+    attn_type: AttentionType | str = "auto"
     attn_params: Optional[AttentionParams] = None
 
     # parallelism
@@ -56,6 +56,11 @@ class PipelineConfig:
         return cls(**filtered_dict)
 
     def __post_init__(self):
+        if self.device == "auto":
+            self.device = get_device_type() 
+        if self.attn_type == "auto":
+            self.attn_type = "mindie" if is_mindie_sd_available() else "sdpa"
+
         self.attn_type = str(self.attn_type)
         init_parallel_config(self)
         validate_attn_config(self)
