@@ -9,7 +9,7 @@ from diffsynth_engine.layers.attention.backends.abstract import (
     AttentionType,
 )
 
-_scaled_dot_product_efficient_attention = torch.ops.aten._scaled_dot_product_efficient_attention
+_scaled_dot_product_flash_attention = torch.ops.aten._scaled_dot_product_flash_attention
 
 
 class SDPABackend(AttentionBackend):
@@ -88,6 +88,12 @@ class SDPAImpl(AttentionImpl):
         attn_metadata: AttentionMetadata | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        if attn_mask is not None:
+            raise NotImplementedError(
+                "SDPA forward_with_lse does not support attn_mask; "
+                "masked Ring attention is not supported"
+            )
+
         query = rearrange(query, "b s n d -> b n s d")
         key = rearrange(key, "b s n d -> b n s d")
         value = rearrange(value, "b s n d -> b n s d")
@@ -96,18 +102,15 @@ class SDPAImpl(AttentionImpl):
             key = torch.repeat_interleave(key, self.num_kv_groups, dim=1)
             value = torch.repeat_interleave(value, self.num_kv_groups, dim=1)
 
-        seq_len = query.shape[2]
-        output, lse = _scaled_dot_product_efficient_attention(
+        output, lse = _scaled_dot_product_flash_attention(
             query,
             key,
             value,
-            attn_bias=attn_mask,
-            compute_log_sumexp=True,
+            dropout_p=0.0,
             is_causal=self.causal,
+            return_debug_mask=False,
             scale=self.softmax_scale,
         )[:2]
 
         output = rearrange(output, "b n s d -> b s n d")
-        # the returned lse is padded but not restored, so we need to slice it
-        lse = lse[:, :, :seq_len]
         return output, lse
