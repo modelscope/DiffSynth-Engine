@@ -112,10 +112,19 @@ if MINDIE_AVAILABLE:
     from mindiesd.layers.flash_attn.attention_forward import attention_forward
 
     def mindie_attn(q, k, v, attn_mask=None, scale=None):
+        #return attention_forward(
+        #    query=q, key=k, value=v,
+        #   attn_mask=attn_mask, scale=scale,
+        #    fused=True, head_first=False,
+        #)
+
         return attention_forward(
             query=q, key=k, value=v,
             attn_mask=attn_mask, scale=scale,
             fused=True, head_first=False,
+            opt_mode="manual",
+            op_type="fused_attn_score",
+            layout="BSND",
         )
 
 
