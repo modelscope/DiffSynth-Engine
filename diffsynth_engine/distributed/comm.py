@@ -11,7 +11,7 @@ import torch.distributed as dist
 
 
 def all_to_all_4D(
-    input: torch.tensor, scatter_idx: int = 2, gather_idx: int = 1, group=None, use_sync: bool = False
+    input: torch.tensor, scatter_idx: int = 2, gather_idx: int = 1, group=None, async_op: bool = False
 ) -> torch.tensor:
     """
     all-to-all for QKV
@@ -21,7 +21,7 @@ def all_to_all_4D(
         scatter_idx (int): default 1
         gather_idx (int): default 2
         group : torch process group
-        use_sync (bool): whether to synchronize after all-to-all
+        async_op (bool): whether to apply operation asynchronously
 
     Returns:
         torch.tensor: resharded tensor (bs, seqlen/P, hc, hs)
@@ -40,22 +40,32 @@ def all_to_all_4D(
         # (bs, seqlen/P, hc, hs) -reshape-> (bs, seq_len/P, P, hc/P, hs) -transpose(0,2)-> (P, seq_len/P, bs, hc/P, hs)
         input_t = input.reshape(bs, shard_seqlen, seq_world_size, shard_hc, hs).transpose(0, 2).contiguous()
 
-        output = torch.empty_like(input_t)
+        buffer = torch.empty_like(input_t)
         # https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_to_all_single
         # (P, seq_len/P, bs, hc/P, hs) scatter seqlen -all2all-> (P, seq_len/P, bs, hc/P, hs) scatter head
 
         if seq_world_size > 1:
-            dist.all_to_all_single(output, input_t, group=group)
-            if use_sync:
-                torch.cuda.synchronize()
+            comm = dist.all_to_all_single(buffer, input_t, group=group, async_op=async_op)
+
+            if async_op:
+
+                def wait():
+                    comm.wait()
+                    # if scattering the seq-dim, transpose the heads back to the original dimension
+                    output = buffer.reshape(seqlen, bs, shard_hc, hs)
+                    # (seq_len, bs, hc/P, hs) -reshape-> (bs, seq_len, hc/P, hs)
+                    output = output.transpose(0, 1).contiguous().reshape(bs, seqlen, shard_hc, hs)
+                    return output
+
+                return wait
+            else:
+                output = buffer
         else:
             output = input_t
         # if scattering the seq-dim, transpose the heads back to the original dimension
         output = output.reshape(seqlen, bs, shard_hc, hs)
-
         # (seq_len, bs, hc/P, hs) -reshape-> (bs, seq_len, hc/P, hs)
         output = output.transpose(0, 1).contiguous().reshape(bs, seqlen, shard_hc, hs)
-
         return output
 
     elif scatter_idx == 1 and gather_idx == 2:
@@ -75,22 +85,31 @@ def all_to_all_4D(
             .reshape(seq_world_size, shard_hc, shard_seqlen, bs, hs)
         )
 
-        output = torch.empty_like(input_t)
+        buffer = torch.empty_like(input_t)
         # https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_to_all_single
         # (P, bs x hc/P, seqlen/P, hs) scatter seqlen -all2all-> (P, bs x seq_len/P, hc/P, hs) scatter head
         if seq_world_size > 1:
-            dist.all_to_all_single(output, input_t, group=group)
-            if use_sync:
-                torch.cuda.synchronize()
+            comm = dist.all_to_all_single(buffer, input_t, group=group, async_op=async_op)
+
+            if async_op:
+
+                def wait():
+                    comm.wait()
+                    # if scattering the seq-dim, transpose the heads back to the original dimension
+                    output = buffer.reshape(hc, shard_seqlen, bs, hs)
+                    # (hc, seqlen/N, bs, hs) -tranpose(0,2)-> (bs, seqlen/N, hc, hs)
+                    output = output.transpose(0, 2).contiguous().reshape(bs, shard_seqlen, hc, hs)
+                    return output
+
+                return wait
+            else:
+                output = buffer
         else:
             output = input_t
-
         # if scattering the seq-dim, transpose the heads back to the original dimension
         output = output.reshape(hc, shard_seqlen, bs, hs)
-
         # (hc, seqlen/N, bs, hs) -tranpose(0,2)-> (bs, seqlen/N, hc, hs)
         output = output.transpose(0, 2).contiguous().reshape(bs, shard_seqlen, hc, hs)
-
         return output
     else:
         raise RuntimeError("scatter_idx must be 1 or 2 and gather_idx must be 1 or 2")
@@ -104,19 +123,19 @@ class SeqAllToAll4D(torch.autograd.Function):
         input: torch.Tensor,
         scatter_idx: int,
         gather_idx: int,
-        use_sync: bool = False,
+        async_op: bool = False,
     ) -> torch.Tensor:
         ctx.group = group
         ctx.scatter_idx = scatter_idx
         ctx.gather_idx = gather_idx
-        ctx.use_sync = use_sync
-        return all_to_all_4D(input, scatter_idx, gather_idx, group=group, use_sync=use_sync)
+        ctx.async_op = async_op
+        return all_to_all_4D(input, scatter_idx, gather_idx, group=group, async_op=async_op)
 
     @staticmethod
     def backward(ctx: Any, *grad_output: torch.Tensor) -> Tuple[None, torch.Tensor, None, None]:
         return (
             None,
-            SeqAllToAll4D.apply(ctx.group, *grad_output, ctx.gather_idx, ctx.scatter_idx, ctx.use_sync),
+            SeqAllToAll4D.apply(ctx.group, *grad_output, ctx.gather_idx, ctx.scatter_idx, False),
             None,
             None,
             None,
@@ -124,7 +143,7 @@ class SeqAllToAll4D(torch.autograd.Function):
 
 
 def all_to_all_5D(
-    input: torch.tensor, scatter_idx: int = 3, gather_idx: int = 1, group=None, use_sync: bool = False
+    input: torch.tensor, scatter_idx: int = 3, gather_idx: int = 1, group=None, async_op: bool = False
 ) -> torch.tensor:
     """
     all-to-all for QKV
@@ -135,7 +154,7 @@ def all_to_all_5D(
         scatter_idx (int): default 1
         gather_idx (int): default 2
         group : torch process group
-        use_sync: whether to synchronize after all-to-all
+        async_op (bool): whether to apply operation asynchronously
 
     Returns:
         torch.tensor: resharded tensor (bs, seqlen/P, 3, hc, hs)
@@ -156,22 +175,31 @@ def all_to_all_5D(
         # (bs, seqlen/P, 3, hc, hs) -reshape-> (bs, seq_len/P, 3, P, hc/P, hs) -transpose(0,3)-> (P, seq_len/P, 3, bs, hc/P, hs)
         input_t = input.reshape(bs, shard_seqlen, 3, seq_world_size, shard_hc, hs).transpose(0, 3).contiguous()
 
-        output = torch.empty_like(input_t)
+        buffer = torch.empty_like(input_t)
         # https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_to_all_single
         # (P, seq_len/P, 3, bs, hc/P, hs) scatter seqlen -all2all-> (P, seq_len/P, 3, bs, hc/P, hs) scatter head
         if seq_world_size > 1:
-            dist.all_to_all_single(output, input_t, group=group)
-            if use_sync:
-                torch.cuda.synchronize()
+            comm = dist.all_to_all_single(buffer, input_t, group=group, async_op=async_op)
+
+            if async_op:
+
+                def wait():
+                    comm.wait()
+                    # if scattering the seq-dim, transpose the heads back to the original dimension
+                    output = buffer.reshape(seqlen, 3, bs, shard_hc, hs)
+                    # (seq_len, 3, bs, hc/P, hs) -trans-> (bs, seq_len, 3, hc/P, hs)
+                    output = output.transpose(0, 2).transpose(1, 2).contiguous()
+                    return output.reshape(bs, seqlen, 3, shard_hc, hs).contiguous()
+
+                return wait
+            else:
+                output = buffer
         else:
             output = input_t
-
         # if scattering the seq-dim, transpose the heads back to the original dimension
         output = output.reshape(seqlen, 3, bs, shard_hc, hs)
-
         # (seq_len, 3, bs, hc/P, hs) -trans-> (bs, seq_len, 3, hc/P, hs)
         output = output.transpose(0, 2).transpose(1, 2).contiguous()
-
         return output.reshape(bs, seqlen, 3, shard_hc, hs).contiguous()
     elif scatter_idx == 1 and gather_idx == 3:
         # input (torch.tensor): a tensor sharded along dim 1 (bs, seqlen, hc/P, hs) output: (bs, seqlen/P, hc, hs)
@@ -190,22 +218,31 @@ def all_to_all_5D(
             .reshape(seq_world_size, shard_hc, shard_seqlen, 3, bs, hs)
         )
 
-        output = torch.empty_like(input_t)
+        buffer = torch.empty_like(input_t)
         # https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_to_all_single
         # (P, bs x hc/P, seqlen/P, hs) scatter seqlen -all2all-> (P, bs x seq_len/P, hc/P, hs) scatter head
         if seq_world_size > 1:
-            dist.all_to_all_single(output, input_t, group=group)
-            if use_sync:
-                torch.cuda.synchronize()
+            comm = dist.all_to_all_single(buffer, input_t, group=group, async_op=async_op)
+
+            if async_op:
+
+                def wait():
+                    comm.wait()
+                    # if scattering the seq-dim, transpose the heads back to the original dimension
+                    output = buffer.reshape(hc, shard_seqlen, 3, bs, hs)
+                    # (hc, seqlen/N, bs, hs) -tranpose(0,2)-> (bs, seqlen/N, hc, hs)
+                    output = output.transpose(0, 3).contiguous()
+                    return output.reshape(bs, shard_seqlen, 3, hc, hs).contiguous()
+
+                return wait
+            else:
+                output = buffer
         else:
             output = input_t
-
         # if scattering the seq-dim, transpose the heads back to the original dimension
         output = output.reshape(hc, shard_seqlen, 3, bs, hs)
-
         # (hc, seqlen/N, bs, hs) -tranpose(0,2)-> (bs, seqlen/N, hc, hs)
         output = output.transpose(0, 3).contiguous()
-
         return output.reshape(bs, shard_seqlen, 3, hc, hs).contiguous()
     else:
         raise RuntimeError("scatter_idx must be 1 or 3 and gather_idx must be 1 or 3")
@@ -219,20 +256,19 @@ class SeqAllToAll5D(torch.autograd.Function):
         input: torch.Tensor,
         scatter_idx: int = 3,
         gather_idx: int = 1,
-        use_sync: bool = False,
+        async_op: bool = False,
     ) -> torch.Tensor:
         ctx.group = group
         ctx.scatter_idx = scatter_idx
         ctx.gather_idx = gather_idx
-        ctx.use_sync = use_sync
-
-        return all_to_all_5D(input, scatter_idx, gather_idx, group=group, use_sync=use_sync)
+        ctx.async_op = async_op
+        return all_to_all_5D(input, scatter_idx, gather_idx, group=group, async_op=async_op)
 
     @staticmethod
     def backward(ctx: Any, *grad_output: torch.Tensor) -> Tuple[None, torch.Tensor, None, None]:
         return (
             None,
-            SeqAllToAll5D.apply(ctx.group, *grad_output, ctx.gather_idx, ctx.scatter_idx, ctx.use_sync),
+            SeqAllToAll5D.apply(ctx.group, *grad_output, ctx.gather_idx, ctx.scatter_idx, False),
             None,
             None,
             None,
