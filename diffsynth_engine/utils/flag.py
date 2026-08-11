@@ -2,6 +2,7 @@ import importlib
 import torch
 
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.platform import is_mindie_sd_available
 
 logger = logging.get_logger(__name__)
 
@@ -40,6 +41,10 @@ else:
 SAGE_ATTN_AVAILABLE = check_module_available("sageattention", "Sage attention")
 SPARGE_ATTN_AVAILABLE = check_module_available("spas_sage_attn", "Sparge attention")
 VIDEO_SPARSE_ATTN_AVAILABLE = check_module_available("vsa", "Video sparse attention")
+
+# NPU
+MINDIE_AVAILABLE = is_mindie_sd_available()
+
 
 NUNCHAKU_AVAILABLE = check_module_available("nunchaku", "Nunchaku")
 NUNCHAKU_IMPORT_ERROR = None

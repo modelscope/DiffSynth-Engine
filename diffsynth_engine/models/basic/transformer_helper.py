@@ -3,6 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+from diffsynth_engine.utils.flag import MINDIE_AVAILABLE
+import os
+USE_MINDIESD_FUSE = os.environ.get("USE_MINDIESD_FUSE", "0") == "1"
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
     return x * (1 + scale) + shift
@@ -80,6 +83,10 @@ class RMSNorm(nn.Module):
         return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
 
     def forward(self, x):
+        if USE_MINDIESD_FUSE and MINDIE_AVAILABLE and x.device.type == "npu" and self.elementwise_affine:
+            import torch_npu
+            return torch_npu.npu_rms_norm(x, self.weight, epsilon=self.eps)[0]
+
         norm_result = self.norm(x.float()).to(x.dtype)
         if self.elementwise_affine:
             return norm_result * self.weight

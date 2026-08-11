@@ -15,6 +15,7 @@ from diffsynth_engine.utils.flag import (
     SPARGE_ATTN_AVAILABLE,
     VIDEO_SPARSE_ATTN_AVAILABLE,
     AITER_AVAILABLE,
+    MINDIE_AVAILABLE,
 )
 from diffsynth_engine.utils.platform import DTYPE_FP8
 
@@ -107,6 +108,25 @@ if VIDEO_SPARSE_ATTN_AVAILABLE:
         distributed_video_sparse_attn,
     )
 
+if MINDIE_AVAILABLE:
+    from mindiesd.layers.flash_attn.attention_forward import attention_forward
+
+    def mindie_attn(q, k, v, attn_mask=None, scale=None):
+        #return attention_forward(
+        #    query=q, key=k, value=v,
+        #   attn_mask=attn_mask, scale=scale,
+        #    fused=True, head_first=False,
+        #)
+
+        return attention_forward(
+            query=q, key=k, value=v,
+            attn_mask=attn_mask, scale=scale,
+            fused=True, head_first=False,
+            opt_mode="manual",
+            op_type="fused_attn_score",
+            layout="BSND",
+        )
+
 
 def eager_attn(q, k, v, attn_mask=None, scale=None):
     q = q.transpose(1, 2)
@@ -152,6 +172,7 @@ def attention(
         "sage",
         "sparge",
         "vsa",
+        "mindie",
     ]
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
     if attn_impl is None or attn_impl == "auto":
@@ -192,6 +213,8 @@ def attention(
                 )
         if XFORMERS_AVAILABLE:
             return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
+        if MINDIE_AVAILABLE:
+            return mindie_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         if SDPA_AVAILABLE:
             return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         if FLASH_ATTN_2_AVAILABLE:
@@ -263,6 +286,8 @@ def attention(
                 cdfthreshd=kwargs.get("cdfthreshd", 0.98),
                 pvthreshd=kwargs.get("pvthreshd", 50),
             )
+        if attn_impl == "mindie":
+            return mindie_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         if attn_impl == "vsa":
             return video_sparse_attn(
                 q,
@@ -324,6 +349,44 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 
+def _npu_ulysses_mindie_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    attn_mask: Optional[torch.Tensor] = None,
+    scale: Optional[float] = None,
+):
+    """Ulysses SP on NPU: SeqAllToAll4D + MindIE local attn. ring_degree>1 not supported."""
+    from yunchang.comm.all_to_all import SeqAllToAll4D
+
+    from diffsynth_engine.utils.process_group import get_sp_ring_world_size, get_sp_ulysses_group
+
+    if q.device.type != "npu":
+        raise RuntimeError("mindie long-context attention is only supported on NPU")
+    if not MINDIE_AVAILABLE:
+        raise RuntimeError(
+            "NPU Ulysses sequence parallel requires MindIE attention, but MindIE-SD is not available"
+        )
+    if get_sp_ring_world_size() > 1:
+        raise RuntimeError(
+            "NPU long-context attention currently supports Ulysses only "
+            f"(sp_ring_degree must be 1, got {get_sp_ring_world_size()})"
+        )
+    assert attn_mask is None, "long context attention does not support attention mask"
+
+    # scatter heads (dim=2), gather sequence (dim=1) — same as video_sparse / v1 USP
+    scatter_idx, gather_idx = 2, 1
+    group = get_sp_ulysses_group()
+    q = SeqAllToAll4D.apply(group, q, scatter_idx, gather_idx)
+    k = SeqAllToAll4D.apply(group, k, scatter_idx, gather_idx)
+    v = SeqAllToAll4D.apply(group, v, scatter_idx, gather_idx)
+
+    # Must not call attention() here — it is patched to long_context_attention under SP.
+    out = mindie_attn(q, k, v, attn_mask=attn_mask, scale=scale)
+    out = SeqAllToAll4D.apply(group, out, gather_idx, scatter_idx)
+    return out
+
+
 def long_context_attention(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -354,10 +417,14 @@ def long_context_attention(
         "sage",
         "sparge",
         "vsa",
+        "mindie",
     ]
     assert attn_mask is None, "long context attention does not support attention mask"
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
     if attn_impl is None or attn_impl == "auto":
+        # NPU has no FA/yunchang TORCH_EFFICIENT kernel; pick MindIE Ulysses when available.
+        if q.device.type == "npu" and MINDIE_AVAILABLE:
+            return _npu_ulysses_mindie_attention(q, k, v, attn_mask=attn_mask, scale=scale)
         if FLASH_ATTN_3_AVAILABLE:
             if flash_attn3_compatible:
                 return LongContextAttention(attn_type=AttnType.FA3)(q, k, v, softmax_scale=scale)
@@ -378,6 +445,8 @@ def long_context_attention(
             return LongContextAttention(attn_type=AttnType.FA)(q, k, v, softmax_scale=scale)
         raise ValueError("No available long context attention implementation")
     else:
+        if attn_impl == "mindie":
+            return _npu_ulysses_mindie_attention(q, k, v, attn_mask=attn_mask, scale=scale)
         if attn_impl == "fa3" or attn_impl == "fa3_fp8":
             if not flash_attn3_compatible:
                 raise RuntimeError(

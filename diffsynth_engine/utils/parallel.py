@@ -11,7 +11,6 @@ from torch.distributed.fsdp import ShardingStrategy
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor.parallel.style import ParallelStyle
-from torch.distributed.tensor.parallel._utils import _validate_tp_mesh_dim
 from contextlib import contextmanager
 from datetime import timedelta
 from functools import partial
@@ -19,7 +18,13 @@ from typing import Dict, List, Set, Type, Union, Optional
 from queue import Empty
 
 import diffsynth_engine.models.basic.attention as attention_ops
-from diffsynth_engine.utils.platform import empty_cache
+from diffsynth_engine.utils.platform import (
+    empty_cache,
+    get_device_type,
+    get_torch_distributed_backend,
+    is_npu_available,
+)
+from diffsynth_engine.platforms import resolve_platform
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.process_group import (
     PROCESS_GROUP,
@@ -74,35 +79,44 @@ def init_parallel_pgs(
             groups.extend(list(zip(*chunk)))
         return groups, chunks
 
+    # NOTE: every rank must call dist.new_group() for every subgroup, in the
+    # same order — even if it is not a member. Skipping non-member ranks
+    # breaks HCCL/NCCL communicators and surfaces later as all_to_all errors
+    # (common when use_cfg_parallel=True creates multiple CFG/SP subgroups).
     blocks = [list(range(world_size))]
     cfg_groups, cfg_blocks = make_parallel_groups(blocks, cfg_degree)
     for cfg_ranks in cfg_groups:
+        group = dist.new_group(cfg_ranks)
         if rank in cfg_ranks:
-            PROCESS_GROUP.CFG_GROUP = dist.new_group(cfg_ranks)
+            PROCESS_GROUP.CFG_GROUP = group
             PROCESS_GROUP.CFG_RANKS = cfg_ranks
 
     sp_groups, sp_blocks = make_parallel_groups(cfg_blocks, sp_degree)
     for sp_ranks in sp_groups:
+        group = dist.new_group(sp_ranks)
         if rank in sp_ranks:
-            PROCESS_GROUP.SP_GROUP = dist.new_group(sp_ranks)
+            PROCESS_GROUP.SP_GROUP = group
             PROCESS_GROUP.SP_RANKS = sp_ranks
 
     sp_ulysses_groups, sp_ulysses_blocks = make_parallel_groups(cfg_blocks, sp_ulysses_degree)
     for sp_ulysses_ranks in sp_ulysses_groups:
+        group = dist.new_group(sp_ulysses_ranks)
         if rank in sp_ulysses_ranks:
-            PROCESS_GROUP.SP_ULYSSUES_GROUP = dist.new_group(sp_ulysses_ranks)
+            PROCESS_GROUP.SP_ULYSSUES_GROUP = group
             PROCESS_GROUP.SP_ULYSSUES_RANKS = sp_ulysses_ranks
 
     sp_ring_groups, _ = make_parallel_groups(sp_ulysses_blocks, sp_ring_degree)
     for sp_ring_ranks in sp_ring_groups:
+        group = dist.new_group(sp_ring_ranks)
         if rank in sp_ring_ranks:
-            PROCESS_GROUP.SP_RING_GROUP = dist.new_group(sp_ring_ranks)
+            PROCESS_GROUP.SP_RING_GROUP = group
             PROCESS_GROUP.SP_RING_RANKS = sp_ring_ranks
 
     tp_groups, _ = make_parallel_groups(sp_blocks, tp_degree)
     for tp_ranks in tp_groups:
+        group = dist.new_group(tp_ranks)
         if rank in tp_ranks:
-            PROCESS_GROUP.TP_GROUP = dist.new_group(tp_ranks)
+            PROCESS_GROUP.TP_GROUP = group
             PROCESS_GROUP.TP_RANKS = tp_ranks
 
     set_seq_parallel_pg(sp_ulysses_degree, sp_ring_degree, rank, world_size)
@@ -149,6 +163,16 @@ def parallelize_module(
     device_mesh: DeviceMesh,
     parallelize_plan: Optional[Union[ParallelStyle, Dict[str, ParallelStyle]]] = None,
 ):
+    # TP relies on a private torch API removed in PyTorch >= 2.9; adapt separately later.
+    try:
+        from torch.distributed.tensor.parallel._utils import _validate_tp_mesh_dim
+    except ModuleNotFoundError as e:
+        raise RuntimeError(
+            "Tensor parallel (tp_degree > 1) is not adapted for this PyTorch build yet "
+            "(missing torch.distributed.tensor.parallel._utils on torch>=2.9). "
+            "Use tp_degree=1 with Ulysses/FSDP for now."
+        ) from e
+
     _validate_tp_mesh_dim(device_mesh)
     if parallelize_plan is None:
         return module
@@ -169,6 +193,55 @@ NCCL_TIMEOUT_SEC = int(os.environ.get("NCCL_TIMEOUT_SEC", 600))
 PARALLEL_FWD_TIMEOUT_SEC = int(os.environ.get("PARALLEL_FWD_TIMEOUT_SEC", 3600))
 
 
+def _resolve_parallel_device_type(device_type: Optional[str]) -> str:
+    """Keep historical CUDA default; only auto-pick NPU when CUDA is absent."""
+    if device_type is not None:
+        return device_type
+    if is_npu_available() and not torch.cuda.is_available():
+        return "npu"
+    return "cuda"
+
+
+def _ensure_parallel_device_ready(device_type: str) -> None:
+    """Availability gate: cuda/npu must both be selected and actually usable.
+
+    After this returns, the worker may branch on ``device_type`` only.
+    """
+    if device_type not in ("cuda", "npu"):
+        raise RuntimeError(
+            f"parallelism is only supported on CUDA or NPU devices, got {device_type!r}"
+        )
+    if not resolve_platform(device_type).is_available():
+        raise RuntimeError(
+            f"parallelism requested {device_type} but {device_type} is not available"
+        )
+
+
+def _align_config_device_type(config_device: str, target_type: str) -> str:
+    """Main-process entry: make config.device backend match ParallelWrapper workers.
+
+    Rewrites only the historical CUDA placeholder when workers run on NPU.
+    Explicit mismatched devices raise instead of being silently rewritten.
+    """
+    current_type = get_device_type(config_device)
+    if current_type == target_type:
+        return config_device
+    device_str = str(config_device)
+    if target_type == "npu" and (device_str == "cuda" or device_str.startswith("cuda:")):
+        return target_type
+    raise RuntimeError(
+        f"config.device={config_device!r} does not match parallel device_type={target_type!r}"
+    )
+
+
+def _bind_config_device_rank(kwargs: dict, device: torch.device) -> None:
+    """Worker-only: bind config.device to this rank's local device (e.g. npu:0)."""
+    config = kwargs.get("config")
+    if config is None or not hasattr(config, "device"):
+        return
+    config.device = str(device)
+
+
 def _worker_loop(
     rank: int,
     world_size: int,
@@ -185,8 +258,7 @@ def _worker_loop(
     """
     https://pytorch.org/docs/stable/multiprocessing.html#sharing-cuda-tensors
     """
-    if device_type != "cuda" or not torch.cuda.is_available():
-        raise RuntimeError("parallelism is only supported on CUDA devices")
+    _ensure_parallel_device_ready(device_type)
 
     try:
         os.environ["RANK"] = str(rank)
@@ -194,11 +266,16 @@ def _worker_loop(
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = str(master_port)
         device = torch.device(type=device_type, index=rank)
-        torch.cuda.set_device(rank)
+        # NPU-only distributed env; keep CUDA path free of LOCAL_RANK side effects.
+        if device_type == "npu":
+            os.environ["LOCAL_RANK"] = str(rank)
+        # Bind device before init_process_group (required by HCCL on Ascend).
+        resolve_platform(device_type).set_device(rank)
+        backend = get_torch_distributed_backend(device_type)
 
         timeout = timedelta(seconds=NCCL_TIMEOUT_SEC)
         dist.init_process_group(
-            backend="nccl",
+            backend=backend,
             init_method="env://",
             timeout=timeout,
             world_size=world_size,
@@ -247,6 +324,7 @@ def _worker_loop(
                 empty_cache()
             elif name == "load_module":
                 init_fn, kwargs = data[1:]
+                _bind_config_device_rank(kwargs, device)
                 module = wrap_for_parallel(init_fn(**kwargs))
             elif module is None:
                 res = RuntimeError("module is not initialized")
@@ -271,7 +349,7 @@ def _worker_loop(
             queue_out.put(err)  # any exception caught in the worker will be raised to the main process
     finally:
         del module, data, args, kwargs
-        torch.cuda.synchronize()
+        resolve_platform(device_type).synchronize()
         empty_cache()
         dist.destroy_process_group()
 
@@ -285,10 +363,11 @@ class ParallelWrapper:
         tp_degree: int,
         use_fsdp: bool = False,
         master_port: int = 29500,
-        device_type: str = "cuda",
+        device_type: Optional[str] = None,
     ):
         super().__init__()
         self._module_name = None
+        self.device_type = _resolve_parallel_device_type(device_type)
 
         self.world_size = cfg_degree * sp_ulysses_degree * sp_ring_degree * tp_degree
         spawn_ctx = mp.get_context("spawn")
@@ -306,13 +385,16 @@ class ParallelWrapper:
                 tp_degree,
                 use_fsdp,
                 master_port,
-                device_type,
+                self.device_type,
             ),
             nprocs=self.world_size,
             join=False,
         )
 
     def load_module(self, init_fn, **kwargs):
+        config = kwargs.get("config")
+        if config is not None and hasattr(config, "device"):
+            config.device = _align_config_device_type(config.device, self.device_type)
         data = ["load_module", init_fn, kwargs]
         for q in self.queue_in:
             q.put(data)
