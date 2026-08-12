@@ -26,15 +26,20 @@ def sequence_parallel_shard(tensors: List[torch.Tensor], seq_dims: List[int]) ->
         if tensor is None:
             shard_tensors.append(tensor)
             continue
-        # pad seq_len to multiple of sp_world_size
         seq_len = tensor.size(seq_dim)
-        pad_len = math.ceil(seq_len / sp_world_size) * sp_world_size - seq_len
-        padding = [0] * (2 * tensor.ndim)
-        padding[-2 * seq_dim - 1] = pad_len
-        padded_tensor = F.pad(tensor, padding)
+        shard_len = math.ceil(seq_len / sp_world_size)
+        start = min(shard_len * sp_rank, seq_len)
+        length = min(shard_len, seq_len - start)
+        chunk = tensor.narrow(seq_dim, start, length)
 
-        chunks = torch.chunk(padded_tensor, sp_world_size, dim=seq_dim)
-        chunk = chunks[sp_rank]
+        if length < shard_len:
+            # pad only the local shard instead of the full sequence, to cut the memory peak
+            padding = [0] * (2 * tensor.ndim)
+            padding[-2 * seq_dim - 1] = shard_len - length
+            chunk = F.pad(chunk, padding)
+        else:
+            # clone so the view does not keep the full sequence storage alive
+            chunk = chunk.clone()
         shard_tensors.append(chunk)
     return shard_tensors
 
