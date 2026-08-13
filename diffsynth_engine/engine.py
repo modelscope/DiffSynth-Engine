@@ -1,7 +1,6 @@
 from typing import Any
 
 import torch.multiprocessing as mp
-from torch.cuda import set_device
 
 from diffsynth_engine.configs import PipelineConfig
 from diffsynth_engine.registry import (
@@ -9,6 +8,7 @@ from diffsynth_engine.registry import (
     get_pipeline_class_name,
 )
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.platform import align_config_device, set_device
 from diffsynth_engine.utils.torch_profiler import TorchProfiler
 from diffsynth_engine.worker import run_worker_loop
 
@@ -19,6 +19,7 @@ class DiffSynthEngine:
     @classmethod
     def from_pretrained(cls, model_path_or_config: str | PipelineConfig, **kwargs):
         pipeline_config = _resolve_pipeline_config(model_path_or_config)
+        pipeline_config.device = align_config_device(pipeline_config.device)
         num_workers = pipeline_config.parallelism
         master_addr = kwargs.get("master_addr", "localhost")
         master_port = kwargs.get("master_port", 29500)
