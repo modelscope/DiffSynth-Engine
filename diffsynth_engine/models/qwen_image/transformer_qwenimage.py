@@ -29,6 +29,7 @@ from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
 
 from diffsynth_engine.distributed.parallel_state import (
     get_tensor_model_parallel_world_size,
+    is_sp_group_initialized,
     is_tp_group_initialized,
 )
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
@@ -492,11 +493,24 @@ class QwenDoubleStreamAttention(nn.Module):
 
         # USPAttention for joint attention computation
         forward_context = get_forward_context()
-        self.usp_attn = USPAttention(
-            num_heads=self.heads,
-            head_size=attention_head_dim,
-            attn_type=forward_context.attn_type,
-        )
+
+        # AscendLongContextAttention calls get_sp_group() unconditionally in __init__, so it can
+        # only be built when the sequence-parallel group is initialized; otherwise fall back to
+        # USPAttention, which safely degrades to world_size=1 when SP is not set up.
+        if is_mindie_sd_available() and is_sp_group_initialized():
+            from diffsynth_engine.layers.attention import AscendLongContextAttention
+
+            self.usp_attn = AscendLongContextAttention(
+                num_heads=self.heads,
+                head_size=attention_head_dim,
+                attn_type=forward_context.attn_type,
+            )
+        else:
+            self.usp_attn = USPAttention(
+                num_heads=self.heads,
+                head_size=attention_head_dim,
+                attn_type=forward_context.attn_type,
+            )
 
     def forward(
         self,
