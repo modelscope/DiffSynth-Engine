@@ -11,6 +11,7 @@ from diffsynth_engine.distributed.parallel_state import (
 )
 from diffsynth_engine.registry import get_pipeline_class
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.platform import bind_rank_device
 from diffsynth_engine.utils.torch_profiler import TorchProfiler
 
 logger = logging.get_logger(__name__)
@@ -38,6 +39,10 @@ class Worker:
         os.environ["LOCAL_RANK"] = str(local_rank)
         os.environ["RANK"] = str(rank)
         os.environ["WORLD_SIZE"] = str(world_size)
+
+        # Bind config.device to this rank's local device before HCCL init / model load.
+        self.pipeline_config.device = bind_rank_device(self.pipeline_config.device, local_rank)
+
         init_distributed_environment(world_size=world_size, rank=rank, local_rank=local_rank)
 
         cfg_degree = 2 if pipeline_config.use_cfg_parallel else 1

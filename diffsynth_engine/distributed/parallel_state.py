@@ -13,7 +13,6 @@ from typing import List, Optional
 
 import torch
 import torch.distributed
-from torch.cuda import device_count, set_device
 
 from diffsynth_engine.distributed.group_coordinator import (
     GroupCoordinator,
@@ -22,7 +21,11 @@ from diffsynth_engine.distributed.group_coordinator import (
 )
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.constants import IDLE_TIMEOUT_SEC
-from diffsynth_engine.utils.platform import get_torch_distributed_backend
+from diffsynth_engine.utils.platform import (
+    device_count,
+    get_torch_distributed_backend,
+    set_device,
+)
 
 logger = logging.get_logger(__name__)
 
@@ -425,19 +428,6 @@ def init_distributed_environment(
         distributed_init_method,
         backend,
     )
-    if not torch.distributed.is_initialized():
-        assert distributed_init_method is not None, (
-            "distributed_init_method must be provided when initializing distributed environment"
-        )
-        # this backend is used for WORLD
-        torch.distributed.init_process_group(
-            backend=backend,
-            init_method=distributed_init_method,
-            world_size=world_size,
-            rank=rank,
-        )
-        set_device(torch.distributed.get_rank() % device_count())
-    # set the local rank
     # local_rank is not available in torch ProcessGroup,
     # see https://github.com/pytorch/pytorch/issues/122816
     if local_rank == -1:
@@ -446,7 +436,22 @@ def init_distributed_environment(
         if distributed_init_method == "env://":
             local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         else:
-            local_rank = rank
+            local_rank = rank if rank >= 0 else 0
+
+    if not torch.distributed.is_initialized():
+        assert distributed_init_method is not None, (
+            "distributed_init_method must be provided when initializing distributed environment"
+        )
+        # Bind device before init_process_group (required by HCCL on Ascend).
+        set_device(local_rank % max(device_count(), 1))
+        # this backend is used for WORLD
+        torch.distributed.init_process_group(
+            backend=backend,
+            init_method=distributed_init_method,
+            world_size=world_size,
+            rank=rank,
+        )
+        set_device(torch.distributed.get_rank() % max(device_count(), 1))
     global _WORLD
     if _WORLD is None:
         ranks = list(range(torch.distributed.get_world_size()))

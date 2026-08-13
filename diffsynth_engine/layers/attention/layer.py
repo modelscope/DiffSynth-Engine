@@ -101,6 +101,7 @@ class USPAttention(nn.Module):
         self.num_kv_heads = num_kv_heads
         self.scatter_idx = scatter_idx
         self.gather_idx = gather_idx
+        self.attn_type = str(attn_type) if attn_type is not None else None
 
         attn_backend = get_attn_backend(attn_type)
         if not attn_backend.supports_head_size(head_size):
@@ -146,6 +147,12 @@ class USPAttention(nn.Module):
 
         ulysses_parallel_world_size = get_ulysses_parallel_world_size() if is_sp_group_initialized() else 1
         ring_parallel_world_size = get_ring_parallel_world_size() if is_sp_group_initialized() else 1
+
+        if ring_parallel_world_size > 1 and self.attn_type == "mindie":
+            raise RuntimeError(
+                "NPU MindIE attention currently supports Ulysses only "
+                f"(sp_ring_degree must be 1, got {ring_parallel_world_size})"
+            )
 
         if ulysses_parallel_world_size > 1:
             q = SeqAllToAll4D.apply(get_sp_group().ulysses_group, q, self.scatter_idx, self.gather_idx)
