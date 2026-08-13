@@ -33,6 +33,7 @@ _ATTENTION_BACKENDS: dict[str, str] = {
     "fa3": "diffsynth_engine.layers.attention.backends.flash_attn_3:FlashAttention3Backend",
     "fa3_fp8": "diffsynth_engine.layers.attention.backends.flash_attn_3:FlashAttention3FP8Backend",
     "fa4": "diffsynth_engine.layers.attention.backends.flash_attn_4:FlashAttention4Backend",
+    "mindie": "diffsynth_engine.layers.attention.backends.mindie_attn:MindieAttentionBackend",
     "sage2": "diffsynth_engine.layers.attention.backends.sage_attn_2:SageAttention2Backend",
     "sage3": "diffsynth_engine.layers.attention.backends.sage_attn_3:SageAttention3Backend",
     "sdpa": "diffsynth_engine.layers.attention.backends.sdpa:SDPABackend",
