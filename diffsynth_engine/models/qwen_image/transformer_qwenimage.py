@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import functools
-import os
 from math import prod
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -25,7 +24,7 @@ import torch.nn as nn
 from diffusers.configuration_utils import register_to_config
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
-from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
+from diffusers.models.normalization import AdaLayerNormContinuous
 
 from diffsynth_engine.distributed.parallel_state import (
     get_tensor_model_parallel_world_size,
@@ -34,15 +33,14 @@ from diffsynth_engine.distributed.parallel_state import (
 )
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
+from diffsynth_engine.layers import RMSNorm
 from diffsynth_engine.layers.attention import USPAttention
 from diffsynth_engine.layers.tensor_parallel import ColumnParallelLinear, RowParallelLinear, TPFeedForward
 from diffsynth_engine.models.base import DiffusionModel
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.platform import is_mindie_sd_available
+from diffsynth_engine.utils.platform import current_platform, is_mindie_sd_available
 
 logger = logging.get_logger(__name__)
-
-USE_MINDIESD_FUSE = os.environ.get("USE_MINDIESD_FUSE", "0") == "1"
 
 
 def apply_rotary_emb_qwen(
@@ -86,7 +84,7 @@ def apply_rotary_emb_qwen(
 
         return out
     else:
-        if USE_MINDIESD_FUSE and is_mindie_sd_available() and x.device.type == "npu":
+        if current_platform.op_fusion and is_mindie_sd_available() and x.device.type == "npu":
             from mindiesd import rotary_position_embedding
 
             # Cache expanded cos/sin on the tensor object itself.
@@ -665,7 +663,7 @@ class QwenImageTransformerBlock(nn.Module):
 
     def _norm_modulate(self, norm: nn.LayerNorm, x: torch.Tensor, mod_params, index=None):
         """LayerNorm + Ada modulate. Fuses via mindiesd.layernorm_scale_shift when enabled."""
-        if USE_MINDIESD_FUSE and is_mindie_sd_available() and x.device.type == "npu":
+        if current_platform.op_fusion and is_mindie_sd_available() and x.device.type == "npu":
             from mindiesd import layernorm_scale_shift
 
             shift_result, scale_result, gate_result = self._split_mod_params(mod_params, index)

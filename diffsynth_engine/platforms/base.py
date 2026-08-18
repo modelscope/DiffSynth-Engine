@@ -19,6 +19,8 @@ class PlatformBackend(ABC):
     name = "unknown"
     device_type = "cpu"
 
+    op_fusion = False
+
     @classmethod
     def is_available(cls) -> bool:
         return True
@@ -28,12 +30,20 @@ class PlatformBackend(ABC):
         return torch.device(device)
 
     @classmethod
+    def get_device(cls, local_rank: int) -> torch.device:
+        return torch.device(cls.device_type)
+
+    @classmethod
     def set_device(cls, index: int | str | torch.device) -> None:
         return None
 
     @classmethod
     def device_count(cls) -> int:
         return 1
+
+    @classmethod
+    def fp8_dtype(cls) -> torch.dtype:
+        return torch.float8_e4m3fn
 
     @classmethod
     def synchronize(cls) -> None:

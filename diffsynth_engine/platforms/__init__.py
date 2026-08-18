@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import platform as host_platform
 from functools import lru_cache
 from typing import Type
 
@@ -18,6 +17,14 @@ from .base import PlatformBackend, PlatformCapabilities
 class CPUPlatform(PlatformBackend):
     name = "cpu"
     device_type = "cpu"
+
+    @classmethod
+    def distributed_backend(cls) -> str:
+        raise NotImplementedError("Unsupported device type")
+
+    @classmethod
+    def pin_memory(cls, tensor: torch.Tensor) -> torch.Tensor:
+        return tensor
 
 
 class CUDAPlatform(PlatformBackend):
@@ -37,6 +44,10 @@ class CUDAPlatform(PlatformBackend):
         return torch.cuda.device_count()
 
     @classmethod
+    def get_device(cls, local_rank: int) -> torch.device:
+        return torch.device(cls.device_type, local_rank)
+
+    @classmethod
     def synchronize(cls) -> None:
         torch.cuda.synchronize()
 
@@ -51,6 +62,15 @@ class CUDAPlatform(PlatformBackend):
 
 class ROCmPlatform(CUDAPlatform):
     name = "rocm"
+
+    @classmethod
+    def fp8_dtype(cls) -> torch.dtype:
+        if not cls.is_available():
+            return torch.float8_e4m3fn
+        properties = torch.cuda.get_device_properties(0)
+        if "gfx94" in properties.gcnArchName:
+            return torch.float8_e4m3fnuz
+        return torch.float8_e4m3fn
 
 
 class MPSPlatform(PlatformBackend):
@@ -68,6 +88,10 @@ class MPSPlatform(PlatformBackend):
     @classmethod
     def empty_cache(cls) -> None:
         torch.mps.empty_cache()
+
+    @classmethod
+    def pin_memory(cls, tensor: torch.Tensor) -> torch.Tensor:
+        return tensor
 
 
 _PLATFORM_REGISTRY: dict[str, Type[PlatformBackend]] = {
@@ -96,8 +120,7 @@ def auto_detect_device() -> str:
     return "cpu"
 
 
-def parse_device_type(device: str | torch.device | None = None) -> str:
-    """Parse a device spec, or auto-detect when ``device`` is None/auto."""
+def get_device_type(device: str | torch.device | None = None) -> str:
     if device is None or (isinstance(device, str) and device.lower() in ("auto", "")):
         return auto_detect_device()
     if isinstance(device, torch.device):
@@ -106,7 +129,7 @@ def parse_device_type(device: str | torch.device | None = None) -> str:
 
 
 def resolve_platform(device: str | torch.device) -> Type[PlatformBackend]:
-    device_type = parse_device_type(device)
+    device_type = get_device_type(device)
     try:
         return _PLATFORM_REGISTRY[device_type]
     except KeyError as exc:
@@ -114,23 +137,8 @@ def resolve_platform(device: str | torch.device) -> Type[PlatformBackend]:
         raise ValueError(f"Unsupported device type {device_type!r}. Registered device types: {available}") from exc
 
 
-def get_preferred_fp8_dtype(device: str | torch.device = "cuda") -> torch.dtype:
-    platform_cls = resolve_platform(device)
-    if platform_cls is ROCmPlatform and platform_cls.is_available():
-        properties = torch.cuda.get_device_properties(0)
-        if "gfx94" in properties.gcnArchName:
-            return torch.float8_e4m3fnuz
-    return torch.float8_e4m3fn
-
-
-def pin_memory(
-    tensor: torch.Tensor,
-    device: str | torch.device | None = None,
-) -> torch.Tensor:
-    if host_platform.system() != "Linux":
-        return tensor
-    platform_cls = resolve_platform(parse_device_type(device))
-    return platform_cls.pin_memory(tensor)
+# The platform backend for the auto-detected process accelerator, resolved once
+current_platform: Type[PlatformBackend] = resolve_platform(get_device_type())
 
 
 __all__ = [
@@ -142,9 +150,8 @@ __all__ = [
     "PlatformCapabilities",
     "ROCmPlatform",
     "auto_detect_device",
-    "get_preferred_fp8_dtype",
-    "parse_device_type",
-    "pin_memory",
+    "current_platform",
+    "get_device_type",
     "probe_ascend_capabilities",
     "probe_ascend_feature",
     "register_platform",

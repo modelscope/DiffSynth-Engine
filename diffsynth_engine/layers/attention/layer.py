@@ -2,7 +2,6 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-import os
 from torch import distributed as dist
 import torch
 import torch.nn as nn
@@ -174,6 +173,10 @@ class USPAttention(nn.Module):
         
 from typing import Optional
 class AscendLongContextAttention(nn.Module):
+    # Single dedicated communication stream shared by all instances (one per transformer
+    # block, e.g. 60 in Qwen-Image), so only one `stream2` is allocated per device.
+    _shared_comm_stream = None
+
     def __init__(
             self,
             num_heads: int = 24,
@@ -188,6 +191,8 @@ class AscendLongContextAttention(nn.Module):
             **extra_impl_args,
     ) -> None:
         super().__init__()
+        from diffsynth_engine.platforms import AscendPlatform
+
         if num_kv_heads is None:
             num_kv_heads = num_heads
 
@@ -202,8 +207,8 @@ class AscendLongContextAttention(nn.Module):
         self.sp_ring_degree = get_sp_group().ring_world_size
 
 
-        self.fa_alltoall_overlap = int(os.getenv('FA_ALLTOALL_OVERLAP', 1))
-        self.fa_alltoall_cut = int(os.getenv('FA_ALLTOALL_CUT', 1))
+        self.fa_alltoall_overlap = AscendPlatform.fa_alltoall_overlap
+        self.fa_alltoall_cut = AscendPlatform.fa_alltoall_cut
         if fa_head_loop is not None:
             self.fa_head_loop = fa_head_loop
         elif self.fa_alltoall_cut > 1:
@@ -214,8 +219,9 @@ class AscendLongContextAttention(nn.Module):
             self.fa_head_loop = self.num_heads // self.sp_ulysses_degree
 
         if self.fa_alltoall_overlap > 1 and self.fa_alltoall_cut <= 1:
-            self.current_stream = torch.npu.current_stream()
-            self.stream2 = torch.npu.Stream()
+            if AscendLongContextAttention._shared_comm_stream is None:
+                AscendLongContextAttention._shared_comm_stream = torch.npu.Stream()
+            self.stream2 = AscendLongContextAttention._shared_comm_stream
             self.event = []
             for i in range(self.fa_head_loop):
                 self.event.append(torch.npu.Event())
@@ -392,7 +398,7 @@ class AscendLongContextAttention(nn.Module):
             output = SeqAllToAll4D.apply(
                 self.ulysses_pg, out, self.gather_idx, self.scatter_idx
             )
-        elif self.fa_alltoall_cut > 1:  # 0415 fa_alltoall_cut
+        elif self.fa_alltoall_cut > 1:  # fa_alltoall_cut
             # Split heads into chunks (loop_time = fa_alltoall_cut), full Ulysses round-trip per chunk.
             q_chunks, k_chunks, v_chunks = self.split_qkv_by_head(
                 query, key, value, self.sp_ulysses_degree, self.fa_head_loop
@@ -414,7 +420,7 @@ class AscendLongContextAttention(nn.Module):
                 )
                 output_chunks.append(out)
             output = torch.cat(output_chunks, dim=2)
-        elif self.fa_alltoall_overlap > 1 :  # 0415 fa_alltoall_overlap
+        elif self.fa_alltoall_overlap > 1 :  # fa_alltoall_overlap
             # B, S/sp, N/tp, D
             # Refresh the current stream here: __init__ runs at model-build time and may capture a
             # different stream than the one forward actually executes on (e.g. under a stream context,
