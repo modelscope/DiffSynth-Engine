@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import importlib
+import os
 from functools import lru_cache
 from typing import Any
 
 import torch
 
 from .base import PlatformBackend, PlatformCapabilities
+from diffsynth_engine.utils import logging
+
+logger = logging.get_logger(__name__)
 
 
 def _import_torch_npu():
@@ -169,6 +173,11 @@ class AscendPlatform(PlatformBackend):
     name = "ascend"
     device_type = "npu"
 
+    # Ascend-specific tuning knobs (seeded from environment for now).
+    op_fusion = os.environ.get("USE_MINDIESD_FUSE", "False").lower() == "true"
+    fa_alltoall_overlap = int(os.environ.get("FA_ALLTOALL_OVERLAP", 1))
+    fa_alltoall_cut = int(os.environ.get("FA_ALLTOALL_CUT", 1))
+
     @classmethod
     def is_available(cls) -> bool:
         return probe_ascend_feature("device")
@@ -187,6 +196,10 @@ class AscendPlatform(PlatformBackend):
     def device_count(cls) -> int:
         _import_torch_npu()
         return torch.npu.device_count()
+
+    @classmethod
+    def get_device(cls, local_rank: int) -> torch.device:
+        return torch.device(cls.device_type, local_rank)
 
     @classmethod
     def synchronize(cls) -> None:
@@ -213,12 +226,12 @@ class AscendPlatform(PlatformBackend):
         return "hccl"
 
     @classmethod
-    def compile_backend(cls):
+    def compile_backend(cls) -> Any | None:
         if not cls.supports("mindie_compile"):
-            raise RuntimeError(
-                "MindIE-SD compilation was requested, but MindieSDBackend is unavailable "
-                "in the installed MindIE-SD package."
+            logger.warning(
+                "MindIE-SD compile backend is unavailable; falling back to default torch.compile backend"
             )
+            return None
         from mindiesd.compilation import CompilationConfig, MindieSDBackend
 
         CompilationConfig.fusion_patterns.enable_fast_gelu = False
