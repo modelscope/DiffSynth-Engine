@@ -4,7 +4,7 @@
 import torch
 import torch.nn as nn
 
-from diffsynth_engine.utils.platform import current_platform, is_mindie_sd_available
+from diffsynth_engine.platforms.ops import fused_rms_norm
 
 
 class RMSNorm(nn.Module):
@@ -12,9 +12,9 @@ class RMSNorm(nn.Module):
 
     API-compatible with `diffusers.models.normalization.RMSNorm`
     (dim, eps, elementwise_affine), so existing checkpoints (weight key) load
-    unchanged. On Ascend with `current_platform.op_fusion` enabled the norm is
-    fused into a single `torch_npu.npu_rms_norm` op; otherwise it falls back to the
-    reference fp32 math so numerics match diffusers exactly.
+    unchanged. When `elementwise_affine` is enabled, delegates to
+    `fused_rms_norm` which automatically dispatches to the platform-optimal
+    implementation; otherwise falls back to reference fp32 math.
     """
 
     def __init__(self, dim, eps=1e-6, elementwise_affine=True):
@@ -31,19 +31,10 @@ class RMSNorm(nn.Module):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
 
     def forward(self, x):
-        if (
-            current_platform.op_fusion
-            and is_mindie_sd_available()
-            and self.elementwise_affine
-            and x.device.type == "npu"
-        ):
-            import torch_npu
-
-            return torch_npu.npu_rms_norm(x, self.weight, self.eps)[0]
+        if self.elementwise_affine:
+            return fused_rms_norm(x, self.weight, self.eps)
 
         output = self._norm(x.float()).type_as(x)
-        if self.weight is not None:
-            output = output * self.weight
         return output
 
     def extra_repr(self) -> str:

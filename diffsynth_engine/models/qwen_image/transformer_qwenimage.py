@@ -28,17 +28,16 @@ from diffusers.models.normalization import AdaLayerNormContinuous
 
 from diffsynth_engine.distributed.parallel_state import (
     get_tensor_model_parallel_world_size,
-    is_sp_group_initialized,
     is_tp_group_initialized,
 )
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
 from diffsynth_engine.layers import RMSNorm
-from diffsynth_engine.layers.attention import USPAttention
+from diffsynth_engine.layers.attention.factory import create_parallel_attention
 from diffsynth_engine.layers.tensor_parallel import ColumnParallelLinear, RowParallelLinear, TPFeedForward
 from diffsynth_engine.models.base import DiffusionModel
+from diffsynth_engine.platforms.ops import fused_layernorm_scale_shift, fused_rotary_embedding
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.platform import current_platform, is_mindie_sd_available
 
 logger = logging.get_logger(__name__)
 
@@ -63,58 +62,7 @@ def apply_rotary_emb_qwen(
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: Tuple of modified query tensor and key tensor with rotary embeddings.
     """
-    if use_real:
-        cos, sin = freqs_cis  # [S, D]
-        cos = cos[None, None]
-        sin = sin[None, None]
-        cos, sin = cos.to(x.device), sin.to(x.device)
-
-        if use_real_unbind_dim == -1:
-            # Used for flux, cogvideox, hunyuan-dit
-            x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
-            x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
-        elif use_real_unbind_dim == -2:
-            # Used for Stable Audio, OmniGen, CogView4 and Cosmos
-            x_real, x_imag = x.reshape(*x.shape[:-1], 2, -1).unbind(-2)  # [B, S, H, D//2]
-            x_rotated = torch.cat([-x_imag, x_real], dim=-1)
-        else:
-            raise ValueError(f"`use_real_unbind_dim={use_real_unbind_dim}` but should be -1 or -2.")
-
-        out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
-
-        return out
-    else:
-        if current_platform.op_fusion and is_mindie_sd_available() and x.device.type == "npu":
-            from mindiesd import rotary_position_embedding
-
-            # Cache expanded cos/sin on the tensor object itself.
-            # Python object identity avoids data_ptr collision across different-length slices.
-            cached = getattr(freqs_cis, "_rope_expanded", None)
-            if cached is None:
-                cos = freqs_cis.real  # (s, d/2)
-                sin = freqs_cis.imag
-                cos = cos.reshape(1, -1, 1, cos.shape[-1])  # (1, S, 1, D/2)
-                sin = sin.reshape(1, -1, 1, sin.shape[-1])
-                cos = cos.unsqueeze(-1).expand(-1, -1, -1, -1, 2).flatten(start_dim=-2)  # (1, S, 1, D)
-                sin = sin.unsqueeze(-1).expand(-1, -1, -1, -1, 2).flatten(start_dim=-2)
-                cos, sin = cos.to(x.device), sin.to(x.device)
-                cached = (cos, sin)
-                freqs_cis._rope_expanded = cached
-            cos, sin = cached
-            return rotary_position_embedding(
-                x,
-                cos,
-                sin,
-                rotated_mode="rotated_interleaved",
-                head_first=False,
-                fused=True,
-            )
-
-        x_rotated = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
-        freqs_cis = freqs_cis.unsqueeze(1)
-        x_out = torch.view_as_real(x_rotated * freqs_cis).flatten(3)
-
-        return x_out.type_as(x)
+    return fused_rotary_embedding(x, freqs_cis, use_real=use_real, use_real_unbind_dim=use_real_unbind_dim)
 
 
 def compute_text_seq_len_from_mask(
@@ -491,24 +439,11 @@ class QwenDoubleStreamAttention(nn.Module):
 
         # USPAttention for joint attention computation
         forward_context = get_forward_context()
-
-        # AscendLongContextAttention calls get_sp_group() unconditionally in __init__, so it can
-        # only be built when the sequence-parallel group is initialized; otherwise fall back to
-        # USPAttention, which safely degrades to world_size=1 when SP is not set up.
-        if is_mindie_sd_available() and is_sp_group_initialized():
-            from diffsynth_engine.layers.attention import AscendLongContextAttention
-
-            self.usp_attn = AscendLongContextAttention(
-                num_heads=self.heads,
-                head_size=attention_head_dim,
-                attn_type=forward_context.attn_type,
-            )
-        else:
-            self.usp_attn = USPAttention(
-                num_heads=self.heads,
-                head_size=attention_head_dim,
-                attn_type=forward_context.attn_type,
-            )
+        self.usp_attn = create_parallel_attention(
+            num_heads=self.heads,
+            head_size=attention_head_dim,
+            attn_type=forward_context.attn_type,
+        )
 
     def forward(
         self,
@@ -662,14 +597,10 @@ class QwenImageTransformerBlock(nn.Module):
         return torch.addcmul(x, x, scale_result) + shift_result, gate_result
 
     def _norm_modulate(self, norm: nn.LayerNorm, x: torch.Tensor, mod_params, index=None):
-        """LayerNorm + Ada modulate. Fuses via mindiesd.layernorm_scale_shift when enabled."""
-        if current_platform.op_fusion and is_mindie_sd_available() and x.device.type == "npu":
-            from mindiesd import layernorm_scale_shift
-
-            shift_result, scale_result, gate_result = self._split_mod_params(mod_params, index)
-            out = layernorm_scale_shift(norm, x, scale_result, shift_result, fused=True)
-            return out, gate_result
-        return self._modulate(norm(x), mod_params, index)
+        """LayerNorm + Ada modulate. Fuses via platform ops when enabled."""
+        shift_result, scale_result, gate_result = self._split_mod_params(mod_params, index)
+        out = fused_layernorm_scale_shift(norm, x, scale_result, shift_result)
+        return out, gate_result
 
     def forward(
         self,
