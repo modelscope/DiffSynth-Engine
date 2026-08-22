@@ -1,0 +1,42 @@
+{
+  "single_step_ms": 555.5,
+  "num_cards": 4,
+  "results": [
+    {
+      "overlap": 1,
+      "avg_total_ms": 1362.59,
+      "avg_step_ms": 272.52,
+      "runs": [
+        1364.14,
+        1363.27,
+        1360.36
+      ],
+      "speedup": 2.038,
+      "efficiency": 50.9,
+      "overhead_ms": 133.64,
+      "overhead_pct": 49.0
+    },
+    {
+      "overlap": 2,
+      "avg_total_ms": 1723.76,
+      "avg_step_ms": 344.75,
+      "runs": [
+        1727.75,
+        1738.18,
+        1705.35
+      ],
+      "speedup": 1.611,
+      "efficiency": 40.3,
+      "overhead_ms": 205.88,
+      "overhead_pct": 59.7
+    },
+    {
+      "overlap": 4,
+      "error": "__call__ failed on rank 0: heads_per_rank must be divisible by loop_time=4, got heads_per_rank=6"
+    },
+    {
+      "overlap": 8,
+      "error": "__call__ failed on rank 0: heads_per_rank must be divisible by loop_time=8, got heads_per_rank=6"
+    }
+  ]
+}
