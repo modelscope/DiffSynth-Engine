@@ -1,0 +1,71 @@
+{
+  "branch": "refactor/npu-transformer-cleanup",
+  "commit": "e5d744f",
+  "results": [
+    {
+      "name": "1card",
+      "parallelism": 1,
+      "cfg": false,
+      "ulysses": null,
+      "avg_total_ms": 3306.44,
+      "avg_step_ms": 661.29,
+      "runs": [
+        3305.8,
+        3305.84,
+        3307.69
+      ]
+    },
+    {
+      "name": "4card_pure_ulysses",
+      "parallelism": 4,
+      "cfg": false,
+      "ulysses": 4,
+      "avg_total_ms": 1366.39,
+      "avg_step_ms": 273.28,
+      "runs": [
+        1384.53,
+        1359.5,
+        1355.15
+      ]
+    },
+    {
+      "name": "4card_cfg_u2",
+      "parallelism": 4,
+      "cfg": true,
+      "ulysses": 2,
+      "avg_total_ms": 1268.17,
+      "avg_step_ms": 253.63,
+      "runs": [
+        1256.38,
+        1283.57,
+        1264.57
+      ]
+    },
+    {
+      "name": "8card_pure_ulysses",
+      "parallelism": 8,
+      "cfg": false,
+      "ulysses": 8,
+      "avg_total_ms": 1778.19,
+      "avg_step_ms": 355.64,
+      "runs": [
+        1773.09,
+        1786.45,
+        1775.01
+      ]
+    },
+    {
+      "name": "8card_cfg_u4",
+      "parallelism": 8,
+      "cfg": true,
+      "ulysses": 4,
+      "avg_total_ms": 866.53,
+      "avg_step_ms": 173.31,
+      "runs": [
+        880.7,
+        880.11,
+        838.79
+      ]
+    }
+  ]
+}
