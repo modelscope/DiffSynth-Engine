@@ -1,0 +1,48 @@
+{
+  "metadata": {
+    "num_cards": 4,
+    "steps": 5,
+    "torch": "2.10.0+cpu"
+  },
+  "timing": {
+    "avg_total_ms": 1368.4,
+    "avg_step_ms": 273.68,
+    "run_times_ms": [
+      1365.71,
+      1371.88,
+      1367.61
+    ]
+  },
+  "scaling": {
+    "single_step_ms": 555.5,
+    "multi_step_ms": 273.68,
+    "ideal_step_ms": 138.88,
+    "speedup": 2.03,
+    "ideal_speedup": 4,
+    "efficiency_pct": 50.7,
+    "overhead_ms": 134.8,
+    "overhead_pct": 49.3,
+    "is_bottleneck": true
+  },
+  "optimizations": [
+    {
+      "type": "high_comm_overhead",
+      "overhead_pct": 49.3,
+      "fix": "Improve AllToAll overlap (AscendLongContextAttention fa_alltoall_overlap parameter)"
+    },
+    {
+      "type": "low_efficiency",
+      "efficiency": 50.7,
+      "fix": "Reduce SP degree or use hybrid Ulysses+Ring"
+    },
+    {
+      "type": "alltoall_in_attention_dominant",
+      "estimated_comm_ms": 63.9,
+      "fix": "Increase fa_alltoall_overlap chunks / enable comm-compute stream overlap"
+    }
+  ],
+  "gate": {
+    "do_comm_optimize": true,
+    "reason": "Overhead 49.3% > 15%"
+  }
+}

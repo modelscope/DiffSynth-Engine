@@ -1,0 +1,488 @@
+{
+  "metadata": {
+    "timestamp": "2026-08-22T16:49:28.578968",
+    "hardware": {
+      "gpu_count": 8,
+      "torch_version": "2.8.0+cu129",
+      "cuda_version": "12.9",
+      "gpu_name": "NVIDIA H20",
+      "gpu_memory_gb": 95.1
+    },
+    "config": {
+      "seed": 42,
+      "steps": 5,
+      "warmup": 2,
+      "timed": 3
+    }
+  },
+  "raw_results": [
+    {
+      "status": "success",
+      "config_name": "1card_fa2",
+      "num_cards": 1,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": null,
+      "sp_ring_degree": null,
+      "use_cfg_parallel": false,
+      "timing": {
+        "avg_total_ms": 7196.46,
+        "avg_step_ms": 1439.29,
+        "run_times_ms": [
+          7133.86,
+          7114.29,
+          7341.21
+        ]
+      },
+      "peak_memory_mb": 63831.4
+    },
+    {
+      "status": "success",
+      "config_name": "2card_ulysses_fa2",
+      "num_cards": 2,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": 2,
+      "sp_ring_degree": 1,
+      "use_cfg_parallel": false,
+      "timing": {
+        "avg_total_ms": 4141.83,
+        "avg_step_ms": 828.37,
+        "run_times_ms": [
+          4158.86,
+          4136.11,
+          4130.52
+        ]
+      },
+      "peak_memory_mb": 34.3
+    },
+    {
+      "status": "success",
+      "config_name": "4card_ulysses_fa2",
+      "num_cards": 4,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": 4,
+      "sp_ring_degree": 1,
+      "use_cfg_parallel": false,
+      "timing": {
+        "avg_total_ms": 2464.29,
+        "avg_step_ms": 492.86,
+        "run_times_ms": [
+          2462.38,
+          2464.46,
+          2466.02
+        ]
+      },
+      "peak_memory_mb": 34.3
+    },
+    {
+      "status": "success",
+      "config_name": "8card_ulysses_fa2",
+      "num_cards": 8,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": 8,
+      "sp_ring_degree": 1,
+      "use_cfg_parallel": false,
+      "timing": {
+        "avg_total_ms": 2305.18,
+        "avg_step_ms": 461.04,
+        "run_times_ms": [
+          2413.39,
+          2359.66,
+          2142.48
+        ]
+      },
+      "peak_memory_mb": 34.3
+    },
+    {
+      "status": "error",
+      "config_name": "2card_ring_fa2",
+      "error": "Worker 0 failed to start: CUDA error: invalid argument\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+    },
+    {
+      "status": "success",
+      "config_name": "4card_ring_fa2",
+      "num_cards": 4,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": 1,
+      "sp_ring_degree": 4,
+      "use_cfg_parallel": false,
+      "timing": {
+        "avg_total_ms": 2766.15,
+        "avg_step_ms": 553.23,
+        "run_times_ms": [
+          2706.7,
+          2712.0,
+          2879.75
+        ]
+      },
+      "peak_memory_mb": 34.3
+    },
+    {
+      "status": "success",
+      "config_name": "8card_ring_fa2",
+      "num_cards": 8,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": 1,
+      "sp_ring_degree": 8,
+      "use_cfg_parallel": false,
+      "timing": {
+        "avg_total_ms": 2524.09,
+        "avg_step_ms": 504.82,
+        "run_times_ms": [
+          2542.69,
+          2506.54,
+          2523.03
+        ]
+      },
+      "peak_memory_mb": 34.3
+    },
+    {
+      "status": "success",
+      "config_name": "4card_hybrid_u2r2",
+      "num_cards": 4,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": 2,
+      "sp_ring_degree": 2,
+      "use_cfg_parallel": false,
+      "timing": {
+        "avg_total_ms": 2615.32,
+        "avg_step_ms": 523.06,
+        "run_times_ms": [
+          2620.8,
+          2615.17,
+          2609.98
+        ]
+      },
+      "peak_memory_mb": 34.3
+    },
+    {
+      "status": "success",
+      "config_name": "8card_hybrid_u4r2",
+      "num_cards": 8,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": 4,
+      "sp_ring_degree": 2,
+      "use_cfg_parallel": false,
+      "timing": {
+        "avg_total_ms": 1821.06,
+        "avg_step_ms": 364.21,
+        "run_times_ms": [
+          1813.73,
+          1805.14,
+          1844.31
+        ]
+      },
+      "peak_memory_mb": 34.3
+    },
+    {
+      "status": "success",
+      "config_name": "8card_hybrid_u2r4",
+      "num_cards": 8,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": 2,
+      "sp_ring_degree": 4,
+      "use_cfg_parallel": false,
+      "timing": {
+        "avg_total_ms": 2127.41,
+        "avg_step_ms": 425.48,
+        "run_times_ms": [
+          2125.65,
+          2124.72,
+          2131.86
+        ]
+      },
+      "peak_memory_mb": 34.3
+    },
+    {
+      "status": "success",
+      "config_name": "2card_cfg",
+      "num_cards": 2,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": 1,
+      "sp_ring_degree": 1,
+      "use_cfg_parallel": true,
+      "timing": {
+        "avg_total_ms": 3810.16,
+        "avg_step_ms": 762.03,
+        "run_times_ms": [
+          3783.75,
+          3888.14,
+          3758.59
+        ]
+      },
+      "peak_memory_mb": 34.3
+    },
+    {
+      "status": "success",
+      "config_name": "4card_cfg_u2",
+      "num_cards": 4,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": 2,
+      "sp_ring_degree": 1,
+      "use_cfg_parallel": true,
+      "timing": {
+        "avg_total_ms": 3403.51,
+        "avg_step_ms": 680.7,
+        "run_times_ms": [
+          4851.12,
+          3097.34,
+          2262.08
+        ]
+      },
+      "peak_memory_mb": 34.3
+    },
+    {
+      "status": "success",
+      "config_name": "8card_cfg_u4",
+      "num_cards": 8,
+      "attn_type": "fa2",
+      "sp_ulysses_degree": 4,
+      "sp_ring_degree": 1,
+      "use_cfg_parallel": true,
+      "timing": {
+        "avg_total_ms": 1426.82,
+        "avg_step_ms": 285.36,
+        "run_times_ms": [
+          1431.06,
+          1428.78,
+          1420.62
+        ]
+      },
+      "peak_memory_mb": 34.3
+    }
+  ],
+  "analysis": {
+    "baseline": {
+      "step_ms": 1439.29,
+      "total_ms": 7196.46
+    },
+    "scaling": [
+      {
+        "config": "8card_cfg_u4",
+        "cards": 8,
+        "step_ms": 285.36,
+        "total_ms": 1426.82,
+        "speedup": 5.044,
+        "total_speedup": 5.044,
+        "efficiency": 63.0,
+        "ideal_ms": 179.91,
+        "overhead_ms": 105.45,
+        "overhead_pct": 37.0
+      },
+      {
+        "config": "8card_hybrid_u4r2",
+        "cards": 8,
+        "step_ms": 364.21,
+        "total_ms": 1821.06,
+        "speedup": 3.952,
+        "total_speedup": 3.952,
+        "efficiency": 49.4,
+        "ideal_ms": 179.91,
+        "overhead_ms": 184.3,
+        "overhead_pct": 50.6
+      },
+      {
+        "config": "8card_hybrid_u2r4",
+        "cards": 8,
+        "step_ms": 425.48,
+        "total_ms": 2127.41,
+        "speedup": 3.383,
+        "total_speedup": 3.383,
+        "efficiency": 42.3,
+        "ideal_ms": 179.91,
+        "overhead_ms": 245.57,
+        "overhead_pct": 57.7
+      },
+      {
+        "config": "8card_ulysses_fa2",
+        "cards": 8,
+        "step_ms": 461.04,
+        "total_ms": 2305.18,
+        "speedup": 3.122,
+        "total_speedup": 3.122,
+        "efficiency": 39.0,
+        "ideal_ms": 179.91,
+        "overhead_ms": 281.13,
+        "overhead_pct": 61.0
+      },
+      {
+        "config": "4card_ulysses_fa2",
+        "cards": 4,
+        "step_ms": 492.86,
+        "total_ms": 2464.29,
+        "speedup": 2.92,
+        "total_speedup": 2.92,
+        "efficiency": 73.0,
+        "ideal_ms": 359.82,
+        "overhead_ms": 133.04,
+        "overhead_pct": 27.0
+      },
+      {
+        "config": "8card_ring_fa2",
+        "cards": 8,
+        "step_ms": 504.82,
+        "total_ms": 2524.09,
+        "speedup": 2.851,
+        "total_speedup": 2.851,
+        "efficiency": 35.6,
+        "ideal_ms": 179.91,
+        "overhead_ms": 324.91,
+        "overhead_pct": 64.4
+      },
+      {
+        "config": "4card_hybrid_u2r2",
+        "cards": 4,
+        "step_ms": 523.06,
+        "total_ms": 2615.32,
+        "speedup": 2.752,
+        "total_speedup": 2.752,
+        "efficiency": 68.8,
+        "ideal_ms": 359.82,
+        "overhead_ms": 163.24,
+        "overhead_pct": 31.2
+      },
+      {
+        "config": "4card_ring_fa2",
+        "cards": 4,
+        "step_ms": 553.23,
+        "total_ms": 2766.15,
+        "speedup": 2.602,
+        "total_speedup": 2.602,
+        "efficiency": 65.0,
+        "ideal_ms": 359.82,
+        "overhead_ms": 193.41,
+        "overhead_pct": 35.0
+      },
+      {
+        "config": "4card_cfg_u2",
+        "cards": 4,
+        "step_ms": 680.7,
+        "total_ms": 3403.51,
+        "speedup": 2.114,
+        "total_speedup": 2.114,
+        "efficiency": 52.9,
+        "ideal_ms": 359.82,
+        "overhead_ms": 320.88,
+        "overhead_pct": 47.1
+      },
+      {
+        "config": "2card_cfg",
+        "cards": 2,
+        "step_ms": 762.03,
+        "total_ms": 3810.16,
+        "speedup": 1.889,
+        "total_speedup": 1.889,
+        "efficiency": 94.4,
+        "ideal_ms": 719.64,
+        "overhead_ms": 42.38,
+        "overhead_pct": 5.6
+      },
+      {
+        "config": "2card_ulysses_fa2",
+        "cards": 2,
+        "step_ms": 828.37,
+        "total_ms": 4141.83,
+        "speedup": 1.737,
+        "total_speedup": 1.738,
+        "efficiency": 86.9,
+        "ideal_ms": 719.64,
+        "overhead_ms": 108.73,
+        "overhead_pct": 13.1
+      }
+    ],
+    "optimizations": [
+      {
+        "config": "4card_ulysses_fa2",
+        "type": "high_comm_overhead",
+        "overhead_pct": 27.0,
+        "overhead_ms": 133.04,
+        "fix": "AllToAll overlap / reduce SP degree / try Ring attention for better overlap"
+      },
+      {
+        "config": "8card_ulysses_fa2",
+        "type": "high_comm_overhead",
+        "overhead_pct": 61.0,
+        "overhead_ms": 281.13,
+        "fix": "AllToAll overlap / reduce SP degree / try Ring attention for better overlap"
+      },
+      {
+        "config": "8card_ulysses_fa2",
+        "type": "low_efficiency",
+        "efficiency": 39.0,
+        "fix": "Reduce parallelism / use CFG parallel / increase workload size"
+      },
+      {
+        "config": "4card_ring_fa2",
+        "type": "high_comm_overhead",
+        "overhead_pct": 35.0,
+        "overhead_ms": 193.41,
+        "fix": "AllToAll overlap / reduce SP degree / try Ring attention for better overlap"
+      },
+      {
+        "config": "8card_ring_fa2",
+        "type": "high_comm_overhead",
+        "overhead_pct": 64.4,
+        "overhead_ms": 324.91,
+        "fix": "AllToAll overlap / reduce SP degree / try Ring attention for better overlap"
+      },
+      {
+        "config": "8card_ring_fa2",
+        "type": "low_efficiency",
+        "efficiency": 35.6,
+        "fix": "Reduce parallelism / use CFG parallel / increase workload size"
+      },
+      {
+        "config": "4card_hybrid_u2r2",
+        "type": "high_comm_overhead",
+        "overhead_pct": 31.2,
+        "overhead_ms": 163.24,
+        "fix": "AllToAll overlap / reduce SP degree / try Ring attention for better overlap"
+      },
+      {
+        "config": "8card_hybrid_u4r2",
+        "type": "high_comm_overhead",
+        "overhead_pct": 50.6,
+        "overhead_ms": 184.3,
+        "fix": "AllToAll overlap / reduce SP degree / try Ring attention for better overlap"
+      },
+      {
+        "config": "8card_hybrid_u4r2",
+        "type": "low_efficiency",
+        "efficiency": 49.4,
+        "fix": "Reduce parallelism / use CFG parallel / increase workload size"
+      },
+      {
+        "config": "8card_hybrid_u2r4",
+        "type": "high_comm_overhead",
+        "overhead_pct": 57.7,
+        "overhead_ms": 245.57,
+        "fix": "AllToAll overlap / reduce SP degree / try Ring attention for better overlap"
+      },
+      {
+        "config": "8card_hybrid_u2r4",
+        "type": "low_efficiency",
+        "efficiency": 42.3,
+        "fix": "Reduce parallelism / use CFG parallel / increase workload size"
+      },
+      {
+        "config": "4card_cfg_u2",
+        "type": "high_comm_overhead",
+        "overhead_pct": 47.1,
+        "overhead_ms": 320.88,
+        "fix": "AllToAll overlap / reduce SP degree / try Ring attention for better overlap"
+      },
+      {
+        "config": "4card_cfg_u2",
+        "type": "low_efficiency",
+        "efficiency": 52.9,
+        "fix": "Reduce parallelism / use CFG parallel / increase workload size"
+      },
+      {
+        "config": "8card_cfg_u4",
+        "type": "high_comm_overhead",
+        "overhead_pct": 37.0,
+        "overhead_ms": 105.45,
+        "fix": "AllToAll overlap / reduce SP degree / try Ring attention for better overlap"
+      }
+    ]
+  }
+}
