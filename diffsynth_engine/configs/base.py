@@ -43,6 +43,7 @@ class PipelineConfig:
 
     # optimization
     use_torch_compile: bool = False
+    compile_ffn: bool = False
 
     # parallelism
     parallelism: int = 1

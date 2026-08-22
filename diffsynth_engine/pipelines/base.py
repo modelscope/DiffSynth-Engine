@@ -55,6 +55,42 @@ class Pipeline:
             )
         return model
 
+    @staticmethod
+    def compile_ffn_blocks(model: nn.Module) -> nn.Module:
+        """Compile only FFN (MLP) submodules within transformer blocks.
+
+        This is a finer-grained alternative to compile_transformer_blocks that
+        targets only the feed-forward networks (img_mlp / txt_mlp) while leaving
+        attention and modulation untouched.
+        """
+        import torch
+
+        compile_kwargs = get_compile_kwargs()
+        compiled_count = 0
+        for name, submodule in model.named_modules():
+            if name.endswith((".img_mlp", ".txt_mlp")):
+                compiled_module = torch.compile(submodule, **compile_kwargs)
+                # Replace the submodule in parent
+                parts = name.rsplit(".", 1)
+                if len(parts) == 2:
+                    parent_name, attr_name = parts
+                    parent = dict(model.named_modules())[parent_name]
+                else:
+                    parent = model
+                    attr_name = parts[0]
+                setattr(parent, attr_name, compiled_module)
+                compiled_count += 1
+                logger.info(f"Compiled FFN block: {name}")
+
+        if compiled_count == 0:
+            logger.warning(
+                f"No FFN blocks (img_mlp/txt_mlp) found in {type(model).__name__}; "
+                "compile_ffn had no effect."
+            )
+        else:
+            logger.info(f"Compiled {compiled_count} FFN blocks in {type(model).__name__}")
+        return model
+
     @classmethod
     def init_transformer(
         cls,
@@ -137,6 +173,8 @@ class Pipeline:
         del state_dict
         if pipeline_config.use_torch_compile:
             model = cls.compile_transformer_blocks(model)
+        elif pipeline_config.compile_ffn:
+            model = cls.compile_ffn_blocks(model)
         return model
 
     @staticmethod
