@@ -102,7 +102,7 @@ class TestWan22ImageToVideoPipelineTP(VideoTestCase):
         )
 
         output_frames = video.frames[0]
-        self.assertVideoMsSsimEqualAndSaveFailed(output_frames, "wan/wan_22_i2v.mp4", threshold=0.88, fps=16)
+        self.assertVideoMsSsimEqualAndSaveFailed(output_frames, "wan/wan_22_i2v.mp4", threshold=0.90, fps=16)
 
 
 if __name__ == "__main__":

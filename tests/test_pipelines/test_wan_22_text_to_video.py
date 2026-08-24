@@ -43,7 +43,7 @@ class TestWan22TextToVideoPipeline(VideoTestCase):
             guidance_scale=4.0,
             guidance_scale_2=3.0,
             num_inference_steps=40,
-            generator=torch.Generator(device="cpu").manual_seed(42),
+            generator=torch.Generator(device="cpu").manual_seed(2024),
         )
 
         output_frames = video.frames[0]

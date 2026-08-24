@@ -12,7 +12,7 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "torch >= 2.10",
+    "torch == 2.13.0",
     "torchvision",
     "transformers == 4.57.6",
     "diffusers == 0.36.0",

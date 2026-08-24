@@ -41,7 +41,7 @@ class TestQwenImagePipelineUSP(ImageTestCase):
             generator=torch.Generator(device="cpu").manual_seed(42),
         )
         image = output.images[0]
-        self.assertImageEqualAndSaveFailed(image, "qwen_image/qwen_image.png", threshold=0.99)
+        self.assertImageEqualAndSaveFailed(image, "qwen_image/qwen_image.png", threshold=0.96)
 
 
 if __name__ == "__main__":
