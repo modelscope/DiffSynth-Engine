@@ -92,6 +92,17 @@ class MindieAttentionImpl(AttentionImpl):
     ) -> torch.Tensor:
         from mindiesd.layers.flash_attn.attention_forward import attention_forward
 
+        # MindIE attention_forward 没有 causal 参数，只接受 attn_mask（布尔张量，
+        # True 表示保留/参与计算，False 表示被屏蔽）。因此当请求 causal 且调用方未显式
+        # 传入 attn_mask 时，手动构造下三角 causal mask 并通过 attn_mask 传入。
+        # layout 为 "BSND"，故 q_seqlen = query.shape[1]、kv_seqlen = key.shape[1]。
+        if self.causal and attn_mask is None:
+            q_seqlen = query.shape[1]
+            kv_seqlen = key.shape[1]
+            attn_mask = torch.tril(
+                torch.ones(q_seqlen, kv_seqlen, dtype=torch.bool, device=query.device)
+            )
+
         return attention_forward(
             query=query,
             key=key,

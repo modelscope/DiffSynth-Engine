@@ -17,8 +17,13 @@ def create_parallel_attention(
     """
     根据平台能力和并行配置创建合适的序列并行 attention 模块。
 
-    - NPU + SP initialized: AscendLongContextAttention
+    - NPU MindIE (attn_type == "mindie") + SP initialized + Ulysses-only (ring degree == 1):
+      AscendLongContextAttention
     - 其他: USPAttention
+
+    AscendLongContextAttention 目前仅支持 MindIE backend 且仅支持 Ulysses 序列并行
+    (sp_ring_degree == 1)。因此只有在调用方显式请求 "mindie" 且未启用 ring 并行时才路由到
+    NPU 长上下文实现，其余情况一律 fallback 到 USPAttention。
 
     Args:
         num_heads: attention head 数量
@@ -35,7 +40,10 @@ def create_parallel_attention(
         nn.Module: 配置好的 attention 模块
     """
     # Lazy imports to avoid circular dependencies
-    from diffsynth_engine.distributed.parallel_state import is_sp_group_initialized
+    from diffsynth_engine.distributed.parallel_state import (
+        get_ring_parallel_world_size,
+        is_sp_group_initialized,
+    )
     from diffsynth_engine.utils.platform import is_mindie_sd_available
 
     common_kwargs = dict(
@@ -50,7 +58,15 @@ def create_parallel_attention(
         **extra_impl_args,
     )
 
-    if is_mindie_sd_available() and is_sp_group_initialized():
+    # AscendLongContextAttention 只服务 MindIE backend，且只支持 Ulysses（ring degree == 1）。
+    # 因此必须校验 attn_type，并确认 ring 配置未启用，否则 fallback 到 USPAttention。
+    # 注意短路顺序：get_ring_parallel_world_size() 依赖 SP 已初始化，必须放在 is_sp_group_initialized() 之后。
+    if (
+        is_mindie_sd_available()
+        and is_sp_group_initialized()
+        and str(attn_type) == "mindie"
+        and get_ring_parallel_world_size() == 1
+    ):
         from diffsynth_engine.layers.attention.ascend_long_context import AscendLongContextAttention
 
         return AscendLongContextAttention(**common_kwargs)
