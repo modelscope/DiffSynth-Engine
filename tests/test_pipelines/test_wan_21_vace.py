@@ -86,7 +86,7 @@ class TestWanVACEPipeline(VideoTestCase):
         )
 
         output_frames = result.frames[0]
-        self.assertVideoMsSsimEqualAndSaveFailed(output_frames, "wan/wan_vace.mp4", threshold=0.93, fps=16)
+        self.assertVideoMsSsimEqualAndSaveFailed(output_frames, "wan/wan_vace.mp4", threshold=0.98, fps=16)
 
 
 if __name__ == "__main__":
