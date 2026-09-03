@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.platform import pin_memory
 
 logger = logging.get_logger(__name__)
 
@@ -180,9 +181,7 @@ class LinearWithLoRA(nn.Module):
         if self._original_weight is not None:
             return
         weight = self.base_layer.weight.data
-        self._original_weight = weight.detach().cpu().clone()
-        if not torch.backends.mps.is_available():
-            self._original_weight = self._original_weight.pin_memory()
+        self._original_weight = pin_memory(weight.detach().cpu().clone())
 
     def merge_loras(self, chunked: bool = False, high_precision: bool = True) -> list[str]:
         """Merge active LoRA models into the wrapped base layer weight.

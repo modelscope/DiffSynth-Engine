@@ -1,46 +1,49 @@
 import torch
 
 
-def _is_cuda() -> bool:
-    return torch.version.cuda is not None
+from diffsynth_engine.platforms import (
+    AscendPlatform,
+    current_platform,
+)
 
 
-def _is_rocm() -> bool:
-    return torch.version.hip is not None
+def is_npu_available() -> bool:
+    return AscendPlatform.is_available()
 
 
-def _is_mps() -> bool:
-    return torch.backends.mps.is_available()
-
-
-def get_device(local_rank: int) -> torch.device:
-    if _is_cuda() or _is_rocm():
-        return torch.device("cuda", local_rank)
-    if _is_mps():
-        return torch.device("mps")
-    else:
-        return torch.device("cpu")
+def is_mindie_sd_available() -> bool:
+    return AscendPlatform.supports("mindie")
 
 
 def get_device_type() -> str:
-    if _is_cuda() or _is_rocm():
-        return "cuda"
-    if _is_mps():
-        return "mps"
-    else:
-        return "cpu"
+    return current_platform.device_type
+
+
+def get_device(local_rank: int) -> torch.device:
+    return current_platform.get_device(local_rank)
 
 
 def get_torch_distributed_backend() -> str:
-    if _is_cuda() or _is_rocm():
-        return "nccl"
-    if _is_mps():
-        return "gloo"
-    else:
-        raise NotImplementedError("Unsupported device type")
+    return current_platform.distributed_backend()
 
 
-DTYPE_FP8 = torch.float8_e4m3fnuz if _is_rocm() else torch.float8_e4m3fn
+def device_count() -> int:
+    return current_platform.device_count()
+
+
+def set_device(index: int | str | torch.device) -> None:
+    current_platform.set_device(index)
+
+
+def pin_memory(tensor: torch.Tensor) -> torch.Tensor:
+    return current_platform.pin_memory(tensor)
+
+
+def get_compile_kwargs() -> dict:
+    return current_platform.compile_kwargs()
+
+
+DTYPE_FP8 = current_platform.fp8_dtype()
 
 DTYPE_MAP: dict[str, torch.dtype] = {
     # Integer dtypes

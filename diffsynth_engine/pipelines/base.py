@@ -19,6 +19,7 @@ from diffsynth_engine.distributed.parallel_state import (
 from diffsynth_engine.forward_context import set_forward_context
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.load_utils import fix_state_dict_key, load_model_weights, prepare_model_weights
+from diffsynth_engine.utils.platform import get_compile_kwargs
 
 logger = logging.get_logger(__name__)
 
@@ -41,10 +42,11 @@ class Pipeline:
         if not repeated_blocks:
             raise ValueError(f"`_repeated_blocks` is not defined for {type(model).__name__}")
 
+        compile_kwargs = get_compile_kwargs()
         has_compiled_region = False
         for submodule in model.modules():
             if submodule.__class__.__name__ in repeated_blocks:
-                submodule.compile()
+                submodule.compile(**compile_kwargs)
                 has_compiled_region = True
 
         if not has_compiled_region:
