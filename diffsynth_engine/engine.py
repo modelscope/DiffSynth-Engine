@@ -1,7 +1,6 @@
 from typing import Any
 
 import torch.multiprocessing as mp
-from torch.cuda import set_device
 
 from diffsynth_engine.configs import PipelineConfig
 from diffsynth_engine.registry import (
@@ -9,6 +8,7 @@ from diffsynth_engine.registry import (
     get_pipeline_class_name,
 )
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.platform import set_device
 from diffsynth_engine.utils.torch_profiler import TorchProfiler
 from diffsynth_engine.worker import run_worker_loop
 

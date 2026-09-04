@@ -38,6 +38,7 @@ class Worker:
         os.environ["LOCAL_RANK"] = str(local_rank)
         os.environ["RANK"] = str(rank)
         os.environ["WORLD_SIZE"] = str(world_size)
+
         init_distributed_environment(world_size=world_size, rank=rank, local_rank=local_rank)
 
         cfg_degree = 2 if pipeline_config.use_cfg_parallel else 1

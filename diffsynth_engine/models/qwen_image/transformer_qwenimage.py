@@ -24,7 +24,7 @@ import torch.nn as nn
 from diffusers.configuration_utils import register_to_config
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
-from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
+from diffusers.models.normalization import AdaLayerNormContinuous
 
 from diffsynth_engine.distributed.parallel_state import (
     get_tensor_model_parallel_world_size,
@@ -32,9 +32,11 @@ from diffsynth_engine.distributed.parallel_state import (
 )
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
-from diffsynth_engine.layers.attention import USPAttention
+from diffsynth_engine.layers import RMSNorm
+from diffsynth_engine.layers.attention.factory import create_parallel_attention
 from diffsynth_engine.layers.tensor_parallel import ColumnParallelLinear, RowParallelLinear, TPFeedForward
 from diffsynth_engine.models.base import DiffusionModel
+from diffsynth_engine.platforms.ops import fused_layernorm_scale_shift, fused_rotary_embedding
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -60,32 +62,7 @@ def apply_rotary_emb_qwen(
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: Tuple of modified query tensor and key tensor with rotary embeddings.
     """
-    if use_real:
-        cos, sin = freqs_cis  # [S, D]
-        cos = cos[None, None]
-        sin = sin[None, None]
-        cos, sin = cos.to(x.device), sin.to(x.device)
-
-        if use_real_unbind_dim == -1:
-            # Used for flux, cogvideox, hunyuan-dit
-            x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
-            x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
-        elif use_real_unbind_dim == -2:
-            # Used for Stable Audio, OmniGen, CogView4 and Cosmos
-            x_real, x_imag = x.reshape(*x.shape[:-1], 2, -1).unbind(-2)  # [B, S, H, D//2]
-            x_rotated = torch.cat([-x_imag, x_real], dim=-1)
-        else:
-            raise ValueError(f"`use_real_unbind_dim={use_real_unbind_dim}` but should be -1 or -2.")
-
-        out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
-
-        return out
-    else:
-        x_rotated = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
-        freqs_cis = freqs_cis.unsqueeze(1)
-        x_out = torch.view_as_real(x_rotated * freqs_cis).flatten(3)
-
-        return x_out.type_as(x)
+    return fused_rotary_embedding(x, freqs_cis, use_real=use_real, use_real_unbind_dim=use_real_unbind_dim)
 
 
 def compute_text_seq_len_from_mask(
@@ -462,7 +439,7 @@ class QwenDoubleStreamAttention(nn.Module):
 
         # USPAttention for joint attention computation
         forward_context = get_forward_context()
-        self.usp_attn = USPAttention(
+        self.usp_attn = create_parallel_attention(
             num_heads=self.heads,
             head_size=attention_head_dim,
             attn_type=forward_context.attn_type,
@@ -584,32 +561,25 @@ class QwenImageTransformerBlock(nn.Module):
 
         self.zero_cond_t = zero_cond_t
 
-    def _modulate(self, x, mod_params, index=None):
-        """Apply modulation to input tensor"""
-        # x: b l d, shift: b d, scale: b d, gate: b d
+    def _split_mod_params(self, mod_params, index=None):
+        """Split modulation params into shift/scale/gate, optionally indexed for CFG."""
         shift, scale, gate = mod_params.chunk(3, dim=-1)
 
         if index is not None:
-            # Assuming mod_params batch dim is 2*actual_batch (chunked into 2 parts)
-            # So shift, scale, gate have shape [2*actual_batch, d]
             actual_batch = shift.size(0) // 2
-            shift_0, shift_1 = shift[:actual_batch], shift[actual_batch:]  # each: [actual_batch, d]
+            shift_0, shift_1 = shift[:actual_batch], shift[actual_batch:]
             scale_0, scale_1 = scale[:actual_batch], scale[actual_batch:]
             gate_0, gate_1 = gate[:actual_batch], gate[actual_batch:]
 
-            # index: [b, l] where b is actual batch size
-            # Expand to [b, l, 1] to match feature dimension
-            index_expanded = index.unsqueeze(-1)  # [b, l, 1]
+            index_expanded = index.unsqueeze(-1)
 
-            # Expand chunks to [b, 1, d] then broadcast to [b, l, d]
-            shift_0_exp = shift_0.unsqueeze(1)  # [b, 1, d]
-            shift_1_exp = shift_1.unsqueeze(1)  # [b, 1, d]
+            shift_0_exp = shift_0.unsqueeze(1)
+            shift_1_exp = shift_1.unsqueeze(1)
             scale_0_exp = scale_0.unsqueeze(1)
             scale_1_exp = scale_1.unsqueeze(1)
             gate_0_exp = gate_0.unsqueeze(1)
             gate_1_exp = gate_1.unsqueeze(1)
 
-            # Use torch.where to select based on index
             shift_result = torch.where(index_expanded == 0, shift_0_exp, shift_1_exp)
             scale_result = torch.where(index_expanded == 0, scale_0_exp, scale_1_exp)
             gate_result = torch.where(index_expanded == 0, gate_0_exp, gate_1_exp)
@@ -618,7 +588,19 @@ class QwenImageTransformerBlock(nn.Module):
             scale_result = scale.unsqueeze(1)
             gate_result = gate.unsqueeze(1)
 
-        return x * (1 + scale_result) + shift_result, gate_result
+        return shift_result, scale_result, gate_result
+
+    def _modulate(self, x, mod_params, index=None):
+        """Apply modulation to input tensor"""
+        shift_result, scale_result, gate_result = self._split_mod_params(mod_params, index)
+        # x*(1+scale)+shift == x + x*scale + shift — prefer addcmul over Adds+Mul+Add
+        return torch.addcmul(x, x, scale_result) + shift_result, gate_result
+
+    def _norm_modulate(self, norm: nn.LayerNorm, x: torch.Tensor, mod_params, index=None):
+        """LayerNorm + Ada modulate. Fuses via platform ops when enabled."""
+        shift_result, scale_result, gate_result = self._split_mod_params(mod_params, index)
+        out = fused_layernorm_scale_shift(norm, x, scale_result, shift_result)
+        return out, gate_result
 
     def forward(
         self,
@@ -641,13 +623,8 @@ class QwenImageTransformerBlock(nn.Module):
         img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
         txt_mod1, txt_mod2 = txt_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
 
-        # Process image stream - norm1 + modulation
-        img_normed = self.img_norm1(hidden_states)
-        img_modulated, img_gate1 = self._modulate(img_normed, img_mod1, modulate_index)
-
-        # Process text stream - norm1 + modulation
-        txt_normed = self.txt_norm1(encoder_hidden_states)
-        txt_modulated, txt_gate1 = self._modulate(txt_normed, txt_mod1)
+        img_modulated, img_gate1 = self._norm_modulate(self.img_norm1, hidden_states, img_mod1, modulate_index)
+        txt_modulated, txt_gate1 = self._norm_modulate(self.txt_norm1, encoder_hidden_states, txt_mod1)
 
         # Use QwenDoubleStreamAttention for joint attention computation
         # This directly implements the DoubleStreamLayerMegatron logic:
@@ -665,21 +642,17 @@ class QwenImageTransformerBlock(nn.Module):
             image_rotary_emb=image_rotary_emb,
         )
 
-        # Apply attention gates and add residual (like in Megatron)
-        hidden_states = hidden_states + img_gate1 * img_attn_output
-        encoder_hidden_states = encoder_hidden_states + txt_gate1 * txt_attn_output
+        # addcmul: residual + gate * out — prefer single op over Mul+Add
+        hidden_states = torch.addcmul(hidden_states, img_gate1, img_attn_output)
+        encoder_hidden_states = torch.addcmul(encoder_hidden_states, txt_gate1, txt_attn_output)
 
-        # Process image stream - norm2 + MLP
-        img_normed2 = self.img_norm2(hidden_states)
-        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2, modulate_index)
+        img_modulated2, img_gate2 = self._norm_modulate(self.img_norm2, hidden_states, img_mod2, modulate_index)
         img_mlp_output = self.img_mlp(img_modulated2)
-        hidden_states = hidden_states + img_gate2 * img_mlp_output
+        hidden_states = torch.addcmul(hidden_states, img_gate2, img_mlp_output)
 
-        # Process text stream - norm2 + MLP
-        txt_normed2 = self.txt_norm2(encoder_hidden_states)
-        txt_modulated2, txt_gate2 = self._modulate(txt_normed2, txt_mod2)
+        txt_modulated2, txt_gate2 = self._norm_modulate(self.txt_norm2, encoder_hidden_states, txt_mod2)
         txt_mlp_output = self.txt_mlp(txt_modulated2)
-        encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
+        encoder_hidden_states = torch.addcmul(encoder_hidden_states, txt_gate2, txt_mlp_output)
 
         # Clip to prevent overflow for fp16
         if encoder_hidden_states.dtype == torch.float16:

@@ -6,6 +6,7 @@ import torch
 from diffsynth_engine.layers.attention import AttentionType
 from diffsynth_engine.registry import get_attn_backend
 from diffsynth_engine.utils import logging
+from diffsynth_engine.platforms import get_device_type, resolve_platform
 
 logger = logging.get_logger(__name__)
 
@@ -27,7 +28,7 @@ class PipelineConfig:
     model_dtype: torch.dtype = torch.bfloat16
     text_encoder_dtype: torch.dtype = torch.bfloat16
     vae_dtype: torch.dtype = torch.float32
-    device: str | torch.device = "cuda"
+    device: str | torch.device = "auto"
 
     pipeline_class_name: str | None = None
 
@@ -42,6 +43,7 @@ class PipelineConfig:
 
     # optimization
     use_torch_compile: bool = False
+    compile_ffn: bool = False
 
     # parallelism
     parallelism: int = 1
@@ -62,6 +64,7 @@ class PipelineConfig:
         self.attn_type = str(self.attn_type)
         init_parallel_config(self)
         validate_attn_config(self)
+        init_device_config(self)
 
 
 def init_parallel_config(config: PipelineConfig):
@@ -109,3 +112,11 @@ def validate_attn_config(config: PipelineConfig):
     if config.sp_ring_degree is not None and config.sp_ring_degree > 1:
         if not attn_backend.supports_ring_attention():
             raise ValueError(f"Attention backend {config.attn_type!r} does not support ring attention.")
+
+
+def init_device_config(config: PipelineConfig):
+    if config.device is None or (isinstance(config.device, str) and config.device.lower() in ("auto", "")):
+        config.device = get_device_type()
+        return
+    # Validate that the explicit device type is registered (fail fast at construction).
+    resolve_platform(config.device)

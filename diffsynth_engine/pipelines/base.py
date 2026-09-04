@@ -19,6 +19,7 @@ from diffsynth_engine.distributed.parallel_state import (
 from diffsynth_engine.forward_context import set_forward_context
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.load_utils import fix_state_dict_key, load_model_weights, prepare_model_weights
+from diffsynth_engine.utils.platform import get_compile_kwargs
 
 logger = logging.get_logger(__name__)
 
@@ -41,16 +42,53 @@ class Pipeline:
         if not repeated_blocks:
             raise ValueError(f"`_repeated_blocks` is not defined for {type(model).__name__}")
 
+        compile_kwargs = get_compile_kwargs()
         has_compiled_region = False
         for submodule in model.modules():
             if submodule.__class__.__name__ in repeated_blocks:
-                submodule.compile()
+                submodule.compile(**compile_kwargs)
                 has_compiled_region = True
 
         if not has_compiled_region:
             raise ValueError(
                 f"None of the repeated block classes {repeated_blocks} were found in {type(model).__name__}"
             )
+        return model
+
+    @staticmethod
+    def compile_ffn_blocks(model: nn.Module) -> nn.Module:
+        """Compile only FFN (MLP) submodules within transformer blocks.
+
+        This is a finer-grained alternative to compile_transformer_blocks that
+        targets only the feed-forward networks (img_mlp / txt_mlp) while leaving
+        attention and modulation untouched.
+        """
+        import torch
+
+        compile_kwargs = get_compile_kwargs()
+        compiled_count = 0
+        for name, submodule in model.named_modules():
+            if name.endswith((".img_mlp", ".txt_mlp")):
+                compiled_module = torch.compile(submodule, **compile_kwargs)
+                # Replace the submodule in parent
+                parts = name.rsplit(".", 1)
+                if len(parts) == 2:
+                    parent_name, attr_name = parts
+                    parent = dict(model.named_modules())[parent_name]
+                else:
+                    parent = model
+                    attr_name = parts[0]
+                setattr(parent, attr_name, compiled_module)
+                compiled_count += 1
+                logger.info(f"Compiled FFN block: {name}")
+
+        if compiled_count == 0:
+            logger.warning(
+                f"No FFN blocks (img_mlp/txt_mlp) found in {type(model).__name__}; "
+                "compile_ffn had no effect."
+            )
+        else:
+            logger.info(f"Compiled {compiled_count} FFN blocks in {type(model).__name__}")
         return model
 
     @classmethod
@@ -135,6 +173,8 @@ class Pipeline:
         del state_dict
         if pipeline_config.use_torch_compile:
             model = cls.compile_transformer_blocks(model)
+        elif pipeline_config.compile_ffn:
+            model = cls.compile_ffn_blocks(model)
         return model
 
     @staticmethod
