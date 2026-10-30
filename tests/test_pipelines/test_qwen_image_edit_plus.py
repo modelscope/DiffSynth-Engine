@@ -1,4 +1,7 @@
+import glob
+import os
 import unittest
+
 import torch
 
 from diffsynth_engine import QwenImagePipelineConfig
@@ -6,17 +9,56 @@ from diffsynth_engine.pipelines import QwenImagePipeline
 from diffsynth_engine.utils.download import fetch_model
 from tests.common.test_case import ImageTestCase
 
+# Multi-device runs need a local copy of the weights and an explicit parallel degree.
+# Everything defaults to the upstream behaviour: one device, weights from ModelScope.
+#
+#   DSNP_MODEL_ROOT   local weight dir containing transformer/ text_encoder/ vae/
+#   DSNP_MODEL_ID     model id used when DSNP_MODEL_ROOT is unset
+#   DSNP_PARALLELISM  total number of devices, default 1
+#   DSNP_SP_ULYSSES   Ulysses degree
+#   DSNP_SP_RING      ring degree
+#   DSNP_DEVICE       device string, defaults to cuda when available, otherwise npu
+#   DSNP_FP8_LINEAR   set to 1 to quantize the DiT Linear layers to W8A8
+MODEL_ROOT = os.environ.get("DSNP_MODEL_ROOT", "")
+MODEL_ID = os.environ.get("DSNP_MODEL_ID", "Qwen/Qwen-Image-Edit-2509")
+PARALLELISM = int(os.environ.get("DSNP_PARALLELISM", "1"))
+SP_ULYSSES = int(os.environ.get("DSNP_SP_ULYSSES", "1"))
+SP_RING = int(os.environ.get("DSNP_SP_RING", "1"))
+FP8_LINEAR = os.environ.get("DSNP_FP8_LINEAR", "0") == "1"
+DEVICE = os.environ.get("DSNP_DEVICE", "cuda" if torch.cuda.is_available() else "npu")
+
+
+def _resolve_weight(sub: str):
+    """Prefer a local directory, fall back to downloading from ModelScope."""
+    if MODEL_ROOT:
+        files = sorted(glob.glob(os.path.join(MODEL_ROOT, sub, "*.safetensors")))
+        if not files:
+            raise FileNotFoundError(f"no safetensors under {MODEL_ROOT}/{sub}")
+        return files if len(files) > 1 else files[0]
+    return fetch_model(MODEL_ID, path=f"{sub}/*.safetensors")
+
 
 class TestQwenImageEditPlusPipeline(ImageTestCase):
     @classmethod
     def setUpClass(cls):
+        # In parallel mode the device must not carry an index: every spawned worker calls
+        # set_device(rank) first, so "npu:0" would put all of them on device 0 and OOM.
+        device = DEVICE
+        if PARALLELISM > 1 and ":" in device:
+            raise ValueError(f"device must not carry an index in parallel mode (got {device!r})")
+
         config = QwenImagePipelineConfig(
-            model_path=fetch_model("Qwen/Qwen-Image-Edit-2509", path="transformer/*.safetensors"),
-            encoder_path=fetch_model("Qwen/Qwen-Image-Edit-2509", path="text_encoder/*.safetensors"),
-            vae_path=fetch_model("Qwen/Qwen-Image-Edit-2509", path="vae/*.safetensors"),
+            model_path=_resolve_weight("transformer"),
+            encoder_path=_resolve_weight("text_encoder"),
+            vae_path=_resolve_weight("vae"),
             model_dtype=torch.bfloat16,
             encoder_dtype=torch.bfloat16,
             vae_dtype=torch.float32,
+            device=device,
+            use_fp8_linear=FP8_LINEAR,
+            parallelism=PARALLELISM,
+            sp_ulysses_degree=SP_ULYSSES,
+            sp_ring_degree=SP_RING,
         )
         cls.pipe = QwenImagePipeline.from_pretrained(config)
 
@@ -30,8 +72,6 @@ class TestQwenImageEditPlusPipeline(ImageTestCase):
             input_image=[self.get_input_image("qwen_1.png"), self.get_input_image("qwen_2.png")],
             negative_prompt=" ",
             cfg_scale=4.0,
-            width=1328,
-            height=1328,
             num_inference_steps=40,
             seed=42,
         )

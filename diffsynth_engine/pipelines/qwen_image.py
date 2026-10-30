@@ -312,6 +312,7 @@ class QwenImagePipeline(BasePipeline):
                     device=("cpu" if config.use_fsdp else init_device),
                     dtype=config.model_dtype,
                     relative_l1_threshold=config.fbcache_relative_l1_threshold,
+                    use_zero_cond_t=config.use_zero_cond_t,
                 )
             elif config.use_nunchaku:
                 if not NUNCHAKU_AVAILABLE:

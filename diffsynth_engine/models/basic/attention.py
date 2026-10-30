@@ -1,3 +1,5 @@
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,7 +18,7 @@ from diffsynth_engine.utils.flag import (
     VIDEO_SPARSE_ATTN_AVAILABLE,
     AITER_AVAILABLE,
 )
-from diffsynth_engine.utils.platform import DTYPE_FP8
+from diffsynth_engine.utils.platform import DTYPE_FP8, IS_NPU
 
 FA3_MAX_HEADDIM = 256
 
@@ -324,6 +326,179 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 
+def npu_ulysses_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    scale: Optional[float] = None,
+) -> torch.Tensor:
+    """Ulysses sequence-parallel attention on Ascend NPU.
+
+    all_to_all (gather sequence, scatter heads) -> fused attention -> all_to_all (inverse).
+    q/k/v: [B, L_local, N, D], returns [B, L_local, N, D].
+
+    Uses torch_npu.npu_fusion_attention, which is the same kernel that SDPA
+    dispatches to on NPU, so results match single-device inference exactly.
+    """
+    import torch_npu
+    from yunchang.comm.all_to_all import all_to_all_4D
+
+    from diffsynth_engine.utils.process_group import (
+        get_sp_ulysses_group,
+        get_sp_ulysses_world_size,
+    )
+
+    if scale is None:
+        scale = q.shape[-1] ** -0.5
+
+    sp = get_sp_ulysses_world_size()
+    if sp <= 1:
+        return torch_npu.npu_fusion_attention(
+            q.contiguous(),
+            k.contiguous(),
+            v.contiguous(),
+            head_num=q.shape[2],
+            input_layout="BSND",
+            scale=scale,
+            keep_prob=1.0,
+        )[0]
+
+    group = get_sp_ulysses_group()
+    q = all_to_all_4D(q.contiguous(), scatter_idx=2, gather_idx=1, group=group)
+    k = all_to_all_4D(k.contiguous(), scatter_idx=2, gather_idx=1, group=group)
+    v = all_to_all_4D(v.contiguous(), scatter_idx=2, gather_idx=1, group=group)
+
+    # all_to_all_4D returns a transposed view; the fused kernel needs contiguous memory
+    out = torch_npu.npu_fusion_attention(
+        q.contiguous(),
+        k.contiguous(),
+        v.contiguous(),
+        head_num=q.shape[2],
+        input_layout="BSND",
+        scale=scale,
+        keep_prob=1.0,
+    )[0]
+    return all_to_all_4D(out, scatter_idx=1, gather_idx=2, group=group)
+
+
+def npu_ring_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    scale: Optional[float] = None,
+) -> torch.Tensor:
+    """Ring attention on Ascend NPU: peer-to-peer KV rotation + online softmax.
+
+    Each rank holds one contiguous chunk of the sequence. K/V are rotated around the
+    ring one step at a time, every block is scored with the fused kernel and merged
+    through ``update_out_and_lse``, so each query still attends to the full context.
+    Communication per rank is independent of world size, and the next block transfer
+    overlaps with the current block's compute.
+
+    yunchang ships an NPU-specific ring implementation, but it gates the compute on
+    ``if step <= comm.rank`` (that is the causal branch, which must be guarded by
+    ``not is_causal``) and never merges the per-block softmax statistics, so it
+    effectively returns the local chunk only. This function reuses yunchang's
+    RingComm and update_out_and_lse, and re-implements the loop.
+    """
+    import torch_npu
+    from yunchang.ring.ring_npu_flash_attn import npu_fused_attn_forward
+    from yunchang.ring.ring_pytorch_attn import update_out_and_lse
+    from yunchang.ring.utils import RingComm
+
+    from diffsynth_engine.utils.process_group import get_sp_group
+
+    if scale is None:
+        scale = q.shape[-1] ** -0.5
+
+    q = q.contiguous()
+    k = k.contiguous()
+    v = v.contiguous()
+    head_num = q.shape[2]
+
+    comm = RingComm(get_sp_group())
+    if comm.world_size == 1:
+        return npu_fused_attn_forward(q, k, v, head_num, "BSND", scale)[0]
+
+    out, lse = None, None
+    next_k = next_v = None
+    for step in range(comm.world_size):
+        if step + 1 != comm.world_size:
+            next_k = comm.send_recv(k)
+            next_v = comm.send_recv(v)
+            comm.commit()
+
+        block_out, block_max, block_sum, _ = npu_fused_attn_forward(q, k, v, head_num, "BSND", scale)
+        # the trailing dim of the softmax statistics is alignment padding repeating the
+        # same value, so take index 0 instead of summing over it
+        block_lse = torch.log(block_sum[..., 0].float().clamp(min=1e-30)) + block_max[..., 0].float()
+        out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+
+        if step + 1 != comm.world_size:
+            comm.wait()
+            k, v = next_k, next_v
+
+    return out.to(q.dtype)
+
+
+# Ascend NPU: two sequence-parallel attention schemes for ring_degree > 1.
+#
+#   "gather" (default): all_gather the full K/V to every rank and score it in one
+#       fused-attention call. Matches single-device numerics most closely because the
+#       full context is scored in one shot, at the cost of O(world_size * seq) traffic.
+#   "ring": rotate K/V around the ring and merge per-block softmax statistics. Traffic
+#       per rank is independent of world size and transfers overlap with compute, but
+#       every block is rounded to bf16 before merging, which measurably lowers output
+#       fidelity on a 40-step diffusion pipeline (0.94189 vs 0.95069 SSIM against the
+#       Qwen-Image reference, measured on 2 x Ascend950PR).
+NPU_RING_IMPL = os.environ.get("NPU_RING_IMPL", "gather").lower()
+
+
+def npu_sp_gather_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    scale: Optional[float] = None,
+) -> torch.Tensor:
+    """Sequence-parallel attention for ring_degree > 1: gather full K/V, score once.
+
+    Q stays local (length L_local), K/V are gathered to the full length, so the
+    result is mathematically identical to running without sequence parallelism.
+    """
+    import torch.distributed as dist
+
+    import torch_npu
+
+    from diffsynth_engine.utils.process_group import get_sp_group, get_sp_world_size
+
+    if scale is None:
+        scale = q.shape[-1] ** -0.5
+
+    world_size = get_sp_world_size()
+    if world_size <= 1:
+        return npu_ulysses_attention(q, k, v, scale=scale)
+
+    group = get_sp_group()
+
+    def _gather_seq(t: torch.Tensor) -> torch.Tensor:
+        t = t.contiguous()
+        parts = [torch.empty_like(t) for _ in range(world_size)]
+        dist.all_gather(parts, t, group=group)
+        return torch.cat(parts, dim=1)
+
+    k_full = _gather_seq(k)
+    v_full = _gather_seq(v)
+    return torch_npu.npu_fusion_attention(
+        q.contiguous(),
+        k_full,
+        v_full,
+        head_num=q.shape[2],
+        input_layout="BSND",
+        scale=scale,
+        keep_prob=1.0,
+    )[0]
+
+
 def long_context_attention(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -356,6 +531,21 @@ def long_context_attention(
         "vsa",
     ]
     assert attn_mask is None, "long context attention does not support attention mask"
+
+    if IS_NPU and attn_impl in (None, "auto"):
+        # torch_npu does not implement SDPA's mem-efficient backend, which
+        # AttnType.TORCH_EFFICIENT requests; it would silently fall back to CPU and
+        # leave the output there, breaking the HCCL collectives that follow.
+        # Use the fused Ascend kernel instead. An explicitly requested attn_impl is
+        # left alone so callers keep control.
+        from diffsynth_engine.utils.process_group import get_sp_ring_world_size
+
+        if get_sp_ring_world_size() > 1:
+            if NPU_RING_IMPL == "ring":
+                return npu_ring_attention(q, k, v, scale=scale)
+            return npu_sp_gather_attention(q, k, v, scale=scale)
+        return npu_ulysses_attention(q, k, v, scale=scale)
+
     flash_attn3_compatible = q.shape[-1] <= FA3_MAX_HEADDIM
     if attn_impl is None or attn_impl == "auto":
         if FLASH_ATTN_3_AVAILABLE:

@@ -65,10 +65,17 @@ class ImageTestCase(TestCase):
 
     @staticmethod
     def get_input_image(name) -> Image.Image:
-        return Image.open(ImageTestCase.testdata_dir / f"input/{name}")
+        # Multi-device pipelines pickle the input images to send them to workers.
+        # PIL loads lazily by default, so pickle would read the pixels from a closed
+        # file handle and fail with "broken PNG file"; convert() forces the read.
+        with Image.open(ImageTestCase.testdata_dir / f"input/{name}") as image:
+            return image.convert("RGB")
 
     def assertImageEqual(self, input_image: Image.Image, expect_image: Image.Image, threshold=0.965):
-        self.assertGreaterEqual(compute_normalized_ssim(input_image, expect_image), threshold)
+        score = compute_normalized_ssim(input_image, expect_image)
+        # log the score even when the assertion passes, so CI logs are useful
+        print(f"[SSIM] {score:.5f}  threshold={threshold}  {'PASS' if score >= threshold else 'FAIL'}", flush=True)
+        self.assertGreaterEqual(score, threshold)
 
     def assertImageEqualAndSaveFailed(self, input_image: Image.Image, expect_image_path: str, threshold=0.965):
         """
@@ -86,7 +93,11 @@ class ImageTestCase(TestCase):
 class VideoTestCase(TestCase):
     @staticmethod
     def get_input_image(name) -> Image.Image:
-        return Image.open(ImageTestCase.testdata_dir / f"input/{name}")
+        # Multi-device pipelines pickle the input images to send them to workers.
+        # PIL loads lazily by default, so pickle would read the pixels from a closed
+        # file handle and fail with "broken PNG file"; convert() forces the read.
+        with Image.open(ImageTestCase.testdata_dir / f"input/{name}") as image:
+            return image.convert("RGB")
 
     @staticmethod
     def get_expect_video(name) -> VideoReader:

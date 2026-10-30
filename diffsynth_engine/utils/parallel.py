@@ -19,7 +19,7 @@ from typing import Dict, List, Set, Type, Union, Optional
 from queue import Empty
 
 import diffsynth_engine.models.basic.attention as attention_ops
-from diffsynth_engine.utils.platform import empty_cache
+from diffsynth_engine.utils.platform import IS_NPU, empty_cache
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.process_group import (
     PROCESS_GROUP,
@@ -179,32 +179,44 @@ def _worker_loop(
     sp_ring_degree: int,
     tp_degree: int,
     use_fsdp: bool,
-    master_port: int = 29500,
+    master_port: Optional[int] = None,
     device_type: str = "cuda",
 ):
     """
     https://pytorch.org/docs/stable/multiprocessing.html#sharing-cuda-tensors
     """
-    if device_type != "cuda" or not torch.cuda.is_available():
-        raise RuntimeError("parallelism is only supported on CUDA devices")
+    if IS_NPU:
+        device_type = "npu"
+    if device_type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("parallelism requires CUDA or NPU devices")
 
     try:
         os.environ["RANK"] = str(rank)
         os.environ["WORLD_SIZE"] = str(world_size)
         os.environ["MASTER_ADDR"] = "localhost"
+        if master_port is None:
+            # keep the historical default, but let MASTER_PORT override it so
+            # several jobs can coexist on the same host
+            master_port = int(os.environ.get("MASTER_PORT", "29500"))
         os.environ["MASTER_PORT"] = str(master_port)
         device = torch.device(type=device_type, index=rank)
-        torch.cuda.set_device(rank)
+        if device_type == "npu":
+            torch.npu.set_device(rank)
+        else:
+            torch.cuda.set_device(rank)
 
         timeout = timedelta(seconds=NCCL_TIMEOUT_SEC)
-        dist.init_process_group(
-            backend="nccl",
-            init_method="env://",
-            timeout=timeout,
-            world_size=world_size,
-            rank=rank,
-            device_id=device,
-        )
+        pg_kwargs = {
+            "backend": "hccl" if device_type == "npu" else "nccl",
+            "init_method": "env://",
+            "timeout": timeout,
+            "world_size": world_size,
+            "rank": rank,
+        }
+        if device_type == "cuda":
+            # device_id is a NCCL-specific argument, HCCL does not accept it
+            pg_kwargs["device_id"] = device
+        dist.init_process_group(**pg_kwargs)
         init_parallel_pgs(
             cfg_degree=cfg_degree,
             sp_ulysses_degree=sp_ulysses_degree,
@@ -271,7 +283,10 @@ def _worker_loop(
             queue_out.put(err)  # any exception caught in the worker will be raised to the main process
     finally:
         del module, data, args, kwargs
-        torch.cuda.synchronize()
+        if IS_NPU:
+            torch.npu.synchronize()
+        else:
+            torch.cuda.synchronize()
         empty_cache()
         dist.destroy_process_group()
 
@@ -284,7 +299,7 @@ class ParallelWrapper:
         sp_ring_degree: int,
         tp_degree: int,
         use_fsdp: bool = False,
-        master_port: int = 29500,
+        master_port: Optional[int] = None,
         device_type: str = "cuda",
     ):
         super().__init__()
