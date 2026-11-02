@@ -17,9 +17,9 @@ from diffsynth_engine.distributed.parallel_state import (
     is_world_group_initialized,
 )
 from diffsynth_engine.forward_context import set_forward_context
+from diffsynth_engine.platforms import get_compile_kwargs
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.load_utils import fix_state_dict_key, load_model_weights, prepare_model_weights
-from diffsynth_engine.utils.platform import get_compile_kwargs
 
 logger = logging.get_logger(__name__)
 

@@ -4,9 +4,9 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 
 from diffsynth_engine.layers.attention import AttentionType
-from diffsynth_engine.registry import get_attn_backend
+from diffsynth_engine.platforms import get_device_type
+from diffsynth_engine.registry import get_attn_backend, get_platform_class
 from diffsynth_engine.utils import logging
-from diffsynth_engine.platforms import get_device_type, resolve_platform
 
 logger = logging.get_logger(__name__)
 
@@ -61,10 +61,9 @@ class PipelineConfig:
         return cls(**filtered_dict)
 
     def __post_init__(self):
-        self.attn_type = str(self.attn_type)
         init_parallel_config(self)
-        validate_attn_config(self)
         init_device_config(self)
+        init_attn_config(self)
 
 
 def init_parallel_config(config: PipelineConfig):
@@ -107,16 +106,26 @@ def init_parallel_config(config: PipelineConfig):
             logger.warning("setting vae_tiled to True since use_vae_parallel is enabled")
 
 
-def validate_attn_config(config: PipelineConfig):
+def init_device_config(config: PipelineConfig):
+    device_type = get_device_type(config.device)
+    device = config.device
+    if device is None or (isinstance(device, str) and device.lower() in ("auto", "")):
+        device = device_type
+
+    platform = get_platform_class(device_type)
+    if not platform.is_available():
+        raise RuntimeError(f"Device type {device_type!r} is not available.")
+    device = platform.normalize_device(device)
+    if device.type != "cpu" and device.index is not None:
+        count = platform.device_count()
+        if not 0 <= device.index < count:
+            raise ValueError(f"Device {str(device)!r} is out of range: {count} {device_type} device(s) available.")
+    config.device = str(device)
+
+
+def init_attn_config(config: PipelineConfig):
+    config.attn_type = str(config.attn_type)
     attn_backend = get_attn_backend(config.attn_type)
     if config.sp_ring_degree is not None and config.sp_ring_degree > 1:
         if not attn_backend.supports_ring_attention():
             raise ValueError(f"Attention backend {config.attn_type!r} does not support ring attention.")
-
-
-def init_device_config(config: PipelineConfig):
-    if config.device is None or (isinstance(config.device, str) and config.device.lower() in ("auto", "")):
-        config.device = get_device_type()
-        return
-    # Validate that the explicit device type is registered (fail fast at construction).
-    resolve_platform(config.device)

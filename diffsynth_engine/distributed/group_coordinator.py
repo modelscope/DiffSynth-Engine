@@ -15,8 +15,8 @@ import torch.distributed
 from torch.cuda import synchronize
 from torch.distributed import Backend, ProcessGroup
 
+from diffsynth_engine.platforms import get_device
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.platform import get_device
 
 logger = logging.get_logger(__name__)
 

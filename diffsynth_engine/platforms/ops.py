@@ -10,13 +10,12 @@ from typing import Tuple, Union
 import torch
 import torch.nn as nn
 
-from diffsynth_engine.platforms import current_platform
-from diffsynth_engine.utils.platform import is_mindie_sd_available
+from diffsynth_engine.platforms import get_platform, is_mindie_sd_available
 
 
 def _is_npu_fused(x: torch.Tensor) -> bool:
     """判断是否走 NPU 融合路径。"""
-    return current_platform.op_fusion and is_mindie_sd_available() and x.device.type == "npu"
+    return x.device.type == "npu" and get_platform().op_fusion and is_mindie_sd_available()
 
 
 # ---------------------------------------------------------------------------

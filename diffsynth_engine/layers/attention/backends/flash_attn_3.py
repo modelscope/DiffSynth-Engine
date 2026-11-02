@@ -8,8 +8,8 @@ from diffsynth_engine.layers.attention.backends.abstract import (
     AttentionMetadata,
     AttentionType,
 )
+from diffsynth_engine.platforms import get_fp8_dtype
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.platform import DTYPE_FP8
 
 logger = logging.get_logger(__name__)
 
@@ -162,9 +162,10 @@ class FlashAttention3FP8Impl(FlashAttention3Impl):
     ) -> torch.Tensor:
         # TODO: scaling
         original_dtype = query.dtype
-        query = query.to(DTYPE_FP8)
-        key = key.to(DTYPE_FP8)
-        value = value.to(DTYPE_FP8)
+        fp8_dtype = get_fp8_dtype()
+        query = query.to(fp8_dtype)
+        key = key.to(fp8_dtype)
+        value = value.to(fp8_dtype)
         if cu_seqlens_q is not None:
             output = flash_attn_varlen_func(
                 query,
@@ -204,9 +205,10 @@ class FlashAttention3FP8Impl(FlashAttention3Impl):
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         original_dtype = query.dtype
-        query = query.to(DTYPE_FP8)
-        key = key.to(DTYPE_FP8)
-        value = value.to(DTYPE_FP8)
+        fp8_dtype = get_fp8_dtype()
+        query = query.to(fp8_dtype)
+        key = key.to(fp8_dtype)
+        value = value.to(fp8_dtype)
         if cu_seqlens_q is not None:
             output, lse, *_ = flash_attn_varlen_func(
                 query,

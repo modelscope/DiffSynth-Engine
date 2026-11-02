@@ -86,21 +86,18 @@ torchrun --nproc_per_node=4 examples/qwen_image/run_text_to_image.py \
 - GPU 路径保持零开销直通，不引入额外调度延迟
 - 通过环境变量 `USE_MINDIESD_FUSE` 控制是否启用融合
 
-### 4.2 Attention 工厂
+### 4.2 Attention 实现选择
 
-**文件**: `diffsynth_engine/layers/attention/factory.py`
+**文件**: `diffsynth_engine/layers/attention/ascend_long_context.py`
 
-`create_parallel_attention()` 根据平台和并行配置自动选择 Attention 实现:
+`use_ascend_long_ctx_attn(attn_type)` 根据 MindIE 可用性和并行配置判断是否适用：
 
-```
-┌─────────────────────────────────────────────┐
-│         create_parallel_attention()          │
-├─────────────────────────────────────────────┤
-│  NPU + SP  → AscendLongContextAttention     │
-│             (Ulysses SP + AllToAll overlap)  │
-│  GPU/其他   → USPAttention                   │
-└─────────────────────────────────────────────┘
-```
+- `attn_type="mindie"`，`is_mindie_sd_available()` 返回 `True`，SP 已初始化且 ring degree 为 1 时，返回 `True`。
+- 其他情况返回 `False`；SP 尚未初始化时不会查询 ring degree。
+
+Qwen-Image 在构造每层 attention 时根据返回值直接创建 `AscendLongContextAttention` 或
+`USPAttention`，各层持有独立实例。辅助函数复用已有的 MindIE 可用性检查；具体 attention
+API 的可用性仍由 attention backend 的 `check_availability()` 校验。
 
 ### 4.3 AscendLongContextAttention
 
@@ -111,6 +108,22 @@ torchrun --nproc_per_node=4 examples/qwen_image/run_text_to_image.py \
 - **Ulysses Sequence Parallelism**: 将长序列切分到多卡并行处理
 - **AllToAll 通信计算重叠** (overlap mode): 隐藏通信延迟
 - **切分优化** (cut mode): 减少显存占用
+
+### 4.4 平台注册与初始化
+
+`registry.py` 提供 `register_platform(device_type, "module:Class")` 和
+`get_platform_class(device_type)`，复用 `LazyImport`
+和插件加载机制。重复注册会警告并跳过；获取 backend 只加载类，不检测设备或设置当前平台。
+CPU、CUDA、ROCm、MPS 类仍放在 `platforms/__init__.py` 中默认加载，Ascend 类按需导入。
+
+`PipelineConfig` 在配置阶段解析设备、检查注册类型、设备可用性和格式，并继续检查 attention。
+这个过程不设置进程级 `_platform`。`auto` 按 CUDA/ROCm、NPU、MPS、CPU 顺序检测并缓存结果，
+不受已选平台影响；显式设备编号保持不变。
+设备规范化结果以字符串回写配置；显式加速设备编号须落在可见设备数量范围内。
+
+初始化 pipeline 前需调用 `set_platform(config.device)` 初始化平台，否则调用 `get_platform()` 等依赖已选平台的接口时会报错。
+
+选择 MindIE attention 时，可用性检查失败会报错；MindIE compile 可用性检查失败时回退默认编译器。
 
 ## 5. 配置参数
 

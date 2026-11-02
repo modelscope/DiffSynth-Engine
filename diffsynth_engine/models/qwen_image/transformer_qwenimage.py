@@ -33,7 +33,11 @@ from diffsynth_engine.distributed.parallel_state import (
 from diffsynth_engine.distributed.utils import sequence_parallel_shard, sequence_parallel_unshard
 from diffsynth_engine.forward_context import get_forward_context
 from diffsynth_engine.layers import RMSNorm
-from diffsynth_engine.layers.attention.factory import create_parallel_attention
+from diffsynth_engine.layers.attention import (
+    AscendLongContextAttention,
+    USPAttention,
+    use_ascend_long_ctx_attn,
+)
 from diffsynth_engine.layers.tensor_parallel import ColumnParallelLinear, RowParallelLinear, TPFeedForward
 from diffsynth_engine.models.base import DiffusionModel
 from diffsynth_engine.platforms.ops import fused_layernorm_scale_shift, fused_rotary_embedding
@@ -439,7 +443,12 @@ class QwenDoubleStreamAttention(nn.Module):
 
         # USPAttention for joint attention computation
         forward_context = get_forward_context()
-        self.usp_attn = create_parallel_attention(
+        attn_cls = (
+            AscendLongContextAttention
+            if use_ascend_long_ctx_attn(forward_context.attn_type)
+            else USPAttention
+        )
+        self.usp_attn = attn_cls(
             num_heads=self.heads,
             head_size=attention_head_dim,
             attn_type=forward_context.attn_type,

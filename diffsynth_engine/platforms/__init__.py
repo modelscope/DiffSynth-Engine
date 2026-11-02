@@ -1,17 +1,12 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Type
 
 import torch
 
-from .ascend import (
-    AscendPlatform,
-    probe_ascend_capabilities,
-    probe_ascend_feature,
-    reset_ascend_capability_cache,
-)
-from .base import PlatformBackend, PlatformCapabilities
+from diffsynth_engine.registry import get_platform_class
+
+from .base import PlatformBackend
 
 
 class CPUPlatform(PlatformBackend):
@@ -19,12 +14,12 @@ class CPUPlatform(PlatformBackend):
     device_type = "cpu"
 
     @classmethod
-    def distributed_backend(cls) -> str:
-        raise NotImplementedError("Unsupported device type")
-
-    @classmethod
     def pin_memory(cls, tensor: torch.Tensor) -> torch.Tensor:
         return tensor
+
+    @classmethod
+    def distributed_backend(cls) -> str:
+        raise NotImplementedError("Unsupported device type")
 
 
 class CUDAPlatform(PlatformBackend):
@@ -36,16 +31,16 @@ class CUDAPlatform(PlatformBackend):
         return torch.cuda.is_available()
 
     @classmethod
+    def get_device(cls, local_rank: int) -> torch.device:
+        return torch.device(cls.device_type, local_rank)
+
+    @classmethod
     def set_device(cls, index: int | str | torch.device) -> None:
         torch.cuda.set_device(index)
 
     @classmethod
     def device_count(cls) -> int:
         return torch.cuda.device_count()
-
-    @classmethod
-    def get_device(cls, local_rank: int) -> torch.device:
-        return torch.device(cls.device_type, local_rank)
 
     @classmethod
     def synchronize(cls) -> None:
@@ -94,30 +89,19 @@ class MPSPlatform(PlatformBackend):
         return tensor
 
 
-_PLATFORM_REGISTRY: dict[str, Type[PlatformBackend]] = {
-    "cpu": CPUPlatform,
-    "cuda": ROCmPlatform if torch.version.hip else CUDAPlatform,
-    "mps": MPSPlatform,
-    "npu": AscendPlatform,
-}
+_platform: type[PlatformBackend] | None = None
 
 
-def register_platform(device_type: str, platform_cls: Type[PlatformBackend], *, overwrite: bool = False) -> None:
-    if device_type in _PLATFORM_REGISTRY and not overwrite:
-        raise ValueError(f"Platform for device type {device_type!r} is already registered")
-    _PLATFORM_REGISTRY[device_type] = platform_cls
-
-
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=1)
 def auto_detect_device() -> str:
-    """auto detect device type in order of cuda(gpu/rocm), npu, mps, cpu"""
+    """Auto detect device in order of CUDA/ROCm, NPU, MPS, CPU."""
     for device_type in ("cuda", "npu", "mps", "cpu"):
         try:
-            if resolve_platform(device_type).is_available():
+            if get_platform_class(device_type).is_available():
                 return device_type
         except Exception:
             continue
-    return "cpu"
+    raise RuntimeError("No available platform found.")
 
 
 def get_device_type(device: str | torch.device | None = None) -> str:
@@ -128,33 +112,131 @@ def get_device_type(device: str | torch.device | None = None) -> str:
     return str(device).split(":", 1)[0].lower()
 
 
-def resolve_platform(device: str | torch.device) -> Type[PlatformBackend]:
+def get_platform() -> type[PlatformBackend]:
+    if _platform is None:
+        raise RuntimeError("Platform must be initialized with set_platform() before use.")
+    return _platform
+
+
+def set_platform(device: str | torch.device | None = None):
+    global _platform
     device_type = get_device_type(device)
-    try:
-        return _PLATFORM_REGISTRY[device_type]
-    except KeyError as exc:
-        available = ", ".join(sorted(_PLATFORM_REGISTRY))
-        raise ValueError(f"Unsupported device type {device_type!r}. Registered device types: {available}") from exc
+    platform = get_platform_class(device_type)
+    if not platform.is_available():
+        raise RuntimeError(f"Device type {device_type!r} is not available.")
+    if _platform is not None and _platform is not platform:
+        raise RuntimeError(f"Platform is already set to {_platform.name!r}; cannot switch to {platform.name!r}.")
+    _platform = platform
 
 
-# The platform backend for the auto-detected process accelerator, resolved once
-current_platform: Type[PlatformBackend] = resolve_platform(get_device_type())
+def is_npu_available() -> bool:
+    return get_platform_class("npu").is_available()
+
+
+def is_mindie_sd_available() -> bool:
+    from .ascend import is_mindie_sd_available as ascend_mindie_sd_available
+
+    return ascend_mindie_sd_available()
+
+
+def get_device(local_rank: int) -> torch.device:
+    return get_platform().get_device(local_rank)
+
+
+def set_device(index: int | str | torch.device) -> None:
+    get_platform().set_device(index)
+
+
+def device_count() -> int:
+    return get_platform().device_count()
+
+
+def get_fp8_dtype() -> torch.dtype:
+    return get_platform().fp8_dtype()
+
+
+def pin_memory(tensor: torch.Tensor) -> torch.Tensor:
+    return get_platform().pin_memory(tensor)
+
+
+def get_torch_distributed_backend() -> str:
+    return get_platform().distributed_backend()
+
+
+def get_compile_kwargs() -> dict:
+    return get_platform().compile_kwargs()
+
+
+DTYPE_MAP: dict[str, torch.dtype] = {
+    # Integer dtypes
+    "uint8": torch.uint8,
+    "int8": torch.int8,
+    "int16": torch.int16,
+    "short": torch.int16,
+    "int32": torch.int32,
+    "int": torch.int32,
+    "int64": torch.int64,
+    "long": torch.int64,
+    "bool": torch.bool,
+    # Floating dtypes
+    "float32": torch.float32,
+    "float": torch.float32,
+    "float64": torch.float64,
+    "double": torch.float64,
+    "float16": torch.float16,
+    "half": torch.float16,
+    "bfloat16": torch.bfloat16,
+    # Complex dtypes
+    "complex64": torch.complex64,
+    "cfloat": torch.complex64,
+    "complex128": torch.complex128,
+    "cdouble": torch.complex128,
+    # Quantized dtypes
+    "float8_e4m3fn": getattr(torch, "float8_e4m3fn", None),
+    "float8_e5m2": getattr(torch, "float8_e5m2", None),
+    "float8_e4m3fnuz": getattr(torch, "float8_e4m3fnuz", None),
+    "float8_e5m2fnuz": getattr(torch, "float8_e5m2fnuz", None),
+    "float8_e8m0fnu": getattr(torch, "float8_e8m0fnu", None),
+    "float4_e2m1fn_x2": getattr(torch, "float4_e2m1fn_x2", None),
+}
+DTYPE_MAP = {k: v for k, v in DTYPE_MAP.items() if v is not None}
+
+
+def torch_dtype_to_str(dtype: torch.dtype) -> str:
+    return str(dtype)[6:]  # remove "torch." prefix
+
+
+def str_to_torch_dtype(dtype_str: str) -> torch.dtype:
+    dtype_str = dtype_str.lower()
+    if dtype_str.startswith("torch."):
+        dtype_str = dtype_str[6:]
+
+    if dtype_str not in DTYPE_MAP:
+        raise ValueError(f"Unsupported torch dtype string: {dtype_str}.")
+
+    return DTYPE_MAP[dtype_str]
 
 
 __all__ = [
-    "AscendPlatform",
+    "PlatformBackend",
     "CPUPlatform",
     "CUDAPlatform",
-    "MPSPlatform",
-    "PlatformBackend",
-    "PlatformCapabilities",
     "ROCmPlatform",
+    "MPSPlatform",
     "auto_detect_device",
-    "current_platform",
     "get_device_type",
-    "probe_ascend_capabilities",
-    "probe_ascend_feature",
-    "register_platform",
-    "reset_ascend_capability_cache",
-    "resolve_platform",
+    "get_platform",
+    "set_platform",
+    "is_npu_available",
+    "is_mindie_sd_available",
+    "get_device",
+    "set_device",
+    "device_count",
+    "get_fp8_dtype",
+    "pin_memory",
+    "get_torch_distributed_backend",
+    "get_compile_kwargs",
+    "DTYPE_MAP",
+    "torch_dtype_to_str",
+    "str_to_torch_dtype",
 ]

@@ -1,18 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC
-from dataclasses import dataclass
 from typing import Any
 
 import torch
-
-
-@dataclass(frozen=True)
-class PlatformCapabilities:
-    device: bool = False
-    mindie: bool = False
-    mindie_attention: bool = False
-    mindie_compile: bool = False
 
 
 class PlatformBackend(ABC):
@@ -69,14 +60,3 @@ class PlatformBackend(ABC):
     def compile_kwargs(cls) -> dict[str, Any]:
         backend = cls.compile_backend()
         return {} if backend is None else {"backend": backend}
-
-    @classmethod
-    def supports(cls, capability: str) -> bool:
-        capabilities = cls.capabilities()
-        if not hasattr(capabilities, capability):
-            raise ValueError(f"Unknown platform capability: {capability}")
-        return bool(getattr(capabilities, capability))
-
-    @classmethod
-    def capabilities(cls) -> PlatformCapabilities:
-        return PlatformCapabilities(device=cls.is_available())

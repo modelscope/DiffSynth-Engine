@@ -6,8 +6,8 @@ from diffsynth_engine.layers.attention.backends.abstract import (
     AttentionMetadata,
     AttentionType,
 )
+from diffsynth_engine.platforms import get_fp8_dtype
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.platform import DTYPE_FP8
 
 logger = logging.get_logger(__name__)
 
@@ -111,9 +111,10 @@ class AiterFP8Impl(AiterImpl):
     ) -> torch.Tensor:
         # TODO: scaling
         original_dtype = query.dtype
-        query = query.to(DTYPE_FP8)
-        key = key.to(DTYPE_FP8)
-        value = value.to(DTYPE_FP8)
+        fp8_dtype = get_fp8_dtype()
+        query = query.to(fp8_dtype)
+        key = key.to(fp8_dtype)
+        value = value.to(fp8_dtype)
         output = aiter_flash_attn_fp8(
             query,
             key,
@@ -134,9 +135,10 @@ class AiterFP8Impl(AiterImpl):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # TODO: scaling
         original_dtype = query.dtype
-        query = query.to(DTYPE_FP8)
-        key = key.to(DTYPE_FP8)
-        value = value.to(DTYPE_FP8)
+        fp8_dtype = get_fp8_dtype()
+        query = query.to(fp8_dtype)
+        key = key.to(fp8_dtype)
+        value = value.to(fp8_dtype)
         output, lse = aiter_flash_attn_fp8(
             query,
             key,

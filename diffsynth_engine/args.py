@@ -3,7 +3,7 @@ from typing import Any, Dict, Tuple
 
 from diffsynth_engine.configs.base import AttentionParams, SpargeAttentionParams
 from diffsynth_engine.layers.attention import AttentionType
-from diffsynth_engine.utils.platform import str_to_torch_dtype
+from diffsynth_engine.platforms import str_to_torch_dtype
 
 
 def _parse_tuple(value: str) -> Tuple[int, int] | int:

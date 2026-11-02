@@ -9,6 +9,7 @@ from diffsynth_engine.distributed.parallel_state import (
     init_distributed_environment,
     initialize_model_parallel,
 )
+from diffsynth_engine.platforms import set_platform
 from diffsynth_engine.registry import get_pipeline_class
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.torch_profiler import TorchProfiler
@@ -39,6 +40,7 @@ class Worker:
         os.environ["RANK"] = str(rank)
         os.environ["WORLD_SIZE"] = str(world_size)
 
+        set_platform(pipeline_config.device)
         init_distributed_environment(world_size=world_size, rank=rank, local_rank=local_rank)
 
         cfg_degree = 2 if pipeline_config.use_cfg_parallel else 1

@@ -23,13 +23,13 @@ class MindieAttentionMetadataBuilder(AttentionMetadataBuilder):
 class MindieAttentionBackend(AttentionBackend):
     @staticmethod
     def check_availability() -> None:
-        from diffsynth_engine.platforms import AscendPlatform
+        from diffsynth_engine.platforms.ascend import AscendPlatform, is_mindie_attention_available
 
-        if not AscendPlatform.supports("device"):
+        if not AscendPlatform.is_available():
             error_msg = "MindIE attention requires an available Ascend NPU device."
             logger.error(error_msg)
             raise RuntimeError(error_msg)
-        if not AscendPlatform.supports("mindie_attention"):
+        if not is_mindie_attention_available():
             error_msg = (
                 "MindIE attention backend is not available. "
                 "Install MindIE-SD 3.x matching the current torch_npu and CANN versions, "
@@ -99,9 +99,7 @@ class MindieAttentionImpl(AttentionImpl):
         if self.causal and attn_mask is None:
             q_seqlen = query.shape[1]
             kv_seqlen = key.shape[1]
-            attn_mask = torch.tril(
-                torch.ones(q_seqlen, kv_seqlen, dtype=torch.bool, device=query.device)
-            )
+            attn_mask = torch.tril(torch.ones(q_seqlen, kv_seqlen, dtype=torch.bool, device=query.device))
 
         return attention_forward(
             query=query,

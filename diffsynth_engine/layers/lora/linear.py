@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 
+from diffsynth_engine.platforms import pin_memory
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.platform import pin_memory
 
 logger = logging.get_logger(__name__)
 

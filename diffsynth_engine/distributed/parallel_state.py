@@ -19,13 +19,13 @@ from diffsynth_engine.distributed.group_coordinator import (
     PipelineGroupCoordinator,
     SequenceParallelGroupCoordinator,
 )
-from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.constants import IDLE_TIMEOUT_SEC
-from diffsynth_engine.utils.platform import (
+from diffsynth_engine.platforms import (
     device_count,
     get_torch_distributed_backend,
     set_device,
 )
+from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.constants import IDLE_TIMEOUT_SEC
 
 logger = logging.get_logger(__name__)
 

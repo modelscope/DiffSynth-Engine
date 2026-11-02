@@ -3,12 +3,12 @@ from typing import Any
 import torch.multiprocessing as mp
 
 from diffsynth_engine.configs import PipelineConfig
+from diffsynth_engine.platforms import set_device, set_platform
 from diffsynth_engine.registry import (
     get_pipeline_class,
     get_pipeline_class_name,
 )
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.platform import set_device
 from diffsynth_engine.utils.torch_profiler import TorchProfiler
 from diffsynth_engine.worker import run_worker_loop
 
@@ -166,7 +166,10 @@ def _resolve_pipeline_config(model_path_or_config: str | PipelineConfig) -> Pipe
 
 class LocalEngine(DiffSynthEngine):
     def __init__(self, pipeline_config: PipelineConfig):
+        self.pipeline = None
+
         logger.info("Initializing pipeline...")
+        set_platform(pipeline_config.device)
         pipeline_class = get_pipeline_class(pipeline_config.pipeline_class_name)
         self.pipeline = pipeline_class.from_pretrained(pipeline_config)
 
@@ -222,6 +225,9 @@ class DistributedEngine(DiffSynthEngine):
         nnodes: int = 1,
         node_rank: int = 0,
     ):
+        self.workers = []
+        self.conns = []
+
         if nnodes <= 0:
             raise ValueError(f"nnodes must be positive, got {nnodes}")
         if not 0 <= node_rank < nnodes:
@@ -238,10 +244,8 @@ class DistributedEngine(DiffSynthEngine):
             f"(world_size={num_workers}, master={master_addr}:{master_port})..."
         )
 
+        set_platform(pipeline_config.device)
         set_device(0)
-
-        self.workers = []
-        self.conns = []
 
         ctx = mp.get_context("spawn")
         for local_rank in range(nproc_per_node):
@@ -334,10 +338,11 @@ class DistributedEngine(DiffSynthEngine):
         if self.workers is not None:
             logger.info("Shutting down workers...")
 
-            try:
-                self.conns[0].send({"method": "shutdown"})
-            except (BrokenPipeError, OSError):
-                pass
+            if self.conns:
+                try:
+                    self.conns[0].send({"method": "shutdown"})
+                except (BrokenPipeError, OSError):
+                    pass
 
             for process in self.workers:
                 process.join(timeout=10)
