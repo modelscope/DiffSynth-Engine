@@ -26,6 +26,7 @@ class AttentionType(str, enum.Enum):
     SAGE2 = "sage2"
     SAGE3 = "sage3"
     SPARGE = "sparge"
+    MINDIE = "mindie"
 
     def __str__(self) -> str:
         return self.value

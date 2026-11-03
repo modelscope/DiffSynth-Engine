@@ -3,7 +3,7 @@ from typing import Any, Dict, Tuple
 
 from diffsynth_engine.configs.base import AttentionParams, SpargeAttentionParams
 from diffsynth_engine.layers.attention import AttentionType
-from diffsynth_engine.utils.platform import str_to_torch_dtype
+from diffsynth_engine.platforms import str_to_torch_dtype
 
 
 def _parse_tuple(value: str) -> Tuple[int, int] | int:
@@ -117,6 +117,11 @@ def parse_cli_args() -> Dict[str, Any]:
         action="store_true",
         help="Compile repeated transformer blocks with torch.compile",
     )
+    optimization_group.add_argument(
+        "--compile-ffn",
+        action="store_true",
+        help="Compile only FFN (MLP) blocks with torch.compile (finer-grained than --use-torch-compile)",
+    )
 
     # Parallelism configuration group
     parallel_group = parser.add_argument_group("Parallelism Configuration")
@@ -184,6 +189,7 @@ def parse_cli_args() -> Dict[str, Any]:
 
     # Optimization configuration
     args_dict["use_torch_compile"] = args.use_torch_compile
+    args_dict["compile_ffn"] = args.compile_ffn
 
     # Parallelism configuration
     args_dict["parallelism"] = args.parallelism

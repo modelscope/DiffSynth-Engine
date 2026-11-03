@@ -13,3 +13,11 @@ dist/
 CLAUDE.md
 .claude/
 .kiro/
+
+# Performance benchmarks & results (internal use only)
+benchmarks/
+results/
+
+# PR artifacts
+PR_BODY.md
+.pr272.diff

@@ -3,6 +3,8 @@ import os
 from functools import cache
 from typing import TYPE_CHECKING
 
+import torch
+
 from diffsynth_engine.plugins import load_general_plugins
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.constants import MODEL_INDEX_NAME
@@ -11,8 +13,18 @@ from diffsynth_engine.utils.import_utils import LazyImport
 if TYPE_CHECKING:
     from diffsynth_engine.layers.attention.backends.abstract import AttentionBackend
     from diffsynth_engine.pipelines.base import Pipeline
+    from diffsynth_engine.platforms.base import PlatformBackend
 
 logger = logging.get_logger(__name__)
+
+_PLATFORMS: dict[str, str] = {
+    "cpu": "diffsynth_engine.platforms:CPUPlatform",
+    "cuda": "diffsynth_engine.platforms:ROCmPlatform"
+    if torch.version.hip
+    else "diffsynth_engine.platforms:CUDAPlatform",
+    "mps": "diffsynth_engine.platforms:MPSPlatform",
+    "npu": "diffsynth_engine.platforms.ascend:AscendPlatform",
+}
 
 _PIPELINES: dict[str, str] = {
     "QwenImagePipeline": "diffsynth_engine.pipelines.qwen_image.pipeline_qwenimage:QwenImagePipeline",
@@ -33,16 +45,52 @@ _ATTENTION_BACKENDS: dict[str, str] = {
     "fa3": "diffsynth_engine.layers.attention.backends.flash_attn_3:FlashAttention3Backend",
     "fa3_fp8": "diffsynth_engine.layers.attention.backends.flash_attn_3:FlashAttention3FP8Backend",
     "fa4": "diffsynth_engine.layers.attention.backends.flash_attn_4:FlashAttention4Backend",
+    "mindie": "diffsynth_engine.layers.attention.backends.mindie_attn:MindieAttentionBackend",
     "sage2": "diffsynth_engine.layers.attention.backends.sage_attn_2:SageAttention2Backend",
     "sage3": "diffsynth_engine.layers.attention.backends.sage_attn_3:SageAttention3Backend",
     "sdpa": "diffsynth_engine.layers.attention.backends.sdpa:SDPABackend",
     "sparge": "diffsynth_engine.layers.attention.backends.sparge_attn:SpargeAttentionBackend",
 }
 
+PLATFORM_REGISTRY: dict[str, LazyImport] = {}
 PIPELINE_REGISTRY: dict[str, LazyImport] = {}
 ATTENTION_BACKEND_REGISTRY: dict[str, LazyImport] = {}
+_platform_registry_initialized = False
 _pipeline_registry_initialized = False
 _attention_backend_registry_initialized = False
+
+
+def register_platform(device_type: str, target: str) -> None:
+    """Register a platform for lazy import.
+
+    `target` must be a "module_name:class_name" string. The class is not
+    imported until `get_platform_class(device_type)` is called.
+    """
+    if device_type in PLATFORM_REGISTRY:
+        logger.warning(f"Platform {device_type!r} already exists, skipping registration")
+        return
+
+    module_name, class_name = target.split(":", 1)
+    PLATFORM_REGISTRY[device_type] = LazyImport(module_name, class_name)
+
+
+def _register_builtin_platforms() -> None:
+    for device_type, platform_cls in _PLATFORMS.items():
+        register_platform(device_type, platform_cls)
+
+
+def get_platform_class(device_type: str) -> type["PlatformBackend"]:
+    global _platform_registry_initialized
+    if not _platform_registry_initialized:
+        _register_builtin_platforms()
+        _platform_registry_initialized = True
+        load_general_plugins()
+
+    if device_type not in PLATFORM_REGISTRY:
+        raise ValueError(
+            f"Unsupported device type {device_type!r}. Registered device types: {sorted(PLATFORM_REGISTRY)}"
+        )
+    return PLATFORM_REGISTRY[device_type].load()
 
 
 def register_pipeline(name: str, target: str) -> None:
@@ -59,28 +107,9 @@ def register_pipeline(name: str, target: str) -> None:
     PIPELINE_REGISTRY[name] = LazyImport(module_name, class_name)
 
 
-def register_attention_backend(attn_type: str, target: str) -> None:
-    """Register an attention backend for lazy import.
-
-    `target` must be a "module_name:class_name" string. The class is not
-    imported until `get_attn_backend(attn_type)` is called.
-    """
-    if attn_type in ATTENTION_BACKEND_REGISTRY:
-        logger.warning(f"Attention backend {attn_type!r} already exists, skipping registration")
-        return
-
-    module_name, class_name = target.split(":", 1)
-    ATTENTION_BACKEND_REGISTRY[attn_type] = LazyImport(module_name, class_name)
-
-
 def _register_builtin_pipelines() -> None:
     for name, pipeline_cls in _PIPELINES.items():
         register_pipeline(name, pipeline_cls)
-
-
-def _register_builtin_attention_backends() -> None:
-    for attn_type, backend_cls in _ATTENTION_BACKENDS.items():
-        register_attention_backend(attn_type, backend_cls)
 
 
 def get_pipeline_class_name(model_path: str) -> str:
@@ -107,6 +136,25 @@ def get_pipeline_class(name: str) -> type["Pipeline"]:
     if name not in PIPELINE_REGISTRY:
         raise ValueError(f"Pipeline class {name!r} not found. Available pipelines: {sorted(PIPELINE_REGISTRY)}")
     return PIPELINE_REGISTRY[name].load()
+
+
+def register_attention_backend(attn_type: str, target: str) -> None:
+    """Register an attention backend for lazy import.
+
+    `target` must be a "module_name:class_name" string. The class is not
+    imported until `get_attn_backend(attn_type)` is called.
+    """
+    if attn_type in ATTENTION_BACKEND_REGISTRY:
+        logger.warning(f"Attention backend {attn_type!r} already exists, skipping registration")
+        return
+
+    module_name, class_name = target.split(":", 1)
+    ATTENTION_BACKEND_REGISTRY[attn_type] = LazyImport(module_name, class_name)
+
+
+def _register_builtin_attention_backends() -> None:
+    for attn_type, backend_cls in _ATTENTION_BACKENDS.items():
+        register_attention_backend(attn_type, backend_cls)
 
 
 @cache
