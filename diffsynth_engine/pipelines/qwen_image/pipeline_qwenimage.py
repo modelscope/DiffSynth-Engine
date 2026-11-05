@@ -29,7 +29,11 @@ from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 from diffsynth_engine.configs import QwenImagePipelineConfig
 from diffsynth_engine.distributed.parallel_state import get_cfg_group, model_parallel_is_initialized
 from diffsynth_engine.forward_context import set_forward_context
-from diffsynth_engine.models.qwen_image import AutoencoderKLQwenImage, QwenImageTransformer2DModel
+from diffsynth_engine.models.qwen_image import (
+    AutoencoderKLQwenImage,
+    QwenImageTransformer2DModel,
+    QwenImageTransformer2DModelFBCache,
+)
 from diffsynth_engine.pipelines.base import Pipeline
 from diffsynth_engine.pipelines.lora.pipeline_lora import LoRAPipeline
 from diffsynth_engine.registry import get_attn_backend
@@ -179,7 +183,26 @@ class QwenImagePipeline(LoRAPipeline, Pipeline):
             raise FileNotFoundError(f"Model path not found: {pipeline_config.model_path}")
 
         # Load transformer
-        transformer = cls.init_transformer(QwenImageTransformer2DModel, pipeline_config)
+        # FB-Cache needs its own forward (it short-circuits the block loop), so it
+        # is a subclass rather than a flag on the base model.
+        transformer_cls = (
+            QwenImageTransformer2DModelFBCache
+            if getattr(pipeline_config, "fbcache", False)
+            else QwenImageTransformer2DModel
+        )
+        transformer = cls.init_transformer(transformer_cls, pipeline_config)
+        if getattr(pipeline_config, "fbcache", False):
+            transformer.fbcache_threshold = pipeline_config.fbcache_threshold
+            transformer.fbcache_warmup_steps = pipeline_config.fbcache_warmup_steps
+            transformer.fbcache_max_skip_streak = pipeline_config.fbcache_max_skip_streak
+
+        if getattr(pipeline_config, "fp8_linear", False):
+            from diffsynth_engine.layers.quantization.fp8_linear import enable_fp8_linear
+
+            # Quantize right after the weights are loaded: the scale has to come
+            # from the bf16 weights, and doing it once here keeps the forward path
+            # free of extra state.
+            enable_fp8_linear(transformer)
 
         # Load scheduler
         scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
@@ -424,6 +447,14 @@ class QwenImagePipeline(LoRAPipeline, Pipeline):
         attn_metadata = builder.build(**attn_params_dict)
         return attn_metadata
 
+    def _fb_kwargs(self, branch: str) -> dict:
+        """Tag a transformer call with its CFG branch when FB-Cache is active.
+
+        The positive and negative prompts have different sequence lengths, so
+        the two calls cannot share cached residuals.
+        """
+        return {"fbcache_branch": branch} if hasattr(self.transformer, "reset_fbcache") else {}
+
     def _predict_noise_with_cfg(
         self,
         latents: torch.Tensor,
@@ -448,6 +479,7 @@ class QwenImagePipeline(LoRAPipeline, Pipeline):
                     img_shapes=img_shapes,
                     attention_kwargs=self.attention_kwargs,
                     return_dict=False,
+                    **self._fb_kwargs("cond"),
                 )[0]
             return noise_pred
 
@@ -474,6 +506,7 @@ class QwenImagePipeline(LoRAPipeline, Pipeline):
                     img_shapes=img_shapes,
                     attention_kwargs=self.attention_kwargs,
                     return_dict=False,
+                    **self._fb_kwargs("cond"),
                 )[0]
 
         if not use_cfg_parallel or cfg_rank != 0:
@@ -486,6 +519,7 @@ class QwenImagePipeline(LoRAPipeline, Pipeline):
                     img_shapes=img_shapes,
                     attention_kwargs=self.attention_kwargs,
                     return_dict=False,
+                    **self._fb_kwargs("uncond"),
                 )[0]
 
         if use_cfg_parallel:
@@ -674,6 +708,12 @@ class QwenImagePipeline(LoRAPipeline, Pipeline):
                 num_images_per_prompt=num_images_per_prompt,
                 max_sequence_length=max_sequence_length,
             )
+
+        # Carry-over state from the previous sampling run must not leak in.
+        if hasattr(self.transformer, "reset_fbcache"):
+            # pass the step count so the cache can force a full computation on the
+            # last step, where approximation is most visible
+            self.transformer.reset_fbcache(num_inference_steps)
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels // 4

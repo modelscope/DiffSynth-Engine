@@ -28,6 +28,14 @@ class PipelineConfig:
     model_dtype: torch.dtype = torch.bfloat16
     text_encoder_dtype: torch.dtype = torch.bfloat16
     vae_dtype: torch.dtype = torch.float32
+    # Ascend only: quantize the DiT linear layers to W8A8 FP8
+    fp8_linear: bool = False
+    # First-block cache: reuse the previous step's residual when block 0
+    # barely changed. Trades a little accuracy for a large step-count cut.
+    fbcache: bool = False
+    fbcache_threshold: float = 0.05
+    fbcache_warmup_steps: int = 1
+    fbcache_max_skip_streak: int = 3
     device: str | torch.device = "auto"
 
     pipeline_class_name: str | None = None
