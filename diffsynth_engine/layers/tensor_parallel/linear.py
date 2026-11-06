@@ -10,6 +10,7 @@ from diffsynth_engine.distributed.parallel_state import (
     get_tp_group,
     is_tp_group_initialized,
 )
+from diffsynth_engine.layers.quantization.fp8_linear import is_quantized, npu_quant_linear
 
 
 def get_tp_size() -> int:
@@ -69,7 +70,11 @@ class ColumnParallelLinear(nn.Module):
             nn.init.uniform_(self.bias, -bound, bound)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        output = F.linear(hidden_states, self.weight, self.bias)
+        if is_quantized(self.weight):
+            # W8A8 on Ascend: npu_dynamic_quant + npu_quant_matmul
+            output = npu_quant_linear(hidden_states, self.weight, self.bias)
+        else:
+            output = F.linear(hidden_states, self.weight, self.bias)
         if self.gather_output and self.tp_size > 1:
             output = tp_all_gather(output, dim=-1)
         return output
@@ -120,12 +125,17 @@ class RowParallelLinear(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if self.tp_size == 1:
+            if is_quantized(self.weight):
+                return npu_quant_linear(hidden_states, self.weight, self.bias)
             return F.linear(hidden_states, self.weight, self.bias)
 
         if not self.input_is_parallel:
             hidden_states = hidden_states.chunk(self.tp_size, dim=-1)[self.tp_rank].contiguous()
 
-        output = F.linear(hidden_states, self.weight, None)
+        if is_quantized(self.weight):
+            output = npu_quant_linear(hidden_states, self.weight, None)
+        else:
+            output = F.linear(hidden_states, self.weight, None)
         output = tp_all_reduce(output)
         if self.bias is not None:
             output = output + self.bias
